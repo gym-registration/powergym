@@ -1,0 +1,1155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>POWER GYM — Member Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@300;400;500;600;700&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tr-styles.css') }}">
+</head>
+<body>
+
+<!--
+  ═══════════════════════════════════════
+  MEMBER DASHBOARD
+  Access: member role only
+  Guard: Session.guardDashboard() in JS
+  ═══════════════════════════════════════
+-->
+
+<!-- Root element used by JS to detect this page -->
+<div id="member-dashboard-root" class="dashboard-layout" data-plan-active="{{ 'true' if plan_active else 'false' }}">
+
+  <!-- ── SIDEBAR ─────────────────────── -->
+  <div class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-badge">
+        <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Power Gym">
+      </div>
+    </div>
+
+    <div class="sidebar-role">💪 Member</div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-item" id="nav-member-overview"    onclick="memberTab('overview',this)">
+        <span class="nav-icon">🏠</span> Overview
+      </div>
+      <div class="nav-item" id="nav-member-services"    onclick="memberTab('services',this)">
+        <span class="nav-icon">🏋️</span> Services
+      </div>
+      <div class="nav-item" id="nav-member-membership"  onclick="memberTab('membership',this)">
+        <span class="nav-icon">🎫</span> My Membership
+      </div>
+      <div class="nav-item" id="nav-member-payment"      onclick="memberTab('payment',this)">
+        <span class="nav-icon">💳</span> Payment
+      </div>
+      <div class="nav-item" id="nav-member-goals"       onclick="memberTab('goals',this)">
+        <span class="nav-icon">🎯</span> Body Goals
+      </div>
+      <div class="nav-item" id="nav-member-attendance"  onclick="memberTab('attendance',this)">
+        <span class="nav-icon">📅</span> My Attendance
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="user-info">
+        <div class="user-avatar" id="sidebar-user-avatar" style="background:var(--green);color:#000;">{{ (member.first_name[0] ~ member.last_name[0])|upper }}</div>
+        <div>
+          <div class="user-name"  id="sidebar-user-name">{{ member.full_name }}</div>
+          <div class="user-email" id="sidebar-user-email">{{ member.email }}</div>
+        </div>
+      </div>
+      <button class="btn-change-pass" id="nav-member-settings" onclick="memberTab('settings',this)">⚙️ SETTINGS</button>
+      <button class="btn-logout" onclick="doLogout()">⏻ SIGN OUT</button>
+    </div>
+  </div><!-- /sidebar -->
+
+  <!-- ── MAIN CONTENT ─────────────────── -->
+  <div class="main-content">
+
+    <!-- ── Member Overview ──────────────── -->
+    <div id="member-overview" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">MEMBER PORTAL</div><div class="page-subtitle">Welcome back — keep pushing!</div></div>
+      </div>
+
+      <div class="grid-2" style="margin-bottom:20px;">
+        <!-- Digital membership card -->
+        <div class="member-card-display">
+          <div class="card-logo logo-badge">
+            <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Power Gym">
+          </div>
+          <div class="card-name" id="member-card-name">{{ member.full_name }}</div>
+          <div class="card-id">MBR-{{ '%04d'|format(member.id) }} · {{ member.email }}</div>
+          <div class="card-plan">{{ plan.name if plan else 'No Active Plan' }}</div>
+          <div class="card-expiry">{% if plan %}Valid until: {{ plan.expiry_date }}{% else %}No membership on file{% endif %}</div>
+        </div>
+
+        <!-- Quick stats -->
+        <div class="panel" style="margin-bottom:0;">
+          <div class="panel-header"><div class="panel-title">Quick Stats</div></div>
+          <div class="panel-body">
+            <div class="goal-item">
+              <div class="goal-header"><span>Attendance Rate ({{ month_label }})</span><span class="goal-val green" style="font-weight:700;">{{ attendance_rate }}%</span></div>
+              <div class="progress-bar"><div class="progress-fill green" data-width="{{ attendance_rate }}"></div></div>
+            </div>
+            <div class="goal-item">
+              <div class="goal-header"><span>Weight Goal</span><span style="color:var(--red);font-weight:700;">{% if goal and goal.current_weight and goal.goal_weight %}{{ goal.current_weight }}/{{ goal.goal_weight }}kg{% else %}Not set{% endif %}</span></div>
+              <div class="progress-bar"><div class="progress-fill" data-width="{% if goal and goal.current_weight and goal.goal_weight and goal.current_weight > 0 %}{{ (100 - ((goal.current_weight - goal.goal_weight)|abs / goal.current_weight * 100))|round|int }}{% else %}0{% endif %}"></div></div>
+            </div>
+            <div class="goal-item">
+              <div class="goal-header"><span>Membership Used</span><span class="goal-val {% if plan and plan.days_left > 3 %}green{% elif plan %}red{% endif %}" style="font-weight:700;">{% if plan %}{{ plan.days_used }}/{{ plan.days_total }} days{% else %}—{% endif %}</span></div>
+              <div class="progress-bar"><div class="progress-fill" data-width="{{ plan.percent_used if plan else 0 }}"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {% if not plan_active %}
+      <div class="gate-banner">
+        <span class="gate-banner-icon">🔒</span>
+        <div>
+          <div class="gate-banner-title">Activate your membership</div>
+          <div class="gate-banner-text">Pay for a plan to start your membership and get the most out of Power Gym. Head to <strong>My Membership</strong> to get started.</div>
+        </div>
+        <button class="btn btn-red btn-sm" onclick="memberTab('membership', document.getElementById('nav-member-membership'))">CHOOSE A PLAN</button>
+      </div>
+      {% endif %}
+
+      <!-- Announcements for member -->
+      <div class="panel announcement-panel">
+        <div class="panel-header"><div class="panel-title">📢 GYM ANNOUNCEMENTS</div></div>
+        <div class="panel-body">
+          {% if announcements %}
+          {% for a in announcements %}
+          <div style="{% if not loop.first %}margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08);{% endif %}">
+            <div style="font-weight:600;margin-bottom:4px;">{{ a.title }}</div>
+            <div style="white-space:pre-wrap;">{{ a.body }}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:6px;">{{ a.created_at.strftime('%b %d, %Y') if a.created_at else '' }}</div>
+          </div>
+          {% endfor %}
+          {% else %}
+          No announcements right now — check back soon.
+          {% endif %}
+        </div>
+      </div>
+    </div><!-- /member-overview -->
+
+    <!-- ── My Membership ────────────────── -->
+    <div id="member-membership" class="sub-panel">
+      <div class="page-header"><div><div class="page-title">MY MEMBERSHIP</div></div></div>
+      {% if not plan_active %}
+      <div class="gate-banner" style="margin-bottom:20px;">
+        <span class="gate-banner-icon">🔒</span>
+        <div>
+          <div class="gate-banner-title">No active plan yet</div>
+          <div class="gate-banner-text">Choose a plan and submit payment below. Your dashboard unlocks fully once staff verifies it.</div>
+        </div>
+      </div>
+      {% endif %}
+      <div class="grid-2" style="grid-template-columns: 2.2fr 1fr;">
+        <!-- Choose / Upgrade / Renew -->
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">{% if plan %}Upgrade / Renew{% else %}Choose a Plan{% endif %}</div></div>
+          <div class="panel-body">
+            {% if plan_active %}
+            <div class="gate-banner">
+              <span class="gate-banner-icon">✅</span>
+              <div>
+                <div class="gate-banner-title">You're currently registered to the {{ plan.name }} plan</div>
+                <div class="gate-banner-text">It's active until {{ plan.expiry_date }}. You can request a new or upgraded plan once this one expires.</div>
+              </div>
+            </div>
+            {% elif awaiting_approval %}
+            <div class="gate-banner">
+              <span class="gate-banner-icon">⏳</span>
+              <div>
+                <div class="gate-banner-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                  {{ awaiting_approval.plan_name }} plan request submitted
+                  {% if awaiting_approval.request_status == 'Processing' %}
+                  <span class="badge badge-gold">PROCESSING</span>
+                  {% else %}
+                  <span class="badge badge-blue">PENDING</span>
+                  {% endif %}
+                </div>
+                <div class="gate-banner-text">
+                  Requested start: {{ awaiting_approval.start_date }} · ₱{{ awaiting_approval.amount }}.
+                  {% if awaiting_approval.request_status == 'Processing' %}
+                  Staff is currently reviewing your request — it can no longer be cancelled.
+                  {% else %}
+                  Staff hasn't opened your request yet.
+                  {% endif %}
+                  You'll be notified once it's reviewed — then you can pay from the Payment tab.
+                </div>
+              </div>
+              {% if awaiting_approval.request_status != 'Processing' %}
+              <button class="btn btn-sm withdraw-request-btn" style="background:rgba(230,30,37,0.1);color:var(--red);border:1px solid rgba(230,30,37,0.2);" onclick="withdrawPlanRequest({{ awaiting_approval.id }})">✗ Cancel Request</button>
+              {% endif %}
+            </div>
+            {% elif pending_payment %}
+            <div class="gate-banner">
+              <span class="gate-banner-icon">✅</span>
+              <div>
+                <div class="gate-banner-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                  Your {{ pending_payment.plan_name }} plan has been approved!
+                  <span class="badge badge-green">APPROVED</span>
+                </div>
+                <div class="gate-banner-text">₱{{ pending_payment.amount }} · Head to the Payment tab to choose Cash or GCash and complete payment.</div>
+              </div>
+              <button class="btn btn-red btn-sm" onclick="memberTab('payment', document.getElementById('nav-member-payment'))">GO TO PAYMENT</button>
+            </div>
+            {% else %}
+            {% if declined_plan %}
+            <div class="gate-banner" style="border-color:rgba(239,68,68,0.35);">
+              <span class="gate-banner-icon">❌</span>
+              <div>
+                <div class="gate-banner-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                  Your {{ declined_plan.name }} plan request was declined
+                  <span class="badge badge-red">DECLINED</span>
+                </div>
+                <div class="gate-banner-text">Check with staff or admin for the reason, then submit a new request below whenever you're ready.</div>
+              </div>
+            </div>
+            {% endif %}
+            <div class="plan-grid">
+              {% for p in content_plans %}
+              <div class="plan-card" onclick="selectPlan(this,'{{ p.name|lower }}')">
+                <div class="plan-name">{{ p.name }}</div>
+                <div class="plan-price">₱{{ '{:,.0f}'.format(p.price) if p.price == p.price|int else '{:,.2f}'.format(p.price) }}</div>
+                <div class="plan-view-link" onclick="event.stopPropagation();openPlanModal('{{ p.name|lower }}')">👁 View Inclusions</div>
+              </div>
+              {% else %}
+              <div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:20px;">No membership plans available right now. Check back soon.</div>
+              {% endfor %}
+            </div>
+            <script id="member-plans-data" type="application/json">{{ plans_data|tojson }}</script>
+
+            <!-- Plan request -->
+            <div class="proof-upload-box">
+              <div class="form-group">
+                <label class="form-label">When do you want to start?</label>
+                <input class="form-input" type="date" id="member-renew-start">
+                <div style="font-size:11px;color:var(--muted);margin-top:4px;">
+                  Pick today to start right away, or a future date if you'd rather begin later.
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Are you a student?</label>
+                <select class="form-input" id="member-renew-student" onchange="toggleStudentIdField(this)">
+                  <option value="no">No</option>
+                  <option value="yes">Yes — I have a valid school ID</option>
+                </select>
+              </div>
+              <div class="form-group" id="member-student-id-group" style="display:none;">
+                <label class="form-label">Upload School ID (front, photo or scan)</label>
+                <input class="form-input" type="file" id="member-student-id" accept="image/*"
+                       onchange="previewStudentId(this)">
+                <div style="font-size:11px;color:var(--muted);margin-top:4px;">
+                  Required to verify student status. Admin will confirm before your plan is approved.
+                </div>
+                <img id="member-student-id-preview" class="proof-preview" alt="School ID preview" style="display:none;">
+              </div>
+              <div style="font-size:12px;color:var(--muted);margin-top:4px;margin-bottom:4px;line-height:1.6;">
+                Submitting sends this plan as a request. Once submitted, go to the
+                <strong>Payment</strong> tab to choose Cash or GCash and complete payment —
+                your plan activates once staff or admin confirms it.
+              </div>
+              <button class="btn btn-red" style="margin-top:16px;width:100%;" onclick="submitRenewalPayment()">
+                REQUEST MEMBERSHIP PLAN
+              </button>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+
+        <!-- Current plan details -->
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Current Plan</div></div>
+          <div class="panel-body">
+            {% if plan %}
+            <div style="font-family:'Bebas Neue';font-size:36px;color:var(--red);margin-bottom:4px;">{{ plan.name|upper }}</div>
+            <div style="font-size:13px;color:var(--muted);margin-bottom:4px;">₱{{ '%.0f'|format(plan.price) }}</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px;">
+              <span class="badge {% if plan.status == 'Active' %}badge-green{% elif plan.status == 'Expired' %}badge-red{% else %}badge-gold{% endif %}">
+                PLAN: {{ plan.status|upper }}
+              </span>
+              <span class="badge {% if plan.payment_status == 'Verified' %}badge-green{% elif plan.payment_status in ['Rejected', 'Cancelled'] %}badge-red{% else %}badge-blue{% endif %}">
+                PAYMENT: {{ plan.payment_status|upper }}
+              </span>
+            </div>
+            <div class="goal-item"><div class="goal-header"><span>Start Date</span><span>{{ plan.start_date }}</span></div></div>
+            <div class="goal-item"><div class="goal-header"><span>Expiry Date</span><span>{{ plan.expiry_date }}</span></div></div>
+            <div class="goal-item"><div class="goal-header"><span>Days Left</span><span class="goal-val {% if plan.days_left > 3 %}green{% else %}red{% endif %}" style="font-weight:700;">{{ plan.days_left }} days</span></div></div>
+            {% if plan.wants_coach %}
+            <div class="goal-item"><div class="goal-header"><span>Coach</span><span>{{ plan.coach_name }}</span></div></div>
+            <div class="goal-item"><div class="goal-header"><span>Coach Fee</span><span>{% if plan.coach_fee %}+₱{{ '{:,.0f}'.format(plan.coach_fee) if plan.coach_fee == plan.coach_fee|int else '{:,.2f}'.format(plan.coach_fee) }}{% else %}Free{% endif %}</span></div></div>
+            {% endif %}
+            <div class="progress-bar" style="margin-top:16px;"><div class="progress-fill" data-width="{{ plan.percent_used }}"></div></div>
+            {% else %}
+            <div style="font-family:'Bebas Neue';font-size:28px;color:var(--muted);margin-bottom:8px;">NO ACTIVE PLAN</div>
+            <div style="font-size:13px;color:var(--muted);">Select a plan below to get started.</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div><!-- /member-membership -->
+
+    <!-- ── Payment ───────────────── -->
+    <div id="member-payment" class="sub-panel">
+      <div class="page-header"><div><div class="page-title">PAYMENT</div><div class="page-subtitle">Complete payment for your membership plan and view your payment records</div></div></div>
+
+      {% if awaiting_approval %}
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">Plan Request {{ awaiting_approval.request_status }}</div>
+          {% if awaiting_approval.request_status == 'Processing' %}
+          <span class="badge badge-gold">PROCESSING</span>
+          {% else %}
+          <span class="badge badge-blue">PENDING</span>
+          {% endif %}
+        </div>
+        <div class="panel-body">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">
+            <div>
+              <div style="font-family:'Bebas Neue';font-size:28px;color:var(--red);">{{ awaiting_approval.plan_name|upper }} PLAN</div>
+              <div style="font-size:12px;color:var(--muted);">Requested start: {{ awaiting_approval.start_date }}</div>
+              {% if awaiting_approval.is_student %}
+              <div style="font-size:11px;color:var(--gold);margin-top:4px;">🎓 Student discount applied</div>
+              {% endif %}
+            </div>
+            <div style="font-family:'Bebas Neue';font-size:32px;color:var(--white);">₱{{ awaiting_approval.amount }}</div>
+          </div>
+          <div style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:14px;">
+            {% if awaiting_approval.request_status == 'Processing' %}
+            ⏳ Staff is currently reviewing your plan request — it can no longer be cancelled.
+            {% else %}
+            ⏳ Your plan request is awaiting staff or admin approval.
+            {% endif %}
+            Once it's approved, you'll be able to choose Cash or GCash and complete payment right here.
+          </div>
+          {% if awaiting_approval.request_status != 'Processing' %}
+          <button class="btn btn-sm withdraw-request-btn" style="background:rgba(230,30,37,0.1);color:var(--red);border:1px solid rgba(230,30,37,0.2);" onclick="withdrawPlanRequest({{ awaiting_approval.id }})">✗ Cancel Request</button>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if pending_payment %}
+      <div class="panel" id="payment-submit-panel">
+        <div class="panel-header"><div class="panel-title">Submit Payment</div></div>
+        <div class="panel-body">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:16px;">
+            <div>
+              <div style="font-family:'Bebas Neue';font-size:28px;color:var(--red);">{{ pending_payment.plan_name|upper }} PLAN</div>
+              <div style="font-size:12px;color:var(--muted);">Requested start: {{ pending_payment.start_date }}</div>
+              {% if pending_payment.is_student %}
+              <div style="font-size:11px;color:var(--gold);margin-top:4px;">🎓 Student discount applied</div>
+              {% endif %}
+            </div>
+            <div style="font-family:'Bebas Neue';font-size:32px;color:var(--white);">₱{{ pending_payment.amount }}</div>
+          </div>
+
+          {% if pending_payment.needs_method %}
+          <div class="proof-upload-box">
+            <div class="form-group">
+              <label class="form-label">Payment Method</label>
+              <select class="form-input" id="payment-method-select" onchange="togglePaymentProofField(this)">
+                <option value="cash">Cash — pay at the front desk</option>
+                <option value="gcash">GCash</option>
+              </select>
+            </div>
+            <div class="form-group" id="payment-gcash-fields" style="display:none;">
+              <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:14px 16px;margin-bottom:16px;">
+                <div style="font-size:11px;color:var(--muted);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:6px;">Send GCash payment to</div>
+                <div style="font-family:'Bebas Neue';font-size:24px;color:var(--white);letter-spacing:1px;">{{ gcash_settings.gcash_number if gcash_settings else '0945 397 0594' }}</div>
+                <div style="font-size:13px;color:var(--muted);margin-top:2px;">{{ gcash_settings.gcash_account_name if gcash_settings else 'LYDIA M. EMATA' }}</div>
+              </div>
+              <label class="form-label">GCash Reference Number</label>
+              <input class="form-input" id="payment-gcash-reference" placeholder="e.g. 1234567890123">
+              <label class="form-label" style="margin-top:14px;">Proof of Payment (screenshot)</label>
+              <input class="form-input" type="file" id="payment-gcash-proof" accept="image/*"
+                     onchange="previewGcashProof(this)">
+              <div style="font-size:11px;color:var(--muted);margin-top:4px;">
+                Upload a screenshot of your GCash payment confirmation. Admin will verify it
+                before your membership is activated.
+              </div>
+              <img id="payment-gcash-proof-preview" class="proof-preview" alt="GCash proof preview" style="display:none;">
+            </div>
+            <div style="font-size:12px;color:var(--muted);margin-top:4px;margin-bottom:4px;line-height:1.6;">
+              If paying by Cash, settle payment at the front desk with staff. If paying by GCash,
+              attach your reference number and proof of payment above.
+            </div>
+            <button class="btn btn-red" id="payment-submit-btn" style="margin-top:16px;width:100%;" onclick="submitPaymentMethod()">
+              PROCEED TO FRONT DESK
+            </button>
+          </div>
+          {% else %}
+          <div style="font-size:13px;color:var(--muted);line-height:1.6;">
+            Payment method: <strong style="color:var(--white);">{{ pending_payment.method }}</strong>{% if pending_payment.reference %} · Reference: <strong style="color:var(--white);">{{ pending_payment.reference }}</strong>{% endif %}
+            {% if pending_payment.method == 'GCash' %}
+            <br>Your payment is submitted and awaiting verification by admin.
+            {% else %}
+            <br>Please settle your Cash payment at the front desk — staff will confirm it there.
+            {% endif %}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Past Payments</div></div>
+        <table class="data-table">
+          <thead><tr><th>Date</th><th>Plan</th><th>Amount</th><th>Method</th><th>Reference</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for p in payment_history %}
+            <tr>
+              <td>{{ p.date }}</td>
+              <td>{{ p.plan }}{% if p.is_student %} <span class="badge badge-gold" style="margin-left:4px;" title="Student discount applied">🎓</span>{% endif %}</td>
+              <td>₱{{ p.amount }}</td>
+              <td>{{ '' if p.method.startswith('Pending') else p.method }}</td>
+              <td>{{ p.reference }}</td>
+              <td>
+                {% if p.status == 'verified' %}
+                <span class="badge badge-green">Approved</span>
+                {% elif p.status == 'rejected' %}
+                <span class="badge badge-red">Declined</span>
+                {% elif p.status == 'approved' and p.method.startswith('Pending') %}
+                <span class="badge badge-gold">Awaiting Payment</span>
+                {% elif p.status == 'approved' and p.method == 'Cash' %}
+                <span class="badge badge-blue">Pending — awaiting staff approval</span>
+                {% elif p.status == 'approved' %}
+                <span class="badge badge-blue">Pending — awaiting admin approval</span>
+                {% else %}
+                <span class="badge badge-blue">Pending Approval</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" style="text-align:center;color:var(--muted);">No payments submitted yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div><!-- /member-payment -->
+
+    <!-- ── My Attendance ────────────────── -->
+    <div id="member-attendance" class="sub-panel">
+      <div class="page-header"><div><div class="page-title">MY ATTENDANCE</div><div class="page-subtitle" id="attendance-month-label">{{ month_label }}</div></div></div>
+      <div class="panel">
+        <div class="panel-header" style="display:flex;align-items:center;justify-content:space-between;">
+          <div class="panel-title">Attendance Calendar</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <button type="button" class="btn btn-sm btn-outline" id="attendance-prev-month" onclick="changeAttendanceMonth(-1)" aria-label="Previous month">‹ PREV</button>
+            <button type="button" class="btn btn-sm btn-outline" id="attendance-next-month" onclick="changeAttendanceMonth(1)" aria-label="Next month">NEXT ›</button>
+          </div>
+        </div>
+        <div class="panel-body"><div class="att-grid" id="att-grid-member"></div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Session History</div></div>
+        <table class="data-table">
+          <thead><tr><th>Date</th><th>Check-in</th><th>Check-out</th><th>Duration</th></tr></thead>
+          <tbody id="attendance-session-history-body">
+            {% for s in session_history %}
+            <tr><td>{{ s.date }}</td><td>{{ s.check_in }}</td><td>{{ s.check_out }}</td><td>{{ s.duration }}</td></tr>
+            {% else %}
+            <tr><td colspan="4" style="text-align:center;color:var(--muted);">No sessions logged this month yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div><!-- /member-attendance -->
+
+    <!-- ── Body Goals ───────────────────── -->
+    <div id="member-goals" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">TRACK BODY GOALS</div></div>
+      </div>
+
+      <!-- ── AI Fitness Goal Setup wizard (Steps 1–2 only for now) ───────
+           Reuses existing .panel / .form-group / .form-input / .plan-card /
+           .btn classes so it matches the rest of the dashboard. This is now
+           the official fitness-goal setup flow — the old "+ UPDATE GOALS"
+           button/modal was removed since this wizard replaces it. Does not
+           touch the Current Measurements / Notes panels below. ── -->
+      <div class="panel" id="fitness-wizard-panel" style="margin-bottom:20px;">
+        <div class="panel-header"><div class="panel-title">Fitness Goal Setup</div></div>
+        <div class="panel-body">
+
+          <div class="fw-steps">
+            <span class="fw-step-dot" id="fw-dot-1">1</span>
+            <span class="fw-step-line" id="fw-line-1"></span>
+            <span class="fw-step-dot" id="fw-dot-2">2</span>
+            <span class="fw-step-line" id="fw-line-2"></span>
+            <span class="fw-step-dot" id="fw-dot-3">3</span>
+          </div>
+
+          <!-- STEP 1 — Member Fitness Information -->
+          <div id="fw-step-1" class="fw-step-panel">
+            <div class="panel-title" style="margin-bottom:16px;">Tell us about yourself</div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Height (cm)</label>
+                <input class="form-input" type="number" id="fw-height" min="100" max="250" step="0.1"
+                       placeholder="e.g. 170" value="{{ fitness_profile.height_cm if fitness_profile and fitness_profile.height_cm else '' }}">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Current Weight (kg)</label>
+                <input class="form-input" type="number" id="fw-weight" min="20" max="300" step="0.1"
+                       placeholder="e.g. 70" value="{{ goal.current_weight if goal and goal.current_weight else '' }}">
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Sex</label>
+                <select class="form-input" id="fw-sex">
+                  <option value="">Select</option>
+                  <option value="male"   {{ 'selected' if fitness_profile and fitness_profile.sex == 'male' }}>Male</option>
+                  <option value="female" {{ 'selected' if fitness_profile and fitness_profile.sex == 'female' }}>Female</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Activity Level</label>
+                <select class="form-input" id="fw-activity">
+                  <option value="">Select</option>
+                  <option value="low_activity"      {{ 'selected' if fitness_profile and fitness_profile.activity_level == 'low_activity' }}>Low Activity — Little to no exercise, or light activity 1–3 days/week</option>
+                  <option value="moderate_activity" {{ 'selected' if fitness_profile and fitness_profile.activity_level == 'moderate_activity' }}>Moderate Activity — Regular exercise 3–5 days/week</option>
+                  <option value="high_activity"     {{ 'selected' if fitness_profile and fitness_profile.activity_level == 'high_activity' }}>High Activity — Frequent, intense exercise or physically demanding work 6–7 days/week</option>
+                </select>
+              </div>
+            </div>
+
+            <div style="font-size:11px;color:var(--muted);margin-bottom:16px;">
+              {% if member_age %}
+              Age: <strong style="color:var(--white);">{{ member_age }}</strong> (calculated from your birthday on file)
+              {% else %}
+              Add your birthday under Profile Settings so we can factor in your age.
+              {% endif %}
+            </div>
+
+            <button class="btn btn-red" style="width:100%;" id="fw-step1-btn" onclick="submitFitnessStep1()">CONTINUE</button>
+          </div><!-- /fw-step-1 -->
+
+          <!-- STEP 2 — Fitness Goal Selection -->
+          <div id="fw-step-2" class="fw-step-panel" style="display:none;">
+            <div class="panel-title" style="margin-bottom:16px;">Choose your fitness goal</div>
+
+            <div class="plan-grid" id="fw-goal-grid" style="grid-template-columns:1fr 1fr;">
+              <div class="plan-card" data-goal="CUT" onclick="selectFitnessGoal(this)">
+                <div class="plan-name">CUT</div>
+                <div class="fw-goal-desc">Reduce body fat / lose weight while aiming to preserve muscle.</div>
+              </div>
+              <div class="plan-card" data-goal="BULK" onclick="selectFitnessGoal(this)">
+                <div class="plan-name">BULK</div>
+                <div class="fw-goal-desc">Increase body weight and focus on muscle growth.</div>
+              </div>
+              <div class="plan-card" data-goal="MAINTAIN" onclick="selectFitnessGoal(this)">
+                <div class="plan-name">MAINTAIN</div>
+                <div class="fw-goal-desc">Maintain current body weight while maintaining fitness.</div>
+              </div>
+              <div class="plan-card" data-goal="RECOMP" onclick="selectFitnessGoal(this)">
+                <div class="plan-name">BODY RECOMPOSITION</div>
+                <div class="fw-goal-desc">Work toward improving muscle mass while reducing body fat.</div>
+              </div>
+            </div>
+
+            <button class="btn btn-red" style="width:100%;margin-top:16px;" id="fw-step2-btn" onclick="submitFitnessStep2()" disabled>CONTINUE</button>
+            <button class="btn btn-outline" style="width:100%;margin-top:8px;" onclick="fitnessWizardBack()">← BACK</button>
+          </div><!-- /fw-step-2 -->
+
+          <!-- STEP 3 — Your Fitness Targets (deterministic calculations only;
+               no AI, no diet/meal/workout recommendations yet) -->
+          <div id="fw-step-3" class="fw-step-panel" style="display:none;">
+            <div class="panel-title" style="margin-bottom:4px;">Your Fitness Targets</div>
+            <div id="fw-goal-note" style="font-size:12px;color:var(--muted);margin-bottom:16px;"></div>
+
+            <div class="goal-item">
+              <div class="goal-header"><span class="goal-label">BMI</span><span class="goal-val red" id="fw-result-bmi">—</span></div>
+              <div style="font-size:11px;color:var(--muted);">An estimate based on your height and weight.</div>
+            </div>
+            <div class="goal-item">
+              <div class="goal-header"><span class="goal-label">BMR</span><span class="goal-val red" id="fw-result-bmr">—</span></div>
+              <div style="font-size:11px;color:var(--muted);">Estimated calories your body uses at rest.</div>
+            </div>
+            <div class="goal-item">
+              <div class="goal-header"><span class="goal-label">TDEE</span><span class="goal-val red" id="fw-result-tdee">—</span></div>
+              <div style="font-size:11px;color:var(--muted);">Estimated calories your body uses in a typical day based on your activity.</div>
+            </div>
+            <div class="goal-item">
+              <div class="goal-header"><span class="goal-label">Daily Calorie Target</span><span class="goal-val red" id="fw-result-calorie">—</span></div>
+              <div style="font-size:11px;color:var(--muted);">Estimated daily calorie intake based on your selected goal.</div>
+            </div>
+            <div class="goal-item">
+              <div class="goal-header"><span class="goal-label">Daily Protein Target</span><span class="goal-val green" id="fw-result-protein">—</span></div>
+              <div style="font-size:11px;color:var(--muted);">Estimated daily protein target based on your current weight.</div>
+            </div>
+
+            <div style="font-size:11px;color:var(--muted);margin-top:12px;">These are general fitness estimates for the Power Gym system, not medical prescriptions.</div>
+
+            <button class="btn btn-outline" style="width:100%;margin-top:16px;" onclick="fitnessWizardEditGoal()">← BACK TO GOAL</button>
+          </div><!-- /fw-step-3 -->
+
+          <!-- CONFIRMATION / CALCULATION-FALLBACK STATE — shown briefly after
+               Step 2 while targets are calculated, and reused as a retry
+               screen if the calculation call fails (e.g. server unreachable,
+               or birthday missing) so Step 1/2 data is never lost. -->
+          <div id="fw-confirm" class="fw-step-panel" style="display:none;">
+            <div style="text-align:center;padding:16px 0;">
+              <div style="font-size:15px;color:var(--white);">Your goal is set to <strong id="fw-confirm-goal-label" class="goal-val red"></strong>.</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:10px;" id="fw-confirm-message">Calculating your fitness targets...</div>
+              <button class="btn btn-outline" style="margin-top:16px;display:none;" id="fw-confirm-retry-btn" onclick="retryFitnessCalculation()">RETRY CALCULATION</button>
+              <button class="btn btn-outline" style="margin-top:8px;" onclick="fitnessWizardEditGoal()">CHANGE GOAL</button>
+            </div>
+          </div><!-- /fw-confirm -->
+
+        </div>
+      </div><!-- /fitness-wizard-panel -->
+
+      <!-- ── YOUR PERSONALIZED FITNESS PLAN — Stage 4. Deterministic,
+           rule-based recommendations generated from Step 3's already-
+           calculated calorie/protein targets + the member's selected goal.
+           No AI. Hidden until Step 3 has results and the plan loads
+           successfully; Step 1–3 remain fully usable even if this section
+           fails to load.
+           UI: compact mini-dashboard with tabs (Overview/Nutrition/Foods &
+           Meals/Workouts/Equipment/Tips) instead of one long scroll — the
+           underlying data/fetch logic is unchanged, this is presentation
+           only. ── -->
+      <div class="panel" id="fitness-plan-panel" style="display:none;margin-bottom:20px;">
+        <div class="panel-header"><div class="panel-title">Your Personalized Fitness Plan</div></div>
+        <div class="panel-body">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:16px;">General fitness and nutrition guidance only. This is not medical advice.</div>
+
+          <div id="fp-status-message" style="display:none;font-size:13px;color:var(--muted);text-align:center;padding:16px 0;"></div>
+
+          <div id="fp-plan-content" style="display:none;">
+
+            <!-- Summary strip -->
+            <div class="fp-summary-grid">
+              <div class="stat-card red fp-stat-compact">
+                <span class="stat-icon">🎯</span>
+                <div class="stat-value" id="fp-summary-goal">—</div>
+                <div class="stat-label">Fitness Goal</div>
+              </div>
+              <div class="stat-card blue fp-stat-compact">
+                <span class="stat-icon">⚡</span>
+                <div class="stat-value" id="fp-summary-activity">—</div>
+                <div class="stat-label">Activity Level</div>
+              </div>
+              <div class="stat-card gold fp-stat-compact">
+                <span class="stat-icon">🔥</span>
+                <div class="stat-value" id="fp-summary-calorie">—</div>
+                <div class="stat-label">Daily Calorie Target</div>
+              </div>
+              <div class="stat-card green fp-stat-compact">
+                <span class="stat-icon">💪</span>
+                <div class="stat-value" id="fp-summary-protein">—</div>
+                <div class="stat-label">Daily Protein Target</div>
+              </div>
+            </div>
+
+            <!-- Tab navigation -->
+            <div class="fp-tabs" role="tablist">
+              <button type="button" class="fp-tab-btn active" data-fp-tab="overview"  onclick="switchFitnessPlanTab('overview', this)">OVERVIEW</button>
+              <button type="button" class="fp-tab-btn"        data-fp-tab="nutrition" onclick="switchFitnessPlanTab('nutrition', this)">NUTRITION</button>
+              <button type="button" class="fp-tab-btn"        data-fp-tab="foods"     onclick="switchFitnessPlanTab('foods', this)">FOODS &amp; MEALS</button>
+              <button type="button" class="fp-tab-btn"        data-fp-tab="workouts"  onclick="switchFitnessPlanTab('workouts', this)">WORKOUTS</button>
+              <button type="button" class="fp-tab-btn"        data-fp-tab="equipment" onclick="switchFitnessPlanTab('equipment', this)">EQUIPMENT</button>
+              <button type="button" class="fp-tab-btn"        data-fp-tab="tips"      onclick="switchFitnessPlanTab('tips', this)">TIPS</button>
+            </div>
+
+            <!-- OVERVIEW -->
+            <div class="fp-tab-panel" id="fp-panel-overview" data-fp-panel="overview">
+              <div style="font-size:13px;color:var(--white);line-height:1.7;margin-bottom:18px;">
+                This plan is generated from your fitness profile and your Step 3 calculated targets. Explore your
+                nutrition targets, recommended foods and meals, workouts, equipment, and general tips for your
+                <strong id="fp-overview-goal-label" class="red">—</strong> goal using the tabs above.
+              </div>
+              <div class="fp-overview-grid">
+                <div class="fp-overview-tile" onclick="switchFitnessPlanTab('nutrition', document.querySelector('[data-fp-tab=nutrition]'))">
+                  <span class="fp-overview-icon">🍽️</span><span>Nutrition</span>
+                </div>
+                <div class="fp-overview-tile" onclick="switchFitnessPlanTab('foods', document.querySelector('[data-fp-tab=foods]'))">
+                  <span class="fp-overview-icon">🥗</span><span>Foods &amp; Meals</span>
+                </div>
+                <div class="fp-overview-tile" onclick="switchFitnessPlanTab('workouts', document.querySelector('[data-fp-tab=workouts]'))">
+                  <span class="fp-overview-icon">🏋️</span><span>Workouts</span>
+                </div>
+                <div class="fp-overview-tile" onclick="switchFitnessPlanTab('equipment', document.querySelector('[data-fp-tab=equipment]'))">
+                  <span class="fp-overview-icon">🧰</span><span>Equipment</span>
+                </div>
+                <div class="fp-overview-tile" onclick="switchFitnessPlanTab('tips', document.querySelector('[data-fp-tab=tips]'))">
+                  <span class="fp-overview-icon">💡</span><span>Tips</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- NUTRITION -->
+            <div class="fp-tab-panel" id="fp-panel-nutrition" data-fp-panel="nutrition" style="display:none;">
+              <div class="goal-item">
+                <div class="goal-header"><span class="goal-label">Daily Calorie Target</span><span class="goal-val red" id="fp-nutrition-calorie">—</span></div>
+              </div>
+              <div class="goal-item">
+                <div class="goal-header"><span class="goal-label">Daily Protein Target</span><span class="goal-val green" id="fp-nutrition-protein">—</span></div>
+              </div>
+            </div>
+
+            <!-- FOODS & MEALS -->
+            <div class="fp-tab-panel" id="fp-panel-foods" data-fp-panel="foods" style="display:none;">
+              <div class="panel-title" style="font-size:14px;margin-bottom:10px;">Recommended Foods</div>
+              <div class="fp-card-grid" id="fp-foods-list"></div>
+
+              <div class="panel-title" style="font-size:14px;margin:22px 0 10px;">Sample Daily Meal Plan</div>
+              <div class="fp-card-grid" id="fp-meal-plan"></div>
+              <div style="font-size:11px;color:var(--muted);margin-top:12px;" id="fp-meal-plan-total"></div>
+            </div>
+
+            <!-- WORKOUTS -->
+            <div class="fp-tab-panel" id="fp-panel-workouts" data-fp-panel="workouts" style="display:none;">
+              <div style="font-size:12px;color:var(--muted);margin-bottom:14px;" id="fp-workout-frequency"></div>
+
+              <!-- Day 1–7 navigation, styled like the top-level plan tabs
+                   so it reads as "tabs within a tab" — only one day's
+                   content is shown at a time to avoid a long scroll. -->
+              <div class="fp-day-tabs" id="fp-day-tabs" role="tablist"></div>
+
+              <div id="fp-day-panels"></div>
+            </div>
+
+            <!-- EQUIPMENT -->
+            <div class="fp-tab-panel" id="fp-panel-equipment" data-fp-panel="equipment" style="display:none;">
+              <div class="fp-card-grid" id="fp-equipment-list"></div>
+            </div>
+
+            <!-- TIPS -->
+            <div class="fp-tab-panel" id="fp-panel-tips" data-fp-panel="tips" style="display:none;">
+              <ul id="fp-tips-list" style="font-size:13px;color:var(--white);line-height:1.9;padding-left:18px;margin:0;"></ul>
+              <div style="font-size:11px;color:var(--muted);margin-top:16px;">General fitness and nutrition guidance only. This is not medical advice.</div>
+            </div>
+
+          </div><!-- /fp-plan-content -->
+        </div>
+      </div><!-- /fitness-plan-panel -->
+
+      <div class="grid-2">
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Current Measurements</div></div>
+          <div class="panel-body">
+            {% if goal %}
+            <div class="goal-item">
+              <div class="goal-header"><span class="goal-label">Weight</span><span class="goal-val red">{{ goal.current_weight if goal.current_weight else '—' }} kg</span></div>
+              <div style="font-size:11px;color:var(--muted);">Goal: {{ goal.goal_weight if goal.goal_weight else '—' }} kg</div>
+            </div>
+            <div class="goal-item">
+              <div class="goal-header"><span class="goal-label">BMI</span><span class="goal-val red">{{ goal.current_bmi if goal.current_bmi else '—' }}</span></div>
+              <div style="font-size:11px;color:var(--muted);">Normal range: 18.5–24.9</div>
+            </div>
+            {% else %}
+            <div style="text-align:center;color:var(--muted);padding:20px 0;">No body goals logged yet. Complete the Fitness Goal Setup above to add your first entry.</div>
+            {% endif %}
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Notes</div></div>
+          <div class="panel-body">
+            {% if goal and goal.notes %}
+            <div style="font-size:13px;color:var(--white);line-height:1.6;">{{ goal.notes }}</div>
+            <div style="margin-top:16px;font-size:11px;color:var(--muted);">Last updated: {{ goal.recorded_at.strftime('%b %d, %Y') }}</div>
+            {% else %}
+            <div style="text-align:center;color:var(--muted);padding:20px 0;">No notes yet.</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div><!-- /member-goals -->
+
+    <script id="member-fitness-data" type="application/json">{{ {'height_cm': (fitness_profile.height_cm|float if fitness_profile and fitness_profile.height_cm else None), 'sex': (fitness_profile.sex if fitness_profile else None), 'activity_level': (fitness_profile.activity_level if fitness_profile else None), 'fitness_goal': (fitness_profile.fitness_goal if fitness_profile else None), 'weight_kg': (goal.current_weight|float if goal and goal.current_weight else None), 'calculations': ({'bmi': goal.current_bmi|float, 'bmr': goal.bmr|float, 'tdee': goal.tdee|float, 'calorie_target': goal.calorie_target, 'protein_target_g': goal.protein_target_g} if (goal and goal.current_bmi is not none and goal.bmr is not none and goal.tdee is not none and goal.calorie_target is not none and goal.protein_target_g is not none) else None)}|tojson }}</script>
+
+
+
+    <!-- ── Services ─────────────────────── -->
+    <div id="member-services" class="sub-panel">
+      <div class="page-header"><div><div class="page-title">GYM SERVICES</div></div></div>
+
+      <div class="grid-4">
+        {% for s in content_services %}
+        <div class="panel service-card" style="position:relative;">
+          <button type="button" class="service-eye-btn" title="See equipment used for this service"
+                  onclick="event.stopPropagation(); openServiceModal({{ s.id }});"
+                  style="position:absolute;bottom:8px;right:8px;width:28px;height:28px;border-radius:50%;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.35);color:var(--white);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;">
+            👁️
+          </button>
+          <div class="panel-body" style="text-align:center;" onclick="openServiceModal({{ s.id }})">
+            {% if s.image_path %}
+            <div style="width:56px;height:56px;margin:0 auto 10px;border-radius:8px;background-size:cover;background-position:center;background-image:url('{{ url_for('static', filename=s.image_path) }}');"></div>
+            {% else %}
+            <div style="font-size:36px;margin-bottom:10px;">{{ s.icon or '🛎️' }}</div>
+            {% endif %}
+            <div class="panel-title">{{ s.name }}</div>
+            {% if s.description %}<div style="font-size:12px;color:var(--muted);margin-top:6px;">{{ s.description }}</div>{% endif %}
+          </div>
+        </div>
+        {% else %}
+        <div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:20px;">No services listed yet.</div>
+        {% endfor %}
+      </div>
+      <script id="member-services-data" type="application/json">{{ services_data|tojson }}</script>
+
+      <div class="panel" style="margin-top:20px;">
+        <div class="panel-header"><div class="panel-title">Gym Machines and Equipment</div></div>
+        <div class="panel-body">
+          {% for category, category_icon, items in equipment_by_category %}
+          <div class="equip-category">
+            <div class="equip-category-title"><span class="equip-category-icon">{{ category_icon }}</span> {{ category }}</div>
+            <div class="equip-grid">
+              {% for eq in items %}
+              <div class="equip-item"><span class="equip-item-icon">{{ eq.icon or '🏋️' }}</span> {{ eq.name }}</div>
+              {% endfor %}
+            </div>
+          </div>
+          {% else %}
+          <div style="color:var(--muted);">No equipment listed yet.</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div><!-- /member-services -->
+
+    <!-- ── Settings ─────────────────────── -->
+    <div id="member-settings" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">SETTINGS</div><div class="page-subtitle">Manage your personal information and password</div></div>
+      </div>
+
+      <div class="grid-2">
+        <!-- Personal Information -->
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Personal Information</div></div>
+          <div class="panel-body">
+            <div class="form-row-4">
+              <div class="form-group">
+                <label class="form-label">First Name</label>
+                <input class="form-input" id="pi-fname" value="{{ member.first_name }}"
+                       oninput="this.value=this.value.replace(/[^A-Za-z\s'-]/g,'')">
+              </div>
+              <div class="form-group">
+                <label class="form-label">M.I.</label>
+                <input class="form-input" id="pi-mi" maxlength="5" value="{{ member.middle_initial or '' }}"
+                       oninput="this.value=this.value.replace(/[^A-Za-z]/g,'')">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Last Name</label>
+                <input class="form-input" id="pi-lname" value="{{ member.last_name }}"
+                       oninput="this.value=this.value.replace(/[^A-Za-z\s'-]/g,'')">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Suffix</label>
+                <input class="form-input" id="pi-ext" maxlength="10" value="{{ member.extension_name or '' }}"
+                       oninput="this.value=this.value.replace(/[^A-Za-z.\s]/g,'')">
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Email Address</label>
+              <input class="form-input" type="email" id="pi-email" value="{{ member.email }}">
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Phone</label>
+                <input class="form-input" id="pi-phone" placeholder="09171234567" maxlength="11" inputmode="numeric" pattern="09\d{9}"
+                       value="{{ member.phone or '' }}"
+                       oninput="this.value=this.value.replace(/\D/g,'').slice(0,11)">
+                <div style="font-size:11px;color:var(--muted);margin-top:4px;">Must start with 09 and be 11 digits.</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Birthday</label>
+                <input class="form-input" type="date" id="pi-bday" value="{{ member.birthday.isoformat() if member.birthday else '' }}">
+              </div>
+            </div>
+            <button class="btn btn-red" style="width:100%;margin-top:8px;" onclick="submitProfileUpdate()">SAVE CHANGES</button>
+          </div>
+        </div>
+
+        <!-- Change Password -->
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Change Password</div></div>
+          <div class="panel-body">
+            <div class="form-group">
+              <label class="form-label">Current Password</label>
+              <div class="password-field">
+                <input class="form-input" type="password" id="cp-current" placeholder="Enter current password">
+                <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)" aria-label="Show password">
+                  <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  <svg class="icon-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.86 21.86 0 0 1 5.06-6.06M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.86 21.86 0 0 1-3.22 4.56M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">New Password</label>
+              <div class="password-field">
+                <input class="form-input" type="password" id="cp-new" placeholder="Minimum 8 characters">
+                <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)" aria-label="Show password">
+                  <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  <svg class="icon-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.86 21.86 0 0 1 5.06-6.06M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.86 21.86 0 0 1-3.22 4.56M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Confirm New Password</label>
+              <div class="password-field">
+                <input class="form-input" type="password" id="cp-confirm" placeholder="Re-enter new password">
+                <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)" aria-label="Show password">
+                  <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  <svg class="icon-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.86 21.86 0 0 1 5.06-6.06M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.86 21.86 0 0 1-3.22 4.56M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                </button>
+              </div>
+            </div>
+            <button class="btn btn-red" id="cp-submit-btn" style="width:100%;margin-top:8px;" onclick="submitChangePassword()">SAVE PASSWORD</button>
+          </div>
+        </div>
+      </div>
+    </div><!-- /member-settings -->
+
+  </div><!-- /main-content -->
+</div><!-- /member-dashboard-root -->
+
+
+<!-- ══════════════════════════════════
+     MODALS
+══════════════════════════════════ -->
+<div class="modal-overlay" id="service-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('service-modal')">✕</button>
+    <div style="font-size:40px;text-align:center;margin-bottom:6px;" id="service-modal-icon">🛎️</div>
+    <div class="modal-title" style="text-align:center;" id="service-modal-title">SERVICE</div>
+    <div style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:18px;" id="service-modal-subtitle"></div>
+    <div class="panel-title" id="service-modal-list-title" style="margin-bottom:4px;">What's included</div>
+    <ul class="plan-features" id="service-modal-list"></ul>
+  </div>
+</div>
+
+<div class="modal-overlay" id="exercise-instructions-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('exercise-instructions-modal')">✕</button>
+    <div class="modal-title" style="text-align:center;" id="exercise-instructions-modal-title">EXERCISE</div>
+    <div style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:18px;" id="exercise-instructions-modal-subtitle"></div>
+    <div class="panel-title" style="margin-bottom:4px;">Step-by-step instructions</div>
+    <ol class="exercise-instructions-list" id="exercise-instructions-modal-steps"></ol>
+  </div>
+</div>
+
+<div class="modal-overlay" id="plan-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('plan-modal')">✕</button>
+    <div class="modal-title" style="text-align:center;" id="plan-modal-title">MONTHLY</div>
+    <div style="font-family:'Bebas Neue';font-size:30px;color:var(--red);text-align:center;margin-bottom:4px;" id="plan-modal-price">₱900</div>
+    <div style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:18px;" id="plan-modal-subtitle">Full gym access, billed monthly</div>
+    <div class="panel-title" style="margin-bottom:4px;">What's included</div>
+    <ul class="plan-features" id="plan-modal-list"></ul>
+    <button class="btn btn-red" style="margin-top:18px;width:100%;" id="plan-modal-select-btn" onclick="selectPlanFromModal()">SELECT THIS PLAN</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="confirm-plan-modal">
+  <div class="modal" style="max-width:420px;">
+    <button class="modal-close" onclick="cancelPlanRequest()">✕</button>
+    <div class="modal-title" style="text-align:center;">CONFIRM YOUR REQUEST</div>
+    <div style="font-size:13px;color:var(--muted);text-align:center;line-height:1.6;margin:10px 0 16px;">
+      Review your invoice below, then confirm.
+    </div>
+
+    <div style="background:var(--dark);border:1px solid var(--border);border-radius:8px;padding:14px 16px;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13px;">
+        <span style="color:var(--muted);">Plan</span>
+        <strong id="confirm-plan-name" style="color:var(--red);">MONTHLY</strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13px;">
+        <span style="color:var(--muted);">Regular Price</span>
+        <span id="confirm-plan-regular-price">₱900</span>
+      </div>
+      <div id="confirm-plan-discount-row" style="display:none;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13px;">
+        <span style="color:var(--green);">Student Discount</span>
+        <span id="confirm-plan-discount-amount" style="color:var(--green);">−₱0</span>
+      </div>
+      <div id="confirm-plan-coach-row" style="display:none;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13px;">
+        <span style="color:var(--muted);">Coach</span>
+        <span id="confirm-plan-coach-name" style="text-align:right;">—</span>
+      </div>
+      <div id="confirm-plan-coach-fee-row" style="display:none;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13px;">
+        <span style="color:var(--muted);">Coach Fee</span>
+        <span id="confirm-plan-coach-fee">₱0</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13px;">
+        <span style="color:var(--muted);">Start Date</span>
+        <strong id="confirm-plan-date">—</strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13px;">
+        <span style="color:var(--muted);">Expires</span>
+        <strong id="confirm-plan-end-date">—</strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;margin-top:8px;border-top:1px solid var(--border);">
+        <span style="font-family:'Bebas Neue',sans-serif;font-size:15px;letter-spacing:1px;color:var(--white);">TOTAL TO PAY</span>
+        <span id="confirm-plan-total" style="font-family:'Bebas Neue',sans-serif;font-size:24px;color:var(--red);">₱900</span>
+      </div>
+    </div>
+
+
+    <div style="font-size:11px;color:var(--muted);text-align:center;margin:8px 0 0;line-height:1.6;">
+      Payment is completed in the Payment tab after staff/admin approve this request.
+    </div>
+
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin-top:16px;">
+      <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="cancelPlanRequest()">NO, GO BACK</button>
+      <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="confirmPlanRequest()">YES, REQUEST IT</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="plan-success-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="closePlanSuccessModal()">✕</button>
+    <div style="display:flex;justify-content:center;margin-bottom:14px;">
+      <div style="width:56px;height:56px;border-radius:50%;background:rgba(34,197,94,0.15);border:1px solid rgba(34,197,94,0.3);display:flex;align-items:center;justify-content:center;">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+    </div>
+    <div class="modal-title" style="text-align:center;">REQUEST SUCCESSFUL</div>
+    <div id="plan-success-message" style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
+      You successfully requested your plan.
+    </div>
+    <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="closePlanSuccessModal()">OK</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="plan-approved-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="closePlanApprovedModal()">✕</button>
+    <div style="display:flex;justify-content:center;margin-bottom:14px;">
+      <div style="width:56px;height:56px;border-radius:50%;background:rgba(34,197,94,0.15);border:1px solid rgba(34,197,94,0.3);display:flex;align-items:center;justify-content:center;">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+    </div>
+    <div class="modal-title" style="text-align:center;">MEMBERSHIP APPROVED!</div>
+    <div id="plan-approved-message" style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
+      Congratulations! Your membership plan has been approved. Please proceed to payment.
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+      <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="closePlanApprovedModal()">LATER</button>
+      <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="goToPaymentFromApproval()">PROCEED TO PAYMENT</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="payment-approved-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="closePaymentApprovedModal()">✕</button>
+    <div style="display:flex;justify-content:center;margin-bottom:14px;">
+      <div style="width:56px;height:56px;border-radius:50%;background:rgba(34,197,94,0.15);border:1px solid rgba(34,197,94,0.3);display:flex;align-items:center;justify-content:center;">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+    </div>
+    <div class="modal-title" style="text-align:center;">PAYMENT SUCCESSFUL</div>
+    <div id="payment-approved-message" style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
+      You have successfully paid your membership plan!
+    </div>
+    <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="closePaymentApprovedModal()">OK</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="plan-declined-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="closePlanDeclinedModal()">✕</button>
+    <div style="display:flex;justify-content:center;margin-bottom:14px;">
+      <div style="width:56px;height:56px;border-radius:50%;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);display:flex;align-items:center;justify-content:center;">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </div>
+    </div>
+    <div class="modal-title" style="text-align:center;">REQUEST DECLINED</div>
+    <div id="plan-declined-message" style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
+      Your plan request was declined.
+    </div>
+    <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="closePlanDeclinedModal()">OK</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="announcement-notice-modal">
+  <div class="modal" style="max-width:440px;">
+    <button class="modal-close" onclick="closeAnnouncementNoticeModal()">✕</button>
+    <div style="display:flex;justify-content:center;margin-bottom:14px;">
+      <div style="width:56px;height:56px;border-radius:50%;background:rgba(245,197,24,0.15);border:1px solid rgba(245,197,24,0.3);display:flex;align-items:center;justify-content:center;font-size:26px;">📢</div>
+    </div>
+    <div class="modal-title" style="text-align:center;">NOTICE FROM THE ADMIN</div>
+    <div id="announcement-notice-title" style="font-weight:700;text-align:center;margin-top:12px;color:var(--gold);"></div>
+    <div id="announcement-notice-body" style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:10px 0;white-space:pre-wrap;"></div>
+    <div id="announcement-notice-counter" style="font-size:11px;color:var(--muted);text-align:center;margin-bottom:16px;"></div>
+    <button class="btn btn-red" id="announcement-notice-btn" style="width:100%;justify-content:center;" onclick="closeAnnouncementNoticeModal()">OK</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="withdraw-request-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="cancelWithdrawRequest()">✕</button>
+    <div class="modal-title" style="text-align:center;">CANCEL PLAN REQUEST?</div>
+    <div style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;">
+      Are you sure you want to cancel this plan request? Staff won't see it anymore,
+      and you can submit a new request anytime.
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+      <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="cancelWithdrawRequest()">NO, KEEP IT</button>
+      <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="confirmWithdrawRequest()">YES, CANCEL IT</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="confirm-payment-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="cancelSubmitPayment()">✕</button>
+    <div class="modal-title" style="text-align:center;" id="confirm-payment-title">CONFIRM PAYMENT</div>
+    <div style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;" id="confirm-payment-text">
+      Are you sure you want to submit your payment?
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+      <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="cancelSubmitPayment()">NO</button>
+      <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="confirmSubmitPayment()">YES</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="payment-submit-success-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="closePaymentSubmitSuccessModal()">✕</button>
+    <div style="display:flex;justify-content:center;margin-bottom:14px;">
+      <div style="width:56px;height:56px;border-radius:50%;background:rgba(34,197,94,0.15);border:1px solid rgba(34,197,94,0.3);display:flex;align-items:center;justify-content:center;">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+    </div>
+    <div class="modal-title" style="text-align:center;">PAYMENT SUBMITTED</div>
+    <div id="payment-submit-success-message" style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
+      You have successfully submitted your payment. Please wait for admin's approval.
+    </div>
+    <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="closePaymentSubmitSuccessModal()">OK</button>
+  </div>
+</div>
+
+<!-- Toast Container -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- "Please wait" overlay — shown while a plan request or payment is
+     submitting to the server, so a slow connection doesn't look like a
+     frozen page. No close button; dismissed automatically by the JS
+     once the request finishes (success or error). -->
+<div class="loading-overlay" id="loading-overlay">
+  <div class="loading-overlay-box">
+    <div class="loading-spinner"></div>
+    <div class="loading-overlay-text" id="loading-overlay-text">Please wait...</div>
+  </div>
+</div>
+
+<script id="member-dashboard-data" type="application/json">{{ {'present_days': present_days, 'no_plan_days': no_plan_days, 'days_in_month': days_in_month, 'today_day': today_day, 'year': attendance_year, 'month': attendance_month, 'plan_approved_notice': plan_approved_notice, 'payment_verified_notice': payment_verified_notice, 'plan_declined_notice': plan_declined_notice, 'new_announcements': new_announcements}|tojson }}</script>
+<script src="{{ url_for('static', filename='js/tr-common.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tr-member.js') }}"></script>
+</body>
+</html>

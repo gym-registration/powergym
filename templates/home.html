@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>POWER GYM — Train Smarter, Get Stronger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@300;400;500;600;700&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tr-styles.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tr-home.css') }}">
+</head>
+<body class="home-page">
+
+<!-- ═══════════════════════════════════════
+     HEADER / NAV
+═══════════════════════════════════════ -->
+<header class="site-header">
+  <div class="section-wrap">
+    <a href="#top" class="site-brand">
+      <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Power Gym">
+      <span class="site-brand-text">POWER<span>GYM</span></span>
+    </a>
+
+    <nav>
+      <ul class="nav-links">
+        <li><a href="#top" class="active">Home</a></li>
+        <li><a href="#membership">Membership</a></li>
+        <li><a href="#programs">Programs</a></li>
+        <li><a href="#coaches">Coaches</a></li>
+        <li><a href="#schedule">Schedule</a></li>
+        <li><a href="#announcements">Announcements</a></li>
+        <li><a href="#contact">Contact</a></li>
+      </ul>
+    </nav>
+
+    <div class="header-actions">
+      <a href="{{ url_for('login') }}" class="btn-nav-ghost">SIGN IN</a>
+      <a href="{{ url_for('login') }}?screen=register" class="btn-nav-solid">REGISTER</a>
+    </div>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════
+     HERO
+═══════════════════════════════════════ -->
+<section class="hero" id="top">
+  <div class="section-wrap">
+    <div>
+      <div class="hero-tagline">"Gym Registration and Management System for Power Gym"</div>
+      <h1 class="hero-title">BUILD YOUR<br><span class="accent">BEST BODY</span></h1>
+      <p class="hero-sub">
+        Join Power Gym today and enjoy modern equipment, a supportive
+        community, and flexible membership plans built around your goals.
+      </p>
+      <div class="hero-cta">
+        <p class="hero-eyebrow">Train Smarter. Get Stronger. Stay Consistent.</p>
+      </div>
+    </div>
+
+    <div class="hero-visual">
+      <div class="hv-glow"></div>
+      <img class="hv-badge" src="{{ url_for('static', filename='images/logo.png') }}" alt="Power Gym badge">
+      <div class="hv-tag"><strong>Now open:</strong> Online registration &amp; easy payment via GCash or cash.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════
+     WHY CHOOSE POWER GYM
+═══════════════════════════════════════ -->
+<section class="section">
+  <div class="section-wrap">
+    <div class="section-head">
+      <div class="section-eyebrow">Why Power Gym</div>
+      <div class="section-title">WHY CHOOSE <span class="accent">POWER GYM?</span></div>
+    </div>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="feature-icon">🏋️</div>
+        <div class="feature-name">MODERN EQUIPMENT</div>
+        <div class="feature-desc">Latest strength and cardio equipment, well maintained and always ready.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🖥️</div>
+        <div class="feature-name">ONLINE REGISTRATION</div>
+        <div class="feature-desc">Sign up anytime using our web system — no queueing at the front desk.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">💳</div>
+        <div class="feature-name">EASY PAYMENT</div>
+        <div class="feature-desc">Cash and online payment supported, with instant proof-of-payment upload.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════
+     MEMBERSHIP PLANS
+═══════════════════════════════════════ -->
+<section class="section section-alt" id="membership">
+  <div class="section-wrap">
+    <div class="section-head">
+      <div class="section-eyebrow">Pricing</div>
+      <div class="section-title">MEMBERSHIP <span class="accent">PLANS</span></div>
+      <div class="section-desc">Pick the plan that fits your routine. Upgrade or renew anytime from your member dashboard.</div>
+    </div>
+    <div class="plans-grid">
+      {% for plan in plans %}
+      <div class="plan-tier{% if plan.name == 'Monthly' %} featured{% endif %}">
+        {% if plan.name == 'Monthly' %}<div class="plan-popular-tag">POPULAR</div>{% endif %}
+        <div class="plan-photo" style="background-image:url('{{ url_for('static', filename=plan.image_path) if plan.image_path else url_for('static', filename='images/facility-cardio.png') }}');"></div>
+        <div class="plan-tier-body">
+          <div class="plan-name">{{ plan.name }}</div>
+          <div class="plan-price">₱{{ '{:,.0f}'.format(plan.price) if plan.price == plan.price|int else '{:,.2f}'.format(plan.price) }} <span>/ {{ plan.duration_days }} day{{ 's' if plan.duration_days != 1 else '' }}</span></div>
+          {% if plan.description %}<div class="plan-desc">{{ plan.description }}</div>{% endif %}
+          {% if plan.inclusions_list %}
+          <ul class="plan-features">
+            {% for item in plan.inclusions_list %}
+            <li>{{ item }}</li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+          <a href="{{ url_for('login') }}?screen=register" class="btn {{ 'btn-red' if plan.name == 'Monthly' else 'btn-outline' }}">JOIN NOW</a>
+        </div>
+      </div>
+      {% else %}
+      <div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:30px;">Membership plans coming soon.</div>
+      {% endfor %}
+    </div>
+  </div>
+  
+</section>
+
+<!-- ═══════════════════════════════════════
+     SCHEDULE + ANNOUNCEMENTS
+═══════════════════════════════════════ -->
+<section class="section" id="schedule">
+  <div class="section-wrap">
+    <div class="info-grid">
+      <div class="info-card">
+        <div class="info-card-title">🗓️ GYM SCHEDULE</div>
+        <div class="sched-row"><span class="day">Monday – Saturday</span><span class="hrs">6:00 AM – 10:00 PM</span></div>
+        <div class="sched-row"><span class="day">Sunday</span><span class="hrs">7:00 AM – 8:00 PM</span></div>
+      </div>
+
+      <div class="info-card" id="announcements">
+        <div class="info-card-title">📢 ANNOUNCEMENTS</div>
+        <ul class="announce-list">
+          <li>Proper gym attire is required.</li>
+          <li>Members must bring their QR Code or Membership ID.</li>
+          <li>No outside food or drinks.</li>
+          <li>Wipe equipment after use.</li>
+          <li>Monthly Zumba every last Saturday.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════
+     OUR FACILITIES / EQUIPMENT
+═══════════════════════════════════════ -->
+<section class="section section-alt" id="programs">
+  <div class="section-wrap">
+    <div class="section-head">
+      <div class="section-eyebrow">Where You'll Train</div>
+      <div class="section-title">OUR <span class="accent">FACILITIES</span></div>
+    </div>
+  <div class="facility-grid">
+  {% for eq in equipment %}
+  <div class="facility-tile" style="background-image:url('{{ url_for('static', filename=eq.image_path) if eq.image_path else url_for('static', filename='images/facility-weight.png') }}');"><span class="fi">{{ eq.icon or '🏋️' }}</span><span class="label">{{ eq.name }}</span></div>
+  {% else %}
+  <div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:30px;">Facility photos coming soon.</div>
+  {% endfor %}
+</div>
+  </div>
+</section>
+
+{% if services %}
+<!-- ═══════════════════════════════════════
+     OUR SERVICES
+═══════════════════════════════════════ -->
+<section class="section" id="services">
+  <div class="section-wrap">
+    <div class="section-head">
+      <div class="section-eyebrow">What We Offer</div>
+      <div class="section-title">OUR <span class="accent">SERVICES</span></div>
+    </div>
+    <div class="facility-grid">
+      {% for svc in services %}
+      <div class="facility-tile" style="background-image:url('{{ url_for('static', filename=svc.image_path) if svc.image_path else url_for('static', filename='images/facility-reception.png') }}');"><span class="fi">{{ svc.icon or '🛎️' }}</span><span class="label">{{ svc.name }}</span></div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<!-- ═══════════════════════════════════════
+     COACHES
+═══════════════════════════════════════ -->
+<section class="section" id="coaches">
+  <div class="section-wrap">
+    <div class="section-head">
+      <div class="section-eyebrow">Personal Training</div>
+      <div class="section-title">MEET OUR <span class="accent">COACHES</span></div>
+      <div class="section-desc">Want extra guidance? Request one of our coaches from your member dashboard after signing up.</div>
+    </div>
+    <div class="trainer-grid">
+      <div class="trainer-card">
+        <div class="trainer-photo">RS</div>
+        <div class="trainer-body">
+          <div class="trainer-name">Ronel Samar</div>
+          <div class="trainer-role">Personal Coach</div>
+        </div>
+      </div>
+      <div class="trainer-card">
+        <div class="trainer-photo">JN</div>
+        <div class="trainer-body">
+          <div class="trainer-name">Jonathan Natividad</div>
+          <div class="trainer-role">Personal Coach</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+
+<!-- ═══════════════════════════════════════
+     LOCATION / CONTACT
+═══════════════════════════════════════ -->
+<section class="section" id="contact">
+  <div class="section-wrap">
+    <div class="location-grid">
+      <div class="location-card">
+        <div class="location-row"><span class="li">📍</span><div><div>POWER GYM</div><div class="muted-small">Carig Sur, beside Hall of Justice, Tuguegarao City, Cagayan 3500</div></div></div>
+        <div class="location-row"><span class="li">📞</span><div>(09) 123 456 7890</div></div>
+        <div class="location-row"><span class="li">✉️</span><div>powergym@example.com</div></div>
+      </div>
+      <div class="map-panel">
+        <div class="map-pin">📍 POWER GYM</div>
+        <a href="https://www.bing.com/maps/search?v=2&pc=FACEBK&mid=8100&mkt=en-US&q=Carig+Sur+beside+hall+of+justice%2C+3500&cp=17.665061~121.920044&lvl=15&style=r" target="_blank" rel="noopener" class="btn btn-red btn-sm">GET DIRECTIONS</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════
+     FOOTER
+═══════════════════════════════════════ -->
+<footer class="site-footer">
+  <div class="section-wrap">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">
+          <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Power Gym">
+          <span class="footer-brand-text">POWER<span>GYM</span></span>
+        </div>
+        <div class="footer-tag">Stronger every day. Train smarter, get stronger, stay consistent.</div>
+      </div>
+
+      <div>
+        <div class="footer-col-title">Quick Links</div>
+        <ul class="footer-links">
+          <li><a href="#top">Home</a></li>
+          <li><a href="#membership">Membership</a></li>
+          <li><a href="#coaches">Coaches</a></li>
+          <li><a href="#schedule">Schedule</a></li>
+          <li><a href="{{ url_for('login') }}?screen=register">Register</a></li>
+          <li><a href="{{ url_for('login') }}">Sign In</a></li>
+          <li><a href="#contact">Contact Us</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <div class="footer-col-title">Follow Us/Message Us</div>
+        <div class="footer-social">
+          <a href="https://www.facebook.com/PowerFitnessGym20" aria-label="Facebook" target="_blank" rel="noopener">f</a>
+          <a href="https://www.facebook.com/messages/t/108939274361511" aria-label="Facebook Messenger" target="_blank" rel="noopener">m</a>
+        </div>
+      </div>
+    </div>
+    <div class="footer-bottom">© 2026 Power Gym. All Rights Reserved.</div>
+  </div>
+</footer>
+
+
+<script>
+  
+/* ── Scrollspy: highlight the nav link for the section currently in view ── */
+document.addEventListener('DOMContentLoaded', () => {
+  const navLinks = Array.from(document.querySelectorAll('.nav-links a'));
+  const sections = navLinks
+    .map(link => document.querySelector(link.getAttribute('href')))
+    .filter(Boolean);
+
+  if (!sections.length) return;
+
+  function setActive(id) {
+    navLinks.forEach(link => {
+      link.classList.toggle('active', link.getAttribute('href') === '#' + id);
+    });
+  }
+
+  const observer = new IntersectionObserver((entries) => {
+    // Pick the entry closest to the top of the viewport that's currently intersecting
+    const visible = entries.filter(e => e.isIntersecting);
+    if (visible.length) {
+      const topMost = visible.reduce((a, b) =>
+        a.boundingClientRect.top < b.boundingClientRect.top ? a : b
+      );
+      setActive(topMost.target.id);
+    }
+  }, {
+    rootMargin: '-30% 0px -60% 0px', // section counts as "active" once it's near the top third of the screen
+    threshold: 0
+  });
+
+  sections.forEach(section => observer.observe(section));
+});
+</script>
+
+</body>
+</html>

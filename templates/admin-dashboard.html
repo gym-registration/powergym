@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>POWER GYM — Admin Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@300;400;500;600;700&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tr-styles.css') }}">
+</head>
+<body>
+
+<!--
+  ═══════════════════════════════════════
+  ADMIN DASHBOARD
+  Access: admin role only
+  Guard: Session.guardDashboard() in JS
+  ═══════════════════════════════════════
+-->
+
+<!-- Root element used by JS to detect this page -->
+<div id="admin-dashboard-root" class="dashboard-layout">
+
+  <!-- ── SIDEBAR ─────────────────────── -->
+  <div class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-badge">
+        <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Power Gym">
+      </div>
+    </div>
+
+    <div class="sidebar-role">🛡️ Administrator</div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-item" id="nav-admin-overview" onclick="adminTab('overview',this)">
+        <span class="nav-icon">📊</span> Overview
+      </div>
+      <div class="nav-item" id="nav-admin-members" onclick="adminTab('members',this)">
+        <span class="nav-icon">👥</span> Members
+      </div>
+      <div class="nav-item" id="nav-admin-payments" onclick="adminTab('payments',this)">
+        <span class="nav-icon">💳</span> Payments
+      </div>
+      <div class="nav-item" id="nav-admin-attendance" onclick="adminTab('attendance',this)">
+        <span class="nav-icon">📅</span> Attendance
+      </div>
+      <div class="nav-item" id="nav-admin-analytics" onclick="adminTab('analytics',this)">
+        <span class="nav-icon">📈</span> Analytics
+      </div>
+      <div class="nav-item" id="nav-admin-announcements" onclick="adminTab('announcements',this)">
+        <span class="nav-icon">📢</span> Announcements
+      </div>
+      <div class="nav-item" id="nav-admin-staffmgmt" onclick="adminTab('staffmgmt',this)">
+        <span class="nav-icon">🔑</span> Staff Accounts
+      </div>
+      <div class="nav-item" id="nav-admin-coach" onclick="adminTab('coach',this)">
+        <span class="nav-icon">🏋</span> Coach
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="user-info">
+        <div class="user-avatar" id="sidebar-user-avatar">{{ (current_user.first_name[0] ~ current_user.last_name[0])|upper if current_user else 'AD' }}</div>
+        <div>
+          <div class="user-name"  id="sidebar-user-name">{{ current_user.full_name if current_user else 'Administrator' }}</div>
+          <div class="user-email" id="sidebar-user-email">{{ current_user.email if current_user else 'admin@powergym.com' }}</div>
+        </div>
+      </div>
+      <button class="btn-change-pass" onclick="adminTab('settings', this)">⚙️ SETTINGS</button>
+      <button class="btn-logout" onclick="doLogout()">⏻ SIGN OUT</button>
+    </div>
+  </div><!-- /sidebar -->
+
+  <!-- ── MAIN CONTENT ─────────────────── -->
+  <div class="main-content">
+
+    <!-- ── Overview ────────────────────── -->
+    <div id="admin-overview" class="sub-panel">
+      <div class="page-header">
+        <div>
+          <div class="page-title">ADMIN DASHBOARD</div>
+          <div class="page-subtitle">Welcome back — here's today's snapshot</div>
+        </div>
+        <button class="btn btn-red" onclick="openModal('add-member-modal')">+ ADD MEMBER</button>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card red">  <span class="stat-icon">👥</span><div class="stat-value">{{ stats.total_members }}</div><div class="stat-label">Total Members</div></div>
+        <div class="stat-card green"><span class="stat-icon">✅</span><div class="stat-value">{{ stats.active_members }}</div><div class="stat-label">Active Members</div></div>
+        <div class="stat-card blue"> <span class="stat-icon">📋</span><div class="stat-value">{{ stats.checkins_today }}</div> <div class="stat-label">Check-ins Today</div></div>
+        <div class="stat-card gold"> <span class="stat-icon">💰</span><div class="stat-value">₱{{ stats.monthly_revenue }}</div><div class="stat-label">Monthly Revenue</div></div>
+      </div>
+
+      <div class="grid-2">
+        <!-- Pending payment verifications -->
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Pending Payment Verifications</div></div>
+          <div id="admin-uploaded-proofs" class="panel-body" style="padding:16px;">
+            {% for p in pending_payments[:5] %}
+            <div class="verify-card" data-payment-id="{{ p.id }}">
+              <div>
+                <div style="font-weight:600;margin-bottom:4px;">{{ p.member_name }} — {{ p.plan }}</div>
+                <div style="font-size:12px;color:var(--muted);">
+                  {% if p.stage == 'approval' %}New plan request{% else %}{{ p.method }} · Ref: {{ p.reference }}{% endif %} · Txn: #{{ p.txn }} · ₱{{ p.amount }}
+                </div>
+                <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+                  {% if p.stage == 'approval' %}
+                  {% if p.staff_viewed %}
+                  <span class="badge badge-gold">Processing</span>
+                  {% else %}
+                  <span class="badge badge-blue">Pending — New Request</span>
+                  {% endif %}
+                  {% elif p.stage == 'awaiting_payment' %}
+                  <span class="badge badge-gold">Approved — Awaiting Payment</span>
+                  {% elif p.stage == 'verify_cash' %}
+                  <span class="badge badge-blue">Awaiting Staff Approval</span>
+                  {% else %}
+                  <span class="badge badge-blue">Awaiting Admin Approval</span>
+                  {% endif %}
+                  {% if p.is_student %}<span class="badge badge-gold">🎓 Student</span>{% endif %}
+                  {% if p.wants_coach %}<span class="badge badge-green">🏋 Coach: {{ p.coach_name }}</span>{% endif %}
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;">
+                {% if p.is_student and p.student_id_image_path %}
+                <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl)">🎓 View School ID</button>
+                {% endif %}
+                {% if p.stage == 'approval' %}
+                <span class="badge badge-muted" style="align-self:center;">⏳ Awaiting staff approval</span>
+                {% elif p.stage == 'awaiting_payment' %}
+                <span class="badge badge-muted" style="align-self:center;">⏳ Awaiting payment from member</span>
+                {% elif p.stage == 'verify_cash' %}
+                <span class="badge badge-muted" style="align-self:center;">⏳ Confirmed by front-desk staff</span>
+                {% else %}
+                <button class="btn btn-sm btn-green" onclick="verifyPayment(this,'approve')">✓ Confirm Payment</button>
+                <button class="btn btn-sm" style="background:rgba(230,30,37,0.1);color:var(--red);border:1px solid rgba(230,30,37,0.2);" onclick="verifyPayment(this,'reject')">✗ Reject</button>
+                {% endif %}
+              </div>
+            </div>
+            {% else %}
+            <div style="text-align:center;color:var(--muted);padding:12px 0;">No pending payments to verify.</div>
+            {% endfor %}
+          </div>
+        </div>
+
+        <!-- Attendance calendar -->
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Attendance ({{ attendance_calendar.month_label }})</div></div>
+          <div class="panel-body"><div class="att-grid" id="att-grid-admin"></div></div>
+        </div>
+      </div>
+    </div><!-- /admin-overview -->
+
+    <!-- ── Members ──────────────────────── -->
+    <div id="admin-members" class="sub-panel">
+      <div class="page-header">
+        <div>
+          <div class="page-title">MEMBER MANAGEMENT</div>
+          <div class="page-subtitle">All registered members</div>
+        </div>
+        <div style="display:flex;gap:10px;">
+          <input class="search-input" id="admin-members-search" placeholder="Search members..." oninput="filterAdminMembersTable()">
+          <button class="btn btn-red" onclick="openModal('add-member-modal')">+ ADD MEMBER</button>
+        </div>
+      </div>
+
+      <!-- Status filter pills (same behavior as Staff → View Members) -->
+      <div class="status-filter-bar" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+        <button type="button" class="status-pill active" data-status="all" onclick="filterAdminMembersByStatus('all', this)">All</button>
+        <button type="button" class="status-pill" data-status="active" onclick="filterAdminMembersByStatus('active', this)">Active</button>
+        <button type="button" class="status-pill" data-status="pending" onclick="filterAdminMembersByStatus('pending', this)">Pending</button>
+        <button type="button" class="status-pill" data-status="expired" onclick="filterAdminMembersByStatus('expired', this)">Expired</button>
+        <button type="button" class="status-pill" data-status="declined" onclick="filterAdminMembersByStatus('declined', this)">Declined</button>
+        <button type="button" class="status-pill" data-status="no-plan" onclick="filterAdminMembersByStatus('no-plan', this)">No Plan</button>
+      </div>
+
+      <div class="panel">
+        <table class="data-table" id="members-table">
+          <thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Plan</th><th>Expiry</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>
+            {% for m in members %}
+            <tr data-id="{{ m.id }}" data-plan="{{ m.plan }}" data-phone="{{ m.phone or '' }}" data-expiry-iso="{{ m.expiry_date.isoformat() if m.expiry_date else '' }}" data-first-name="{{ m.first_name }}" data-middle-initial="{{ m.middle_initial or '' }}" data-last-name="{{ m.last_name }}" data-extension-name="{{ m.extension_name or '' }}"
+                data-name="{{ m.name|lower }}"
+                data-status="{{ 'active' if m.status == 'Active' else 'pending' if m.status == 'Pending' else 'expired' if m.status == 'Expired' else 'declined' if m.status == 'Declined' else 'no-plan' }}">
+              <td>#{{ m.id }}</td><td>{{ m.name }}</td><td>{{ m.email }}</td><td>{{ m.plan }}</td><td>{{ m.expiry }}</td>
+              <td>
+                {% if m.status == 'Active' %}
+                <span class="badge badge-green">Active</span>
+                {% elif m.status == 'Pending' %}
+                <span class="badge badge-blue">Pending</span>
+                {% elif m.status == 'Expired' %}
+                <span class="badge badge-red">Expired</span>
+                {% elif m.status == 'Declined' %}
+                <span class="badge badge-red">Declined</span>
+                {% else %}
+                <span class="badge badge-muted">No Plan</span>
+                {% endif %}
+              </td>
+              <td>
+                <button class="btn btn-sm btn-outline" onclick="openEditMemberModal(this)">Edit</button>
+                <button class="btn btn-sm" style="background:rgba(230,30,37,0.1);color:var(--red);border:1px solid rgba(230,30,37,0.2);" onclick="deleteMemberRow(this)">Del</button>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" style="text-align:center;color:var(--muted);">No members yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <div id="admin-members-empty-state" style="display:none;text-align:center;color:var(--muted);padding:20px;">
+          No members match this filter.
+        </div>
+      </div>
+    </div><!-- /admin-members -->
+
+    <!-- ── Payments ──────────────────────── -->
+    <div id="admin-payments" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">PAYMENT MANAGEMENT</div><div class="page-subtitle">Verify and track all payments</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Pending Verifications</div></div>
+        <div class="panel-body">
+          {% for p in pending_payments %}
+          <div class="verify-card" data-payment-id="{{ p.id }}" style="margin-bottom:12px;">
+            <div>
+              <div style="font-weight:600;margin-bottom:4px;">{{ p.member_name }} — {{ p.plan }}</div>
+              <div style="font-size:12px;color:var(--muted);">
+                {% if p.stage == 'approval' %}New plan request{% else %}{{ p.method }} · Ref: {{ p.reference }}{% endif %} · Txn: #{{ p.txn }} · ₱{{ p.amount }}
+              </div>
+              <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+                {% if p.stage == 'approval' %}
+                {% if p.staff_viewed %}
+                <span class="badge badge-gold">Processing</span>
+                {% else %}
+                <span class="badge badge-blue">Pending — New Request</span>
+                {% endif %}
+                {% elif p.stage == 'awaiting_payment' %}
+                <span class="badge badge-gold">Approved — Awaiting Payment</span>
+                {% elif p.stage == 'verify_cash' %}
+                <span class="badge badge-blue">Awaiting Staff Approval</span>
+                {% else %}
+                <span class="badge badge-blue">Awaiting Admin Approval</span>
+                {% endif %}
+                {% if p.is_student %}<span class="badge badge-gold">🎓 Student</span>{% endif %}
+                {% if p.wants_coach %}<span class="badge badge-green">🏋 Coach: {{ p.coach_name }}</span>{% endif %}
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;">
+              {% if p.proof_image_path %}
+              <button class="btn btn-sm btn-outline" data-proof-url="{{ url_for('static', filename=p.proof_image_path) }}" onclick="viewPaymentProof(this.dataset.proofUrl)">👁 View Proof</button>
+              {% endif %}
+              {% if p.is_student and p.student_id_image_path %}
+              <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl)">🎓 View School ID</button>
+              {% endif %}
+              {% if p.stage == 'approval' %}
+              <span class="badge badge-muted" style="align-self:center;">⏳ Awaiting staff approval</span>
+              {% elif p.stage == 'awaiting_payment' %}
+              <span class="badge badge-muted" style="align-self:center;">⏳ Awaiting payment from member</span>
+              {% elif p.stage == 'verify_cash' %}
+              <span class="badge badge-muted" style="align-self:center;">⏳ Confirmed by front-desk staff</span>
+              {% else %}
+              <button class="btn btn-sm btn-green" onclick="verifyPayment(this,'approve')">✓ Confirm Payment</button>
+              <button class="btn btn-sm" style="background:rgba(230,30,37,0.1);color:var(--red);border:1px solid rgba(230,30,37,0.2);" onclick="verifyPayment(this,'reject')">✗ Reject</button>
+              {% endif %}
+            </div>
+          </div>
+          {% else %}
+          <div style="text-align:center;color:var(--muted);padding:12px 0;">No pending payments to verify.</div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Payment History</div></div>
+        <table class="data-table">
+          <thead><tr><th>Txn#</th><th>Member</th><th>Plan</th><th>Method</th><th>Amount</th><th>Date</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for p in payment_history %}
+            <tr>
+              <td>#{{ p.txn }}</td>
+              <td>{{ p.member_name }}{% if p.is_student %} <span class="badge badge-gold" style="margin-left:4px;">🎓</span>{% endif %}{% if p.wants_coach %} <span class="badge badge-green" style="margin-left:4px;" title="Coach: {{ p.coach_name }}">🏋</span>{% endif %}</td>
+              <td>{{ p.plan }}</td><td>{{ '' if p.method.startswith('Pending') else p.method }}</td><td>₱{{ p.amount }}</td><td>{{ p.date }}</td>
+              <td>
+                {% if p.status == 'verified' %}
+                <span class="badge badge-green">Approved</span>
+                {% else %}
+                <span class="badge badge-red">Declined</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" style="text-align:center;color:var(--muted);">No payment history yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div><!-- /admin-payments -->
+
+    <!-- ── Attendance ────────────────────── -->
+    <div id="admin-attendance" class="sub-panel">
+      <div class="page-header"><div><div class="page-title">ATTENDANCE LOG</div><div class="page-subtitle">{{ attendance_calendar.month_label }}</div></div></div>
+      <div class="grid-2">
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Monthly Overview</div></div>
+          <div class="panel-body"><div class="att-grid" id="att-grid-admin-full"></div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Today's Check-ins</div></div>
+          <table class="data-table">
+            <thead><tr><th>Member</th><th>Check-in</th><th>Check-out</th><th>Status</th></tr></thead>
+            <tbody>
+              {% for a in attendance_today %}
+              <tr>
+                <td>{{ a.member_name }}</td>
+                <td>{{ a.check_in }}</td>
+                <td>{{ a.check_out }}</td>
+                <td>
+                  {% if a.status == 'In' %}
+                  <span class="badge badge-green">In</span>
+                  {% else %}
+                  <span class="badge badge-muted">Out</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="4" style="text-align:center;color:var(--muted);">No check-ins yet today.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div><!-- /admin-attendance -->
+
+    <!-- ── Analytics ─────────────────────── -->
+    <div id="admin-analytics" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">ANALYTICS &amp; REPORTS</div><div class="page-subtitle">Generate business intelligence reports</div></div>
+      </div>
+      <div class="panel" style="margin-bottom:20px;">
+        <div class="panel-header"><div class="panel-title">Report Generator</div></div>
+        <div class="panel-body">
+          <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px;align-items:center;">
+            <span style="font-size:12px;color:var(--muted);">From:</span>
+            <input type="date" id="report-from" class="form-input" style="width:160px;">
+            <span style="font-size:12px;color:var(--muted);">To:</span>
+            <input type="date" id="report-to"   class="form-input" style="width:160px;">
+            <button class="btn btn-outline btn-sm" onclick="clearReportDateRange()">Clear Dates</button>
+            <button class="btn btn-outline" onclick="refreshCurrentReport()">↻ Refresh</button>
+            <button class="btn btn-outline" onclick="exportCurrentReportPDF()">🖨 PDF</button>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin:-8px 0 16px;">
+            Set both From and To dates to look up a custom range. Leave them blank (or use Clear Dates) to default to this month.
+          </div>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;">
+            <button class="btn btn-red" onclick="generateAnalyticsReport('membership')">📋 Membership Report</button>
+            <button class="btn btn-red" onclick="generateAnalyticsReport('revenue')">💰 Revenue Report</button>
+            <button class="btn btn-red" onclick="generateAnalyticsReport('attendance')">📅 Attendance Report</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel" id="report-output-panel" style="display:none;">
+        <div class="panel-header"><div class="panel-title" id="report-output-title">Report</div></div>
+        <div class="panel-body" id="report-output-body"></div>
+      </div>
+    </div><!-- /admin-analytics -->
+
+    <!-- ── Announcements ──────────────────── -->
+    <div id="admin-announcements" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">ANNOUNCEMENTS</div><div class="page-subtitle">Broadcast messages to all members</div></div>
+        <button class="btn btn-red" onclick="document.getElementById('ann-title').focus()">+ POST ANNOUNCEMENT</button>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Compose Announcement</div></div>
+        <div class="panel-body">
+          <div class="form-group"><label class="form-label">Title</label><input class="form-input" id="ann-title" placeholder="e.g. Gym Maintenance Schedule"></div>
+          <div class="form-group"><label class="form-label">Message</label><textarea class="form-input" id="ann-message" rows="4" placeholder="Type your announcement here..." style="resize:vertical;"></textarea></div>
+          <div class="form-group"><label class="form-label">Target Audience</label>
+            <select class="form-input" id="ann-target">
+              <option value="all">All Members</option>
+              <option value="active">Active Members Only</option>
+              <option value="expiring">Expiring This Month</option>
+              <option value="staff">Staff Only</option>
+            </select>
+          </div>
+          <button class="btn btn-red" id="ann-publish-btn" onclick="publishAnnouncement()">PUBLISH ANNOUNCEMENT</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Active Announcements</div></div>
+        <div class="panel-body">
+          <div id="admin-announcements-list">
+            {% for a in announcements %}
+            <div class="announcement-item" data-ann-id="{{ a.id }}" data-ann-target="{{ a.target }}" style="padding:14px;background:rgba(230,30,37,0.06);border:1px solid rgba(230,30,37,0.2);border-radius:6px;margin-bottom:12px;{% if not a.is_active %}opacity:0.55;{% endif %}">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+                <div style="font-weight:600;margin-bottom:4px;" data-ann-title>{{ a.title }}</div>
+                <span class="badge {{ 'badge-green' if a.is_active else 'badge-muted' }}" data-ann-status-badge>{{ 'Published' if a.is_active else 'Unpublished' }}</span>
+              </div>
+              <div style="font-size:13px;color:var(--muted);white-space:pre-wrap;" data-ann-body>{{ a.body }}</div>
+              <div style="margin-top:8px;font-size:11px;color:var(--muted);">
+                Posted by {{ a.posted_by.full_name if a.posted_by else 'Admin' }}
+                · <span data-ann-target-label>{{ {'all':'All Members','active':'Active Members Only','expiring':'Expiring This Month','staff':'Staff Only'}[a.target] }}</span>
+                · {{ a.created_at.strftime('%b %d, %Y') if a.created_at else '' }}
+              </div>
+              <div style="margin-top:10px;display:flex;gap:8px;">
+                <button class="btn btn-outline btn-sm" onclick="openEditAnnouncementModal({{ a.id }})">EDIT</button>
+                <button class="btn btn-outline btn-sm" onclick="toggleAnnouncement({{ a.id }}, this)">{{ 'UNPUBLISH' if a.is_active else 'REPUBLISH' }}</button>
+                <button class="btn btn-outline btn-sm" style="color:var(--red);border-color:rgba(230,30,37,0.4);" onclick="deleteAnnouncement({{ a.id }}, this)">DELETE</button>
+              </div>
+            </div>
+            {% else %}
+            <div id="admin-announcements-empty" style="color:var(--muted);font-size:13px;padding:14px 0;">No announcements yet. Compose one above to get started.</div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div><!-- /admin-announcements -->
+
+    <!-- ── Staff Accounts ──────────────────── -->
+    <div id="admin-staffmgmt" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">STAFF ACCOUNTS</div><div class="page-subtitle">Manage staff access and roles</div></div>
+        <button class="btn btn-red" onclick="showToast('Staff account creation coming soon','success')">+ ADD STAFF</button>
+      </div>
+      <div class="panel">
+        <table class="data-table">
+          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Staff Member</td>
+              <td>staff@powergym.com</td>
+              <td><span class="badge badge-blue">Staff</span></td>
+              <td><span class="badge badge-green">Active</span></td>
+              <td><button class="btn btn-sm btn-outline" onclick="showToast('Edit coming soon','success')">Edit</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div><!-- /admin-staffmgmt -->
+
+    <!-- ── Coach ───────────────── -->
+    <div id="admin-coach" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">COACHES</div><div class="page-subtitle">Set each coach's available days, capacity, and fee</div></div>
+        <button class="btn btn-red" onclick="openModal('add-coach-modal')">+ ADD COACH</button>
+      </div>
+      <div class="panel" style="margin-bottom:20px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
+          {% for c in coaches %}
+          <div class="coach-card" data-coach-id="{{ c.id }}" style="border:1px solid var(--border,#333);border-radius:10px;padding:16px;">
+
+            <!-- View mode -->
+            <div class="coach-view">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <div style="font-weight:600;font-size:15px;">{{ c.name }}</div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span class="badge {{ 'badge-red' if c.is_full else 'badge-green' }}">
+                    {{ c.current_members }}/{{ c.max_members }} members
+                  </span>
+                  <button type="button" title="Edit coach" onclick="toggleCoachEdit({{ c.id }})"
+                          style="background:transparent;border:1px solid var(--border,#333);color:var(--white);border-radius:6px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:12px;padding:0;">✏️</button>
+                  <button type="button" title="Delete coach" onclick="promptDeleteCoach({{ c.id }}, '{{ c.name|e }}')"
+                          style="background:transparent;border:1px solid var(--border,#333);color:var(--red);border-radius:6px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:12px;padding:0;">🗑️</button>
+                </div>
+              </div>
+              <div style="font-size:12px;color:var(--muted);margin-bottom:6px;line-height:1.6;">
+                <strong style="color:var(--white);">Available Days:</strong>
+                {{ c.available_days|join(', ') if c.available_days else '—' }}
+              </div>
+              <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">
+                <strong style="color:var(--white);">Max Members:</strong> {{ c.max_members }}
+              </div>
+              <div style="font-size:12px;color:var(--muted);">
+                <strong style="color:var(--white);">Coach Fee:</strong> ₱{{ c.fee }}
+              </div>
+            </div>
+
+            <!-- Edit mode (hidden until the pencil icon is clicked) -->
+            <form class="coach-edit" data-coach-update onsubmit="return submitCoachUpdate(event)" style="display:none;">
+              <input type="hidden" name="coach_id" value="{{ c.id }}">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <div style="font-weight:600;font-size:15px;">{{ c.name }}</div>
+                <span class="badge {{ 'badge-red' if c.is_full else 'badge-green' }}">
+                  {{ c.current_members }}/{{ c.max_members }} members
+                </span>
+              </div>
+
+              <label class="form-label" style="font-size:12px;">Available Days</label>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 14px;">
+                {% for day in coach_days %}
+                <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);">
+                  <input type="checkbox" name="available_days" value="{{ day }}"
+                         {% if day in c.available_days %}checked{% endif %}>
+                  {{ day }}
+                </label>
+                {% endfor %}
+              </div>
+
+              <label class="form-label" style="font-size:12px;">Max Members</label>
+              <input class="form-input" type="number" name="max_members" min="1"
+                     value="{{ c.max_members }}" style="margin-bottom:12px;">
+
+              <label class="form-label" style="font-size:12px;">Coach Fee (₱, added on top of the plan price)</label>
+              <input class="form-input" type="number" name="fee" min="0" step="0.01"
+                     value="{{ c.fee }}" style="margin-bottom:12px;">
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <button type="button" class="btn btn-outline" style="width:100%;justify-content:center;" onclick="toggleCoachEdit({{ c.id }})">CANCEL</button>
+                <button class="btn-primary" type="submit" style="width:100%;">SAVE</button>
+              </div>
+            </form>
+          </div>
+          {% else %}
+          <div style="color:var(--muted);">No coaches set up yet.</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div><!-- /admin-coach -->
+
+    <!-- ── Settings ─────────────────────── -->
+    <div id="admin-settings" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">SETTINGS</div><div class="page-subtitle">Manage your personal information and password</div></div>
+      </div>
+
+      <div class="grid-2">
+        <!-- Personal Information -->
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Personal Information</div></div>
+          <div class="panel-body">
+            <div class="form-row-4">
+              <div class="form-group">
+                <label class="form-label">First Name</label>
+                <input class="form-input" id="pi-fname" value="{{ current_user.first_name if current_user else '' }}"
+                       oninput="this.value=this.value.replace(/[^A-Za-z\s'-]/g,'')">
+              </div>
+              <div class="form-group">
+                <label class="form-label">M.I.</label>
+                <input class="form-input" id="pi-mi" maxlength="5" value="{{ current_user.middle_initial if current_user else '' }}"
+                       oninput="this.value=this.value.replace(/[^A-Za-z]/g,'')">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Last Name</label>
+                <input class="form-input" id="pi-lname" value="{{ current_user.last_name if current_user else '' }}"
+                       oninput="this.value=this.value.replace(/[^A-Za-z\s'-]/g,'')">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Suffix</label>
+                <input class="form-input" id="pi-ext" maxlength="10" value="{{ current_user.extension_name if current_user else '' }}"
+                       oninput="this.value=this.value.replace(/[^A-Za-z.\s]/g,'')">
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Email Address</label>
+              <input class="form-input" type="email" id="pi-email" value="{{ current_user.email if current_user else '' }}">
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Phone</label>
+                <input class="form-input" id="pi-phone" placeholder="09171234567" maxlength="11" inputmode="numeric" pattern="09\d{9}"
+                       value="{{ current_user.phone if current_user and current_user.phone else '' }}"
+                       oninput="this.value=this.value.replace(/\D/g,'').slice(0,11)">
+                <div style="font-size:11px;color:var(--muted);margin-top:4px;">Must start with 09 and be 11 digits.</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Birthday</label>
+                <input class="form-input" type="date" id="pi-bday" value="{{ current_user.birthday.isoformat() if current_user and current_user.birthday else '' }}">
+              </div>
+            </div>
+            <button class="btn btn-red" style="width:100%;margin-top:8px;" onclick="submitProfileUpdate()">SAVE CHANGES</button>
+          </div>
+        </div>
+
+        <!-- Change Password -->
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Change Password</div></div>
+          <div class="panel-body">
+            <div class="form-group">
+              <label class="form-label">Current Password</label>
+              <div class="password-field">
+                <input class="form-input" type="password" id="cp-current" placeholder="Enter current password">
+                <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)" aria-label="Show password">
+                  <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  <svg class="icon-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.86 21.86 0 0 1 5.06-6.06M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.86 21.86 0 0 1-3.22 4.56M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">New Password</label>
+              <div class="password-field">
+                <input class="form-input" type="password" id="cp-new" placeholder="Minimum 8 characters">
+                <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)" aria-label="Show password">
+                  <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  <svg class="icon-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.86 21.86 0 0 1 5.06-6.06M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.86 21.86 0 0 1-3.22 4.56M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Confirm New Password</label>
+              <div class="password-field">
+                <input class="form-input" type="password" id="cp-confirm" placeholder="Re-enter new password">
+                <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)" aria-label="Show password">
+                  <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  <svg class="icon-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.86 21.86 0 0 1 5.06-6.06M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.86 21.86 0 0 1-3.22 4.56M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                </button>
+              </div>
+            </div>
+            <button class="btn btn-red" id="cp-submit-btn" style="width:100%;margin-top:8px;" onclick="submitChangePassword()">SAVE PASSWORD</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- GCash Payment Details -->
+      <div class="panel" style="margin-top:24px;">
+        <div class="panel-header">
+          <div><div class="panel-title">GCash Payment Details</div><div style="font-size:12px;color:var(--muted);margin-top:2px;">This is the GCash account members are shown when submitting a payment. Update it any time your account or number changes.</div></div>
+        </div>
+        <div class="panel-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">GCash Number</label>
+              <input class="form-input" id="gcash-number" placeholder="0917 123 4567"
+                     value="{{ gcash_settings.gcash_number if gcash_settings else '' }}"
+                     maxlength="13" inputmode="numeric"
+                     oninput="this.value=this.value.replace(/[^\d\s]/g,'')">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Account Name</label>
+              <input class="form-input" id="gcash-account-name" placeholder="JUAN D. DELA CRUZ"
+                     value="{{ gcash_settings.gcash_account_name if gcash_settings else '' }}"
+                     oninput="this.value=this.value.toUpperCase()">
+            </div>
+          </div>
+          <button class="btn btn-red" id="gcash-settings-submit-btn" style="width:100%;margin-top:8px;" onclick="submitGcashSettings()">SAVE GCASH DETAILS</button>
+        </div>
+      </div>
+
+      <!-- Manage Content (admin/staff only) -->
+      <div class="panel" style="margin-top:24px;">
+        <div class="panel-header">
+          <div><div class="panel-title">Manage Content</div><div style="font-size:12px;color:var(--muted);margin-top:2px;">Edit membership plans, services, and equipment shown to members and on the home page</div></div>
+        </div>
+        <div class="panel-body">
+          <div class="content-subtabs">
+            <button class="content-subtab active" data-content-type="plans" onclick="ContentManager.showType('plans')">Membership Plans</button>
+            <button class="content-subtab" data-content-type="services" onclick="ContentManager.showType('services')">Services</button>
+            <button class="content-subtab" data-content-type="facilities" onclick="ContentManager.showType('facilities')">Our Facilities</button>
+            <button class="content-subtab" data-content-type="machines" onclick="ContentManager.showType('machines')">Equipments and Machines</button>
+            
+          </div>
+
+          <div class="content-toolbar">
+            <div class="content-toolbar-hint">Changes here update both the dashboards and the public home page.</div>
+            <button class="btn btn-red" onclick="ContentManager.openForm(document.querySelector('.content-subtab.active').dataset.contentType, null)">+ ADD NEW</button>
+          </div>
+
+          <div class="content-grid" id="content-grid-plans"></div>
+          <div class="content-grid" id="content-grid-services" style="display:none;"></div>
+          <div class="content-grid" id="content-grid-facilities" style="display:none;"></div>
+          <div class="content-grid" id="content-grid-machines" style="display:none;"></div>
+        </div>
+      </div>
+    </div><!-- /admin-settings -->
+
+  </div><!-- /main-content -->
+</div><!-- /admin-dashboard-root -->
+
+
+<!-- ══════════════════════════════════
+     MODALS
+══════════════════════════════════ -->
+<div class="modal-overlay" id="view-proof-modal">
+  <div class="modal" style="max-width:520px;text-align:center;">
+    <button class="modal-close" onclick="closeModal('view-proof-modal')">✕</button>
+    <div class="modal-title">PAYMENT PROOF</div>
+    <div id="proof-modal-body">
+      <img id="proof-modal-img" src="" alt="Payment proof" style="display:none;max-width:100%;max-height:60vh;border-radius:6px;border:1px solid var(--border);">
+      <div id="proof-modal-pdf-note" style="display:none;">
+        <p style="color:var(--muted);font-size:13px;margin-bottom:16px;">This proof was uploaded as a PDF file.</p>
+        <a id="proof-modal-pdf-link" href="#" target="_blank" class="btn btn-red" style="display:inline-block;">OPEN PDF</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="content-form-modal">
+  <div class="modal" style="max-width:520px;">
+    <button class="modal-close" onclick="closeModal('content-form-modal')">✕</button>
+    <div class="modal-title" id="content-form-title">ADD ITEM</div>
+    <input type="hidden" id="cf-type">
+    <input type="hidden" id="cf-id">
+
+    <div class="content-image-picker">
+      <div class="content-image-preview" id="cf-image-preview">🖼️</div>
+      <div style="flex:1;">
+        <input type="file" accept="image/png,image/jpeg,image/webp" id="cf-image-input" class="form-input" onchange="ContentManager.previewImage(this)">
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;">PNG/JPG/WEBP, up to 8MB.</div>
+        <div id="cf-remove-image-wrap" style="display:none;margin-top:6px;">
+          <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="checkbox" id="cf-remove-image"> Remove current image
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" id="cf-name-label">Name</label>
+      <select class="form-input" id="cf-name-select" style="display:none;" onchange="ContentManager.onNameSelectChange()"></select>
+      <input class="form-input" id="cf-name" placeholder="e.g. Monthly Membership">
+      <div id="cf-name-toggle" style="display:none;margin-top:6px;">
+        <span class="link-btn" style="font-size:12px;" onclick="ContentManager.backToNameList()">← Choose from list instead</span>
+      </div>
+    </div>
+
+    <div class="form-row" id="cf-plan-fields" style="display:none;">
+      <div class="form-group">
+        <label class="form-label">Price (₱)</label>
+        <input class="form-input" type="number" min="0" step="0.01" id="cf-price" placeholder="900">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Duration (days)</label>
+        <input class="form-input" type="number" min="1" id="cf-duration" placeholder="30">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Description</label>
+      <textarea class="form-input" id="cf-description" rows="2" style="resize:vertical;" placeholder="Short description shown to members"></textarea>
+    </div>
+
+    <div class="form-row" id="cf-category-icon-wrap" style="display:none;">
+      <div class="form-group">
+        <label class="form-label">Category</label>
+        <input class="form-input" id="cf-category" list="cf-category-list" placeholder="e.g. Boxing, Strengthening">
+        <datalist id="cf-category-list"></datalist>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Icon</label>
+        <input class="form-input" id="cf-icon" maxlength="8" placeholder="🏋️" style="text-align:center;">
+        <div id="cf-icon-picks" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;"></div>
+      </div>
+    </div>
+
+    <div class="form-group" id="cf-inclusions-wrap" style="display:none;">
+      <label class="form-label">Inclusions (one per line)</label>
+      <textarea class="form-input" id="cf-inclusions" rows="4" style="resize:vertical;" placeholder="Gym Equipment Access&#10;Locker Access&#10;Free Towel Service"></textarea>
+    </div>
+
+    <div class="form-group" id="cf-equipment-wrap" style="display:none;">
+      <label class="form-label">Equipment / Machines used for this service</label>
+      <div id="cf-equipment-list" style="display:flex;flex-wrap:wrap;gap:8px;max-height:160px;overflow:auto;padding:8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;"></div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Display Order</label>
+      <input class="form-input" type="number" id="cf-sort-order" value="0" style="max-width:140px;">
+    </div>
+
+    <label class="content-checkbox-row">
+      <input type="checkbox" id="cf-active" checked> Active / visible to members and on the home page
+    </label>
+
+    <div style="display:flex;gap:10px;margin-top:4px;">
+      <button class="btn btn-outline" style="flex:1;justify-content:center;" onclick="closeModal('content-form-modal')">CANCEL</button>
+      <button class="btn btn-red" style="flex:1;justify-content:center;" onclick="ContentManager.submit()">SAVE</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="content-delete-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="ContentManager.cancelDelete()">✕</button>
+    <div class="modal-title" style="text-align:center;">CONFIRM DELETE</div>
+    <div id="content-delete-message" style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;">
+      Are you sure you want to delete this item?
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+      <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="ContentManager.cancelDelete()">CANCEL</button>
+      <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="ContentManager.performDelete()">DELETE</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="confirm-gcash-settings-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="closeModal('confirm-gcash-settings-modal')">✕</button>
+    <div class="modal-title" style="text-align:center;">CONFIRM SAVE</div>
+    <div style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;">
+      Are you sure you want to save this GCash payment detail?
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+      <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="closeModal('confirm-gcash-settings-modal')">NO</button>
+      <button class="btn btn-red" id="confirm-gcash-settings-btn" style="width:100%;justify-content:center;" onclick="confirmGcashSettings()">YES</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="add-coach-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('add-coach-modal')">✕</button>
+    <div class="modal-title">ADD NEW COACH</div>
+    <div class="form-group"><label class="form-label">Coach Name</label><input id="add-coach-name" class="form-input" placeholder="Juan Dela Cruz"></div>
+    <div class="form-group">
+      <label class="form-label">Available Days</label>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;">
+        {% for day in coach_days %}
+        <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);">
+          <input type="checkbox" class="add-coach-day" value="{{ day }}">
+          {{ day }}
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="form-group"><label class="form-label">Max Members</label><input id="add-coach-max" class="form-input" type="number" min="1" value="10"></div>
+    <div class="form-group"><label class="form-label">Coach Fee (₱, added on top of the plan price)</label><input id="add-coach-fee" class="form-input" type="number" min="0" step="0.01" value="0"></div>
+    <button class="btn btn-red" style="width:100%;margin-top:8px;" onclick="addCoach()">ADD COACH</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="delete-coach-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="closeModal('delete-coach-modal')">✕</button>
+    <div class="modal-title" style="text-align:center;">DELETE COACH</div>
+    <div style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;">
+      Are you sure you want to remove <strong id="delete-coach-name"></strong> from the coach roster? This can't be undone.
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+      <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="closeModal('delete-coach-modal')">NO</button>
+      <button class="btn btn-red" id="confirm-coach-delete-btn" style="width:100%;justify-content:center;" onclick="confirmDeleteCoach()">YES, DELETE</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="confirm-coach-save-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="closeModal('confirm-coach-save-modal')">✕</button>
+    <div class="modal-title" style="text-align:center;">CONFIRM SAVE</div>
+    <div style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;">
+      Are you sure you want to save this coach's changes?
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+      <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="closeModal('confirm-coach-save-modal')">NO</button>
+      <button class="btn btn-red" id="confirm-coach-save-btn" style="width:100%;justify-content:center;" onclick="confirmCoachUpdate()">YES</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="coach-save-success-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="closeCoachSaveSuccessModal()">✕</button>
+    <div style="display:flex;justify-content:center;margin-bottom:14px;">
+      <div style="width:56px;height:56px;border-radius:50%;background:rgba(34,197,94,0.15);border:1px solid rgba(34,197,94,0.3);display:flex;align-items:center;justify-content:center;">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+    </div>
+    <div class="modal-title" style="text-align:center;">SUCCESS</div>
+    <div style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
+      Coach details successfully saved.
+    </div>
+    <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="closeCoachSaveSuccessModal()">OK</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="confirm-publish-announcement-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="closeModal('confirm-publish-announcement-modal')">✕</button>
+    <div class="modal-title" style="text-align:center;">CONFIRM PUBLISH</div>
+    <div style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;">
+      Are you sure you want to publish this notice?
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+      <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="closeModal('confirm-publish-announcement-modal')">NO</button>
+      <button class="btn btn-red" id="confirm-publish-announcement-btn" style="width:100%;justify-content:center;" onclick="confirmPublishAnnouncement()">YES</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="edit-announcement-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('edit-announcement-modal')">✕</button>
+    <div class="modal-title">EDIT ANNOUNCEMENT</div>
+    <div class="form-group"><label class="form-label">Title</label><input class="form-input" id="edit-ann-title" placeholder="e.g. Gym Maintenance Schedule"></div>
+    <div class="form-group"><label class="form-label">Message</label><textarea class="form-input" id="edit-ann-message" rows="4" placeholder="Type your announcement here..." style="resize:vertical;"></textarea></div>
+    <div class="form-group"><label class="form-label">Target Audience</label>
+      <select class="form-input" id="edit-ann-target">
+        <option value="all">All Members</option>
+        <option value="active">Active Members Only</option>
+        <option value="expiring">Expiring This Month</option>
+        <option value="staff">Staff Only</option>
+      </select>
+    </div>
+    <button class="btn btn-red" id="edit-ann-save-btn" style="width:100%;margin-top:8px;" onclick="saveEditAnnouncement()">SAVE CHANGES</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="add-member-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('add-member-modal')">✕</button>
+    <div class="modal-title">ADD NEW MEMBER</div>
+    <div class="form-row-4">
+      <div class="form-group"><label class="form-label">First Name</label><input id="add-member-fname" class="form-input" placeholder="Juan"></div>
+      <div class="form-group"><label class="form-label">Middle Initial</label><input id="add-member-mi" class="form-input" placeholder="D" maxlength="5"></div>
+      <div class="form-group"><label class="form-label">Last Name</label> <input id="add-member-lname" class="form-input" placeholder="Dela Cruz"></div>
+      <div class="form-group"><label class="form-label">Extension Name</label><input id="add-member-ext" class="form-input" placeholder="Jr., Sr., III (optional)" maxlength="10"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Email</label><input id="add-member-email" class="form-input" type="email" placeholder="juan@email.com"></div>
+    <div class="form-group"><label class="form-label">Phone</label><input id="add-member-phone" class="form-input" placeholder="09171234567" maxlength="11" inputmode="numeric" pattern="09\d{9}" oninput="this.value=this.value.replace(/\D/g,'').slice(0,11)"></div>
+    <div class="form-group"><label class="form-label">Plan</label>
+      <select id="add-member-plan" class="form-input">
+        <option>Daily — ₱100</option>
+        <option>Weekly — ₱450</option>
+        <option>Monthly — ₱900</option>
+        <option>Yearly — ₱7,000</option>
+      </select>
+    </div>
+    <button class="btn btn-red" style="width:100%;margin-top:8px;" onclick="addMember()">ADD MEMBER</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="edit-member-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('edit-member-modal')">✕</button>
+    <div class="modal-title">EDIT MEMBER</div>
+    <div class="form-row-4">
+      <div class="form-group"><label class="form-label">First Name</label><input id="edit-member-fname" class="form-input"></div>
+      <div class="form-group"><label class="form-label">Middle Initial</label><input id="edit-member-mi" class="form-input" placeholder="D" maxlength="5"></div>
+      <div class="form-group"><label class="form-label">Last Name</label><input id="edit-member-lname" class="form-input"></div>
+      <div class="form-group"><label class="form-label">Extension Name</label><input id="edit-member-ext" class="form-input" placeholder="Jr., Sr., III (optional)" maxlength="10"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Email</label><input id="edit-member-email" class="form-input" type="email"></div>
+    <div class="form-group"><label class="form-label">Phone</label><input id="edit-member-phone" class="form-input" placeholder="09171234567" maxlength="11" inputmode="numeric" pattern="09\d{9}" oninput="this.value=this.value.replace(/\D/g,'').slice(0,11)"></div>
+    <div class="form-group"><label class="form-label">Plan</label>
+      <select id="edit-member-plan" class="form-input">
+        <option>Daily — ₱100</option>
+        <option>Weekly — ₱450</option>
+        <option>Monthly — ₱900</option>
+        <option>Yearly — ₱7,000</option>
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label">Expiry Date</label><input id="edit-member-expiry" class="form-input" type="date"></div>
+    <button class="btn btn-red" style="width:100%;margin-top:8px;" onclick="saveEditMember()">SAVE CHANGES</button>
+  </div>
+</div>
+
+<!-- Toast Container -->
+<div class="toast-container" id="toast-container"></div>
+
+<script id="admin-dashboard-data" type="application/json">{{ attendance_calendar|tojson }}</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
+<script src="{{ url_for('static', filename='js/tr-common.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tr-admin.js') }}"></script>
+</body>
+</html>

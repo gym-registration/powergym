@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>POWER GYM — Staff Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@300;400;500;600;700&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tr-styles.css') }}">
+</head>
+<body>
+
+<!--
+  ═══════════════════════════════════════
+  STAFF DASHBOARD
+  Access: staff role only
+  Guard: Session.guardDashboard() in JS
+  ═══════════════════════════════════════
+-->
+
+<!-- Root element used by JS to detect this page -->
+<div id="staff-dashboard-root" class="dashboard-layout">
+
+  <!-- ── SIDEBAR ─────────────────────── -->
+  <div class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-badge">
+        <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Power Gym">
+      </div>
+    </div>
+
+    <div class="sidebar-role">👥 Staff Member</div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-item" id="nav-staff-overview" onclick="staffTab('overview',this)">
+        <span class="nav-icon">📊</span> Overview
+      </div>
+      <div class="nav-item" id="nav-staff-request" onclick="staffTab('request',this)">
+        <span class="nav-icon">📝</span> Request
+      </div>
+      <div class="nav-item" id="nav-staff-walkin" onclick="staffTab('walkin',this)">
+        <span class="nav-icon">🚶</span> Walk In
+      </div>
+      <div class="nav-item" id="nav-staff-coach" onclick="staffTab('coach',this)">
+        <span class="nav-icon">🏋</span> Coach
+      </div>
+      <div class="nav-item" id="nav-staff-payments" onclick="staffTab('payments',this)">
+        <span class="nav-icon">💳</span> Payment Record
+      </div>
+      <div class="nav-item" id="nav-staff-checkin" onclick="staffTab('checkin',this)">
+        <span class="nav-icon">✅</span> Check-in / Out
+      </div>
+      <div class="nav-item" id="nav-staff-members" onclick="staffTab('members',this)">
+        <span class="nav-icon">👥</span> View Members
+      </div>
+      <div class="nav-item" id="nav-staff-notices" onclick="staffTab('notices',this)">
+        <span class="nav-icon">📢</span> Notices
+      </div>
+      <div class="nav-item" id="nav-staff-analytics" onclick="staffTab('analytics',this)">
+        <span class="nav-icon">📈</span> Analytics
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="user-info">
+        <div class="user-avatar" id="sidebar-user-avatar" style="background:var(--blue);">{{ (current_user.first_name[0] ~ current_user.last_name[0])|upper if current_user else 'SF' }}</div>
+        <div>
+          <div class="user-name"  id="sidebar-user-name">{{ current_user.full_name if current_user else 'Staff Member' }}</div>
+          <div class="user-email" id="sidebar-user-email">{{ current_user.email if current_user else 'staff@powergym.com' }}</div>
+        </div>
+      </div>
+      <button class="btn-change-pass" onclick="staffTab('settings', this)">⚙️ SETTINGS</button>
+      <button class="btn-logout" onclick="doLogout()">⏻ SIGN OUT</button>
+    </div>
+  </div><!-- /sidebar -->
+
+  <!-- ── MAIN CONTENT ─────────────────── -->
+  <div class="main-content">
+
+    <!-- ── Staff Overview ───────────────── -->
+    <div id="staff-overview" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">STAFF DASHBOARD</div><div class="page-subtitle">Today's operations at a glance</div></div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card blue"> <span class="stat-icon">✅</span><div class="stat-value">{{ stats.checkins_today }}</div> <div class="stat-label">Check-ins Today</div></div>
+        <div class="stat-card green"><span class="stat-icon">👥</span><div class="stat-value">{{ stats.active_members }}</div><div class="stat-label">Active Members</div></div>
+        <div class="stat-card gold"> <span class="stat-icon">⏳</span><div class="stat-value">{{ stats.pending_payments }}</div>  <div class="stat-label">Pending Payments</div></div>
+        <div class="stat-card red">  <span class="stat-icon">⚠️</span><div class="stat-value">{{ stats.expiring_soon }}</div> <div class="stat-label">Expiring Soon</div></div>
+      </div>
+
+      <div class="grid-2">
+        <!-- Quick Check-in widget -->
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Quick Check-in</div></div>
+          <div class="panel-body">
+            <div class="form-group">
+              <label class="form-label">Select Member</label>
+              <select class="form-input" id="staff-checkin-quick">
+                <option value="">Choose a member...</option>
+                {% for m in members %}
+                <option value="{{ m.email }}">{{ m.name }} — {{ m.status }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div style="display:flex;gap:10px;">
+              <button class="btn btn-green"  style="flex:1;" onclick="checkInMember('staff-checkin-quick')">✓ CHECK IN</button>
+              <button class="btn btn-outline" style="flex:1;" onclick="checkOutMember('staff-checkin-quick')">← CHECK OUT</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Recent check-ins -->
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Recent Check-ins</div></div>
+          <table class="data-table">
+            <thead><tr><th>Member</th><th>Time</th><th>Status</th></tr></thead>
+            <tbody>
+              {% for a in attendance_today[:5] %}
+              <tr>
+                <td>{{ a.member_name }}</td>
+                <td>{{ a.check_in }}</td>
+                <td>
+                  {% if a.status == 'In' %}
+                  <span class="badge badge-green">In</span>
+                  {% else %}
+                  <span class="badge badge-muted">Out</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="3" style="text-align:center;color:var(--muted);">No check-ins yet today.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Expiring members alert -->
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Members Expiring This Week</div></div>
+        <table class="data-table">
+          <thead><tr><th>Name</th><th>Plan</th><th>Expiry</th><th>Action</th></tr></thead>
+          <tbody>
+            {% for e in expiring_soon %}
+            <tr>
+              <td>{{ e.name }}</td><td>{{ e.plan }}</td><td>{{ e.expiry }}</td>
+              <td><button class="btn btn-sm btn-outline" onclick="showToast('Renewal reminder sent','success')">Send Reminder</button></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" style="text-align:center;color:var(--muted);">No memberships expiring this week.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div><!-- /staff-overview -->
+
+    <!-- ── Request (membership plan requests) ───────────────── -->
+    <div id="staff-request" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">MEMBERSHIP REQUESTS</div><div class="page-subtitle">Review plan requests and confirm Cash payments — GCash payments are verified by Admin</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Pending Requests</div></div>
+        <div class="panel-body">
+          {% for p in pending_requests %}
+          <div class="verify-card" data-payment-id="{{ p.id }}" style="margin-bottom:12px;">
+            <div>
+              <div style="font-weight:600;margin-bottom:4px;">{{ p.member_name }} — {{ p.plan }}</div>
+              <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+                {% if p.stage == 'approval' %}
+                {% if p.staff_viewed %}
+                <span class="badge badge-gold">Processing</span>
+                {% else %}
+                <span class="badge badge-blue">Pending — New Request</span>
+                {% endif %}
+                {% elif p.stage == 'awaiting_payment' %}
+                <span class="badge badge-gold">Approved — Awaiting Payment</span>
+                {% elif p.stage == 'verify_cash' %}
+                <span class="badge badge-blue">Awaiting Staff Approval</span>
+                {% else %}
+                <span class="badge badge-blue">Awaiting Admin Approval</span>
+                {% endif %}
+                {% if p.is_student %}<span class="badge badge-gold">🎓 Student</span>{% endif %}
+                {% if p.wants_coach %}<span class="badge badge-green">🏋 Coach: {{ p.coach_name }}</span>{% endif %}
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;">
+              {% if p.is_student and p.student_id_image_path %}
+              <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof')">🎓 View School ID</button>
+              {% endif %}
+              {% if p.stage == 'approval' %}
+              {% if p.plan in ('Half Month', 'Monthly', 'Yearly') and p.is_student and p.student_id_image_path %}
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);align-self:center;cursor:pointer;">
+                <input type="checkbox" class="verify-student-check" checked>
+                Confirm student discount
+              </label>
+              {% endif %}
+              <button class="btn btn-sm btn-green" onclick="verifyPayment(this,'approve')">✓ Approve Plan</button>
+              <button class="btn btn-sm" style="background:rgba(230,30,37,0.1);color:var(--red);border:1px solid rgba(230,30,37,0.2);" onclick="verifyPayment(this,'reject')">✗ Reject</button>
+              {% elif p.stage == 'awaiting_payment' %}
+              <span class="badge badge-muted" style="align-self:center;">⏳ Awaiting payment from member</span>
+              {% elif p.stage == 'verify_cash' %}
+              <button class="btn btn-sm btn-green" onclick="verifyPayment(this,'approve')">✓ Confirm Payment</button>
+              <button class="btn btn-sm" style="background:rgba(230,30,37,0.1);color:var(--red);border:1px solid rgba(230,30,37,0.2);" onclick="verifyPayment(this,'reject')">✗ Reject</button>
+              {% else %}
+              <span class="badge badge-muted" style="align-self:center;">⏳ Verified by admin</span>
+              {% endif %}
+            </div>
+          </div>
+          {% else %}
+          <div style="text-align:center;color:var(--muted);padding:12px 0;">No pending requests to verify.</div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Recently Processed</div></div>
+        <table class="data-table">
+          <thead><tr><th>Txn#</th><th>Member</th><th>Plan</th><th>Date</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for p in processed_requests %}
+            <tr>
+              <td>#{{ p.txn }}</td>
+              <td>{{ p.member_name }}</td>
+              <td>{{ p.plan }}</td><td>{{ p.date }}</td>
+              <td>
+                {% if p.status == 'verified' %}
+                <span class="badge badge-green">Approved</span>
+                {% else %}
+                <span class="badge badge-red">Declined</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" style="text-align:center;color:var(--muted);">No requests processed yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div><!-- /staff-request -->
+
+    <!-- ── Walk In ───────────────── -->
+    <div id="staff-walkin" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">WALK IN</div><div class="page-subtitle">Record a walk-in guest or day-pass visit</div></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Select a Plan</div></div>
+        <div class="panel-body">
+          {% if daily_plan %}
+          <div class="plan-grid" style="grid-template-columns:1fr;max-width:280px;">
+            <div class="plan-card selected">
+              <div class="plan-name">{{ daily_plan.name }}</div>
+              <div class="plan-price">₱{{ '{:,.0f}'.format(daily_plan.price) if daily_plan.price == daily_plan.price|int else '{:,.2f}'.format(daily_plan.price) }}</div>
+            </div>
+          </div>
+          {% if daily_plan.description %}
+          <div style="margin-top:14px;color:var(--muted);font-size:13px;line-height:1.6;">{{ daily_plan.description }}</div>
+          {% endif %}
+          {% if daily_plan.inclusions_list %}
+          <ul class="plan-features" style="margin-top:14px;">
+            {% for item in daily_plan.inclusions_list %}
+            <li>{{ item }}</li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+          {% else %}
+          <div style="text-align:center;color:var(--muted);padding:30px;">
+            No "Daily" plan is set up yet. Add one from Admin → Plans to enable walk-ins.
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Guest Information</div></div>
+        <div class="panel-body">
+          <div class="form-row-4">
+            <div class="form-group">
+              <label class="form-label">First Name</label>
+              <input class="form-input" id="walkin-fname" placeholder="Juan"
+                     oninput="this.value=this.value.replace(/[^A-Za-z\s'-]/g,'').toLowerCase().replace(/(^|\s)([a-z])/g,(m,p1,p2)=>p1+p2.toUpperCase())">
+            </div>
+            <div class="form-group">
+              <label class="form-label">M.I.</label>
+              <input class="form-input" id="walkin-mi" placeholder="D" maxlength="5"
+                     oninput="this.value=this.value.replace(/[^A-Za-z]/g,'').replace(/^[a-z]/,c=>c.toUpperCase())">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Last Name</label>
+              <input class="form-input" id="walkin-lname" placeholder="Dela Cruz"
+                     oninput="this.value=this.value.replace(/[^A-Za-z\s'-]/g,'').toLowerCase().replace(/(^|\s)([a-z])/g,(m,p1,p2)=>p1+p2.toUpperCase())">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Suffix</label>
+              <select class="form-input" id="walkin-ext">
+                <option value="">None</option>
+                <option value="Jr.">Jr.</option>
+                <option value="Sr.">Sr.</option>
+                <option value="II">II</option>
+                <option value="III">III</option>
+                <option value="IV">IV</option>
+                <option value="V">V</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Phone</label>
+              <input class="form-input" id="walkin-phone" placeholder="09171234567"
+                     maxlength="11" inputmode="numeric" pattern="09\d{9}"
+                     oninput="this.value=this.value.replace(/\D/g,'').slice(0,11)">
+              <div style="font-size:11px;color:var(--muted);margin-top:4px;">
+                Must start with 09 and be 11 digits.
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Email (optional)</label>
+              <input class="form-input" type="email" id="walkin-email" placeholder="juan@email.com">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Payment Method</label>
+            <input class="form-input" id="walkin-pay-method" value="Cash" readonly style="cursor:default;max-width:320px;">
+            <div style="font-size:11px;color:var(--muted);margin-top:4px;">
+              Walk-in entries are Cash only, collected and confirmed on the spot.
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Avail a Coach?</label>
+              <select class="form-input" id="walkin-wants-coach" onchange="toggleWalkInCoach()" style="max-width:320px;">
+                <option value="no">No</option>
+                <option value="yes">Yes (+₱{{ '{:,.0f}'.format(WALKIN_COACH_FEE) }})</option>
+              </select>
+            </div>
+            <div class="form-group" id="walkin-coach-group" style="display:none;">
+              <label class="form-label">Select Coach</label>
+              <select class="form-input" id="walkin-coach-name" style="max-width:320px;">
+                <option value="">Select a coach</option>
+                {% for c in coaches %}
+                {% if c.is_active %}
+                <option value="{{ c.name }}">{{ c.name }}</option>
+                {% endif %}
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          <div style="font-size:14px;color:var(--white);margin-bottom:14px;">
+            Amount to collect: <strong id="walkin-amount-display" data-base-amount="{{ daily_plan.price if daily_plan else 0 }}" data-coach-fee="{{ WALKIN_COACH_FEE }}" style="color:var(--red);">₱{{ '{:,.0f}'.format(daily_plan.price) if daily_plan and daily_plan.price == daily_plan.price|int else ('{:,.2f}'.format(daily_plan.price) if daily_plan else '0') }}</strong>
+          </div>
+          <button class="btn btn-red" style="width:100%;margin-top:6px;" onclick="confirmWalkIn()">RECORD WALK-IN</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">Recent Walk-Ins</div>
+          <div style="font-size:12px;color:var(--muted);">Today's total: <strong style="color:var(--white);">₱{{ walkin_total_today }}</strong></div>
+        </div>
+        <table class="data-table" id="walkin-table">
+          <thead><tr><th>Name</th><th>Phone</th><th>Amount</th><th>Method</th><th>Coach</th><th>Time</th></tr></thead>
+          <tbody id="walkin-table-body">
+            {% for w in walkins_today %}
+            <tr>
+              <td>{{ w.name }}</td>
+              <td>{{ w.phone }}</td>
+              <td>₱{{ w.amount }}</td>
+              <td>{{ w.method }}</td>
+              <td>{{ w.coach }}</td>
+              <td>{{ w.time }}</td>
+            </tr>
+            {% else %}
+            <tr id="walkin-empty-row"><td colspan="6" style="text-align:center;color:var(--muted);">No walk-ins recorded yet today.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div><!-- /staff-walkin -->
+
+    <!-- ── Coach ───────────────── -->
+    <div id="staff-coach" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">COACHES</div><div class="page-subtitle">Set each coach's available days and how many members they can take on</div></div>
+        <button class="btn btn-red" onclick="openModal('add-coach-modal')">+ ADD COACH</button>
+      </div>
+      <div class="panel" style="margin-bottom:20px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
+          {% for c in coaches %}
+          <div class="coach-card" data-coach-id="{{ c.id }}" style="border:1px solid var(--border,#333);border-radius:10px;padding:16px;">
+
+            <!-- View mode -->
+            <div class="coach-view">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <div style="font-weight:600;font-size:15px;">{{ c.name }}</div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span class="badge {{ 'badge-red' if c.is_full else 'badge-green' }}">
+                    {{ c.current_members }}/{{ c.max_members }} members
+                  </span>
+                  <button type="button" title="Edit coach" onclick="toggleCoachEdit({{ c.id }})"
+                          style="background:transparent;border:1px solid var(--border,#333);color:var(--white);border-radius:6px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:12px;padding:0;">✏️</button>
+                  <button type="button" title="Delete coach" onclick="promptDeleteCoach({{ c.id }}, '{{ c.name|e }}')"
+                          style="background:transparent;border:1px solid var(--border,#333);color:var(--red);border-radius:6px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:12px;padding:0;">🗑️</button>
+                </div>
+              </div>
+              <div style="font-size:12px;color:var(--muted);margin-bottom:6px;line-height:1.6;">
+                <strong style="color:var(--white);">Available Days:</strong>
+                {{ c.available_days|join(', ') if c.available_days else '—' }}
+              </div>
+              <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">
+                <strong style="color:var(--white);">Max Members:</strong> {{ c.max_members }}
+              </div>
+              <div style="font-size:12px;color:var(--muted);">
+                <strong style="color:var(--white);">Coach Fee:</strong> ₱{{ c.fee }}
+              </div>
+            </div>
+
+            <!-- Edit mode (hidden until the pencil icon is clicked) -->
+            <form class="coach-edit" data-coach-update onsubmit="return submitCoachUpdate(event)" style="display:none;">
+              <input type="hidden" name="coach_id" value="{{ c.id }}">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <div style="font-weight:600;font-size:15px;">{{ c.name }}</div>
+                <span class="badge {{ 'badge-red' if c.is_full else 'badge-green' }}">
+                  {{ c.current_members }}/{{ c.max_members }} members
+                </span>
+              </div>
+
+              <label class="form-label" style="font-size:12px;">Available Days</label>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 14px;">
+                {% for day in coach_days %}
+                <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);">
+                  <input type="checkbox" name="available_days" value="{{ day }}"
+                         {% if day in c.available_days %}checked{% endif %}>
+                  {{ day }}
+                </label>
+                {% endfor %}
+              </div>
+
+              <label class="form-label" style="font-size:12px;">Max Members</label>
+              <input class="form-input" type="number" name="max_members" min="1"
+                     value="{{ c.max_members }}" style="margin-bottom:12px;">
+
+              <label class="form-label" style="font-size:12px;">Coach Fee (₱, added on top of the plan price)</label>
+              <input class="form-input" type="number" name="fee" min="0" step="0.01"
+                     value="{{ c.fee }}" style="margin-bottom:12px;">
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <button type="button" class="btn btn-outline" style="width:100%;justify-content:center;" onclick="toggleCoachEdit({{ c.id }})">CANCEL</button>
+                <button class="btn-primary" type="submit" style="width:100%;">SAVE</button>
+              </div>
+            </form>
+          </div>
+          {% else %}
+          <div style="color:var(--muted);">No coaches set up yet.</div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="page-header">
+        <div><div class="page-title">COACH ASSIGNMENTS</div><div class="page-subtitle">Members who requested a personal coach</div></div>
+      </div>
+      <div class="panel">
+        <table class="data-table">
+          <thead><tr><th>Member</th><th>Coach</th><th>Plan</th><th>Requested</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for c in coach_assignments %}
+            <tr>
+              <td>{{ c.member_name }}</td>
+              <td>{{ c.coach_name }}</td>
+              <td>{{ c.plan }}</td>
+              <td>{{ c.date }}</td>
+              <td>
+                {% if c.status == 'verified' %}
+                <span class="badge badge-green">Active</span>
+                {% elif c.status == 'rejected' %}
+                <span class="badge badge-red">Rejected</span>
+                {% else %}
+                <span class="badge badge-blue">Pending</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" style="text-align:center;color:var(--muted);">No coach requests yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div><!-- /staff-coach -->
+
+    <!-- ── Check-in / Out ───────────────── -->
+    <div id="staff-checkin" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">CHECK-IN / OUT</div><div class="page-subtitle">Record member entry and exit</div></div>
+        <input class="search-input" id="checkin-search" placeholder="Search members..." oninput="filterCheckinTable(this.value)">
+      </div>
+      <div class="panel">
+        <table class="data-table" id="checkin-table">
+          <thead><tr><th>Member</th><th>Plan</th><th>Check-in</th><th>Check-out</th><th>Duration</th><th>Action</th></tr></thead>
+          <tbody>
+            {% for m in members_checkin %}
+            <tr data-name="{{ m.name|lower }}" data-email="{{ m.email }}">
+              <td>{{ m.name }}</td>
+              <td>{{ m.plan }}</td>
+              <td class="cell-checkin">{{ m.check_in }}</td>
+              <td class="cell-checkout">{{ m.check_out }}</td>
+              <td class="cell-duration">
+                {% if m.checkin_status == 'in' %}
+                <span class="live-duration" data-checkin="{{ m.check_in_iso }}">Ongoing</span>
+                {% else %}
+                {{ m.duration }}
+                {% endif %}
+              </td>
+              <td class="cell-action">
+                {% if m.checkin_status == 'in' %}
+                <button class="btn btn-outline btn-sm" onclick="checkOutMember('{{ m.email }}')">← CHECK OUT</button>
+                {% else %}
+                <button class="btn btn-green btn-sm" onclick="checkInMember('{{ m.email }}')">✓ CHECK IN</button>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" style="text-align:center;color:var(--muted);">No members with a plan yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div><!-- /staff-checkin -->
+
+    <!-- ── View Members ─────────────────── -->
+    <div id="staff-members" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">MEMBER DIRECTORY</div><div class="page-subtitle">View-only access</div></div>
+        <input class="search-input" id="members-search" placeholder="Search members..." oninput="filterMembersTable()">
+      </div>
+
+      <!-- Status filter pills -->
+      <div class="status-filter-bar" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+        <button type="button" class="status-pill active" data-status="all" onclick="filterMembersByStatus('all', this)">All</button>
+        <button type="button" class="status-pill" data-status="active" onclick="filterMembersByStatus('active', this)">Active</button>
+        <button type="button" class="status-pill" data-status="pending" onclick="filterMembersByStatus('pending', this)">Pending</button>
+        <button type="button" class="status-pill" data-status="expired" onclick="filterMembersByStatus('expired', this)">Expired</button>
+      </div>
+
+      <div class="panel">
+        <table class="data-table" id="members-table">
+          <thead><tr><th>ID</th><th>Name</th><th>Plan</th><th>Expiry</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for m in members %}
+            <tr data-name="{{ m.name|lower }}"
+                data-status="{{ 'active' if m.status == 'Active' else 'pending' if m.status == 'Pending' else 'expired' }}">
+              <td>#{{ m.id }}</td><td>{{ m.name }}</td><td>{{ m.plan }}</td><td>{{ m.expiry }}</td>
+              <td>
+                {% if m.status == 'Active' %}
+                <span class="badge badge-green">Active</span>
+                {% elif m.status == 'Pending' %}
+                <span class="badge badge-blue">Pending</span>
+                {% else %}
+                <span class="badge badge-red">Expired</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" style="text-align:center;color:var(--muted);">No members yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <div id="members-empty-state" style="display:none;text-align:center;color:var(--muted);padding:20px;">
+          No members match this filter.
+        </div>
+      </div>
+    </div><!-- /staff-members -->
+
+    <!-- ── Record Payment ───────────────── -->
+    <div id="staff-payments" class="sub-panel">
+      <div class="page-header"><div><div class="page-title">PAYMENT RECORD</div><div class="page-subtitle">Log cash payments at the front desk</div></div></div>
+
+      {% if pending_requests %}
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Pending Requests</div></div>
+        <div class="panel-body">
+          {% for p in pending_requests %}
+          <div class="verify-card" style="margin-bottom:12px;">
+            <div>
+              <div style="font-weight:600;margin-bottom:4px;">{{ p.member_name }} — {{ p.plan }}</div>
+              <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+                {% if p.stage == 'approval' %}
+                {% if p.staff_viewed %}
+                <span class="badge badge-gold">Processing</span>
+                {% else %}
+                <span class="badge badge-blue">Pending — New Request</span>
+                {% endif %}
+                {% elif p.stage == 'awaiting_payment' %}
+                <span class="badge badge-gold">Approved — Awaiting Payment</span>
+                {% elif p.stage == 'verify_cash' %}
+                <span class="badge badge-blue">Awaiting Staff Approval</span>
+                {% else %}
+                <span class="badge badge-blue">Awaiting Admin Approval</span>
+                {% endif %}
+                {% if p.is_student %}<span class="badge badge-gold">🎓 Student</span>{% endif %}
+                {% if p.wants_coach %}<span class="badge badge-green">🏋 Coach: {{ p.coach_name }}</span>{% endif %}
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;">
+            Record the payment below for a member on this list to clear their request automatically.
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">New Payment Entry</div></div>
+        <div class="panel-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Member Name / ID / Email</label>
+              <input class="form-input" id="pay-member" list="pay-member-list" autocomplete="off"
+                     placeholder="Start typing a name, ID, or email…" oninput="onPayMemberInput(this.value)">
+              <datalist id="pay-member-list">
+                {% for m in payment_members %}
+                <option value="{{ m.email }}">{{ m.name }} — {{ m.plan }}{% if m.plan != '—' %} ({{ m.status }}){% endif %}</option>
+                {% endfor %}
+              </datalist>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px;">
+                Pick a member from the dropdown to auto-fill their plan below.
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Plan</label>
+              <select class="form-input" id="pay-plan">
+                {% for opt in payment_plan_options %}
+                <option value="{{ opt.name }}" data-price="{{ opt.price }}" data-student-price="{{ opt.student_price }}">{{ opt.name }} — ₱{{ '{:,.0f}'.format(opt.price) if opt.price == opt.price|int else '{:,.2f}'.format(opt.price) }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          <script id="staff-payment-members-data" type="application/json">{{ payment_members|tojson }}</script>
+          <div class="form-group" id="pay-student-block">
+            <label id="pay-student-manual-label" style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--white);cursor:pointer;">
+              <input type="checkbox" id="pay-is-student" onchange="onPayStudentToggle()">
+              🎓 Student (verified in person — apply student rate)
+            </label>
+            <div id="pay-student-proof-note" style="display:none;font-size:11px;color:var(--gold);margin-top:4px;">
+              🎓 Student rate applied automatically — this member's plan is already marked as student (see Pending Requests above). No action needed.
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Payment Method</label>
+            <input class="form-input" id="pay-method" value="Cash" readonly style="cursor:default;max-width:320px;">
+            <div style="font-size:11px;color:var(--muted);margin-top:4px;">
+              Front-desk entries are Cash only. GCash payments are submitted by the member and verified by Admin.
+            </div>
+          </div>
+          <div style="font-size:14px;color:var(--white);margin-bottom:14px;">
+            Amount to collect: <strong id="pay-amount-display" style="color:var(--red);">₱0</strong>
+          </div>
+          <button class="btn btn-red" onclick="promptRecordPayment()">RECORD PAYMENT</button>
+        </div>
+      </div>
+    </div><!-- /staff-payments -->
+
+    <!-- ── Notices ──────────────────────── -->
+    <div id="staff-notices" class="sub-panel">
+      <div class="page-header"><div><div class="page-title">NOTICES</div><div class="page-subtitle">Announcements from admin</div></div></div>
+      <div class="panel">
+        <div class="panel notice-panel" style="margin-bottom:0;">
+          <div class="panel-header"><div class="panel-title">📢 Active Notices</div></div>
+          <div class="panel-body">
+            {% for a in announcements %}
+            <div style="margin-bottom:12px;">
+              <div style="font-weight:600;margin-bottom:4px;color:var(--gold);">{{ a.title }}</div>
+              <div style="font-size:13px;color:var(--white);white-space:pre-wrap;">{{ a.body }}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:6px;">Posted by {{ a.posted_by.full_name if a.posted_by else 'Admin' }} · {{ a.created_at.strftime('%b %d, %Y') if a.created_at else '' }}</div>
+            </div>
+            {% else %}
+            <div style="color:var(--muted);font-size:13px;">No active notices right now.</div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div><!-- /staff-notices -->
+
+    <!-- ── Analytics ─────────────────────── -->
+    <div id="staff-analytics" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">ANALYTICS &amp; REPORTS</div><div class="page-subtitle">Generate business intelligence reports</div></div>
+      </div>
+      <div class="panel" style="margin-bottom:20px;">
+        <div class="panel-header"><div class="panel-title">Report Generator</div></div>
+        <div class="panel-body">
+          <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px;align-items:center;">
+            <span style="font-size:12px;color:var(--muted);">From:</span>
+            <input type="date" id="staff-report-from" class="form-input" style="width:160px;">
+            <span style="font-size:12px;color:var(--muted);">To:</span>
+            <input type="date" id="staff-report-to"   class="form-input" style="width:160px;">
+            <button class="btn btn-outline btn-sm" onclick="clearStaffReportDateRange()">Clear Dates</button>
+            <button class="btn btn-outline" onclick="refreshStaffReport()">↻ Refresh</button>
+            <button class="btn btn-outline" onclick="exportStaffReportPDF()">🖨 PDF</button>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin:-8px 0 16px;">
+            Set both From and To dates to look up a custom range. Leave them blank (or use Clear Dates) to default to this month.
+            For the Revenue Report, only <strong style="color:var(--white);">Cash</strong> payments are included (this also covers Walk-In guest payments) — GCash is verified and reported by Admin.
+          </div>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;">
+            <button class="btn btn-red" onclick="generateStaffAnalyticsReport('membership')">📋 Membership Report</button>
+            <button class="btn btn-red" onclick="generateStaffAnalyticsReport('revenue')">💰 Revenue Report</button>
+            <button class="btn btn-red" onclick="generateStaffAnalyticsReport('attendance')">📅 Attendance Report</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel" id="staff-report-output-panel" style="display:none;">
+        <div class="panel-header"><div class="panel-title" id="staff-report-output-title">Report</div></div>
+        <div class="panel-body" id="staff-report-output-body"></div>
+      </div>
+    </div><!-- /staff-analytics -->
+
+    <!-- ── Settings ─────────────────────── -->
+    <div id="staff-settings" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">SETTINGS</div><div class="page-subtitle">Manage your personal information and password</div></div>
+      </div>
+
+      <div class="grid-2">
+        <!-- Personal Information -->
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Personal Information</div></div>
+          <div class="panel-body">
+            <div class="form-row-4">
+              <div class="form-group">
+                <label class="form-label">First Name</label>
+                <input class="form-input" id="pi-fname" value="{{ current_user.first_name if current_user else '' }}"
+                       oninput="this.value=this.value.replace(/[^A-Za-z\s'-]/g,'')">
+              </div>
+              <div class="form-group">
+                <label class="form-label">M.I.</label>
+                <input class="form-input" id="pi-mi" maxlength="5" value="{{ current_user.middle_initial if current_user else '' }}"
+                       oninput="this.value=this.value.replace(/[^A-Za-z]/g,'')">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Last Name</label>
+                <input class="form-input" id="pi-lname" value="{{ current_user.last_name if current_user else '' }}"
+                       oninput="this.value=this.value.replace(/[^A-Za-z\s'-]/g,'')">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Suffix</label>
+                <input class="form-input" id="pi-ext" maxlength="10" value="{{ current_user.extension_name if current_user else '' }}"
+                       oninput="this.value=this.value.replace(/[^A-Za-z.\s]/g,'')">
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Email Address</label>
+              <input class="form-input" type="email" id="pi-email" value="{{ current_user.email if current_user else '' }}">
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Phone</label>
+                <input class="form-input" id="pi-phone" placeholder="09171234567" maxlength="11" inputmode="numeric" pattern="09\d{9}"
+                       value="{{ current_user.phone if current_user and current_user.phone else '' }}"
+                       oninput="this.value=this.value.replace(/\D/g,'').slice(0,11)">
+                <div style="font-size:11px;color:var(--muted);margin-top:4px;">Must start with 09 and be 11 digits.</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Birthday</label>
+                <input class="form-input" type="date" id="pi-bday" value="{{ current_user.birthday.isoformat() if current_user and current_user.birthday else '' }}">
+              </div>
+            </div>
+            <button class="btn btn-red" style="width:100%;margin-top:8px;" onclick="submitProfileUpdate()">SAVE CHANGES</button>
+          </div>
+        </div>
+
+        <!-- Change Password -->
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Change Password</div></div>
+          <div class="panel-body">
+            <div class="form-group">
+              <label class="form-label">Current Password</label>
+              <div class="password-field">
+                <input class="form-input" type="password" id="cp-current" placeholder="Enter current password">
+                <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)" aria-label="Show password">
+                  <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  <svg class="icon-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.86 21.86 0 0 1 5.06-6.06M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.86 21.86 0 0 1-3.22 4.56M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">New Password</label>
+              <div class="password-field">
+                <input class="form-input" type="password" id="cp-new" placeholder="Minimum 8 characters">
+                <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)" aria-label="Show password">
+                  <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  <svg class="icon-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.86 21.86 0 0 1 5.06-6.06M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.86 21.86 0 0 1-3.22 4.56M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Confirm New Password</label>
+              <div class="password-field">
+                <input class="form-input" type="password" id="cp-confirm" placeholder="Re-enter new password">
+                <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)" aria-label="Show password">
+                  <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  <svg class="icon-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.86 21.86 0 0 1 5.06-6.06M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.86 21.86 0 0 1-3.22 4.56M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                </button>
+              </div>
+            </div>
+            <button class="btn btn-red" id="cp-submit-btn" style="width:100%;margin-top:8px;" onclick="submitChangePassword()">SAVE PASSWORD</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Manage Content (admin/staff only) -->
+      <div class="panel" style="margin-top:24px;">
+        <div class="panel-header">
+          <div><div class="panel-title">Manage Content</div><div style="font-size:12px;color:var(--muted);margin-top:2px;">Edit membership plans, services, and equipment shown to members and on the home page</div></div>
+        </div>
+        <div class="panel-body">
+          <div class="content-subtabs">
+            <button class="content-subtab active" data-content-type="plans" onclick="ContentManager.showType('plans')">Membership Plans</button>
+            <button class="content-subtab" data-content-type="services" onclick="ContentManager.showType('services')">Services</button>
+            <button class="content-subtab" data-content-type="facilities" onclick="ContentManager.showType('facilities')">Our Facilities</button>
+            <button class="content-subtab" data-content-type="machines" onclick="ContentManager.showType('machines')">Equipments and Machines</button>
+          </div>
+
+          <div class="content-toolbar">
+            <div class="content-toolbar-hint">Changes here update both the dashboards and the public home page.</div>
+            <button class="btn btn-red" onclick="ContentManager.openForm(document.querySelector('.content-subtab.active').dataset.contentType, null)">+ ADD NEW</button>
+          </div>
+
+          <div class="content-grid" id="content-grid-plans"></div>
+          <div class="content-grid" id="content-grid-services" style="display:none;"></div>
+          <div class="content-grid" id="content-grid-facilities" style="display:none;"></div>
+          <div class="content-grid" id="content-grid-machines" style="display:none;"></div>
+        </div>
+      </div>
+    </div><!-- /staff-settings -->
+
+  </div><!-- /main-content -->
+</div><!-- /staff-dashboard-root -->
+
+<!-- ═══════════════════════════════════════
+     MODALS
+═══════════════════════════════════════ -->
+<div class="modal-overlay" id="view-proof-modal">
+  <div class="modal" style="max-width:520px;text-align:center;">
+    <button class="modal-close" onclick="closeModal('view-proof-modal')">✕</button>
+    <div class="modal-title" id="proof-modal-title">PAYMENT PROOF</div>
+    <div id="proof-modal-body">
+      <img id="proof-modal-img" src="" alt="Payment proof" style="display:none;max-width:100%;max-height:60vh;border-radius:6px;border:1px solid var(--border);">
+      <div id="proof-modal-pdf-note" style="display:none;">
+        <p style="color:var(--muted);font-size:13px;margin-bottom:16px;">This proof was uploaded as a PDF file.</p>
+        <a id="proof-modal-pdf-link" href="#" target="_blank" class="btn btn-red" style="display:inline-block;">OPEN PDF</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="content-form-modal">
+  <div class="modal" style="max-width:520px;">
+    <button class="modal-close" onclick="closeModal('content-form-modal')">✕</button>
+    <div class="modal-title" id="content-form-title">ADD ITEM</div>
+    <input type="hidden" id="cf-type">
+    <input type="hidden" id="cf-id">
+
+    <div class="content-image-picker">
+      <div class="content-image-preview" id="cf-image-preview">🖼️</div>
+      <div style="flex:1;">
+        <input type="file" accept="image/png,image/jpeg,image/webp" id="cf-image-input" class="form-input" onchange="ContentManager.previewImage(this)">
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;">PNG/JPG/WEBP, up to 8MB.</div>
+        <div id="cf-remove-image-wrap" style="display:none;margin-top:6px;">
+          <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="checkbox" id="cf-remove-image"> Remove current image
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" id="cf-name-label">Name</label>
+      <select class="form-input" id="cf-name-select" style="display:none;" onchange="ContentManager.onNameSelectChange()"></select>
+      <input class="form-input" id="cf-name" placeholder="e.g. Monthly Membership">
+      <div id="cf-name-toggle" style="display:none;margin-top:6px;">
+        <span class="link-btn" style="font-size:12px;" onclick="ContentManager.backToNameList()">← Choose from list instead</span>
+      </div>
+    </div>
+
+    <div class="form-row" id="cf-plan-fields" style="display:none;">
+      <div class="form-group">
+        <label class="form-label">Price (₱)</label>
+        <input class="form-input" type="number" min="0" step="0.01" id="cf-price" placeholder="900">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Duration (days)</label>
+        <input class="form-input" type="number" min="1" id="cf-duration" placeholder="30">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Description</label>
+      <textarea class="form-input" id="cf-description" rows="2" style="resize:vertical;" placeholder="Short description shown to members"></textarea>
+    </div>
+
+    <div class="form-row" id="cf-category-icon-wrap" style="display:none;">
+      <div class="form-group">
+        <label class="form-label">Category</label>
+        <input class="form-input" id="cf-category" list="cf-category-list" placeholder="e.g. Boxing, Strengthening">
+        <datalist id="cf-category-list"></datalist>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Icon</label>
+        <input class="form-input" id="cf-icon" maxlength="8" placeholder="🏋️" style="text-align:center;">
+        <div id="cf-icon-picks" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;"></div>
+      </div>
+    </div>
+
+    <div class="form-group" id="cf-inclusions-wrap" style="display:none;">
+      <label class="form-label">Inclusions (one per line)</label>
+      <textarea class="form-input" id="cf-inclusions" rows="4" style="resize:vertical;" placeholder="Gym Equipment Access&#10;Locker Access&#10;Free Towel Service"></textarea>
+    </div>
+
+    <div class="form-group" id="cf-equipment-wrap" style="display:none;">
+      <label class="form-label">Equipment / Machines used for this service</label>
+      <div id="cf-equipment-list" style="display:flex;flex-wrap:wrap;gap:8px;max-height:160px;overflow:auto;padding:8px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;"></div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Display Order</label>
+      <input class="form-input" type="number" id="cf-sort-order" value="0" style="max-width:140px;">
+    </div>
+
+    <label class="content-checkbox-row">
+      <input type="checkbox" id="cf-active" checked> Active / visible to members and on the home page
+    </label>
+
+    <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="ContentManager.submit()">SAVE</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="content-delete-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="ContentManager.cancelDelete()">✕</button>
+    <div class="modal-title" style="text-align:center;">CONFIRM DELETE</div>
+    <div id="content-delete-message" style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;">
+      Are you sure you want to delete this item?
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+      <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="ContentManager.cancelDelete()">CANCEL</button>
+      <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="ContentManager.performDelete()">DELETE</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="confirm-record-payment-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="cancelRecordPayment()">✕</button>
+    <div class="modal-title" style="text-align:center;">CONFIRM PAYMENT</div>
+    <div id="confirm-record-payment-message" style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;">
+      Are you sure you want to record this payment?
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+      <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="cancelRecordPayment()">NO</button>
+      <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="confirmRecordPayment()">YES</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="confirm-walkin-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="closeModal('confirm-walkin-modal')">✕</button>
+    <div class="modal-title" style="text-align:center;">CONFIRM WALK-IN</div>
+    <div style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;">
+      Are you sure you want to record walk in?
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+      <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="closeModal('confirm-walkin-modal')">NO</button>
+      <button class="btn btn-red" id="confirm-walkin-btn" style="width:100%;justify-content:center;" onclick="confirmWalkInSubmit()">YES</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="payment-recorded-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="closePaymentRecordedModal()">✕</button>
+    <div style="display:flex;justify-content:center;margin-bottom:14px;">
+      <div style="width:56px;height:56px;border-radius:50%;background:rgba(34,197,94,0.15);border:1px solid rgba(34,197,94,0.3);display:flex;align-items:center;justify-content:center;">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+    </div>
+    <div class="modal-title" style="text-align:center;">PAYMENT RECORDED</div>
+    <div id="payment-recorded-message" style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
+      Payment successfully recorded.
+    </div>
+    <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="closePaymentRecordedModal()">OK</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="announcement-notice-modal">
+  <div class="modal" style="max-width:440px;">
+    <button class="modal-close" onclick="closeAnnouncementNoticeModal()">✕</button>
+    <div style="display:flex;justify-content:center;margin-bottom:14px;">
+      <div style="width:56px;height:56px;border-radius:50%;background:rgba(245,197,24,0.15);border:1px solid rgba(245,197,24,0.3);display:flex;align-items:center;justify-content:center;font-size:26px;">📢</div>
+    </div>
+    <div class="modal-title" style="text-align:center;">NOTICE FROM THE ADMIN</div>
+    <div id="announcement-notice-title" style="font-weight:700;text-align:center;margin-top:12px;color:var(--gold);"></div>
+    <div id="announcement-notice-body" style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:10px 0;white-space:pre-wrap;"></div>
+    <div id="announcement-notice-counter" style="font-size:11px;color:var(--muted);text-align:center;margin-bottom:16px;"></div>
+    <button class="btn btn-red" id="announcement-notice-btn" style="width:100%;justify-content:center;" onclick="closeAnnouncementNoticeModal()">OK</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="add-coach-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('add-coach-modal')">✕</button>
+    <div class="modal-title">ADD NEW COACH</div>
+    <div class="form-group"><label class="form-label">Coach Name</label><input id="add-coach-name" class="form-input" placeholder="Juan Dela Cruz"></div>
+    <div class="form-group">
+      <label class="form-label">Available Days</label>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;">
+        {% for day in coach_days %}
+        <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);">
+          <input type="checkbox" class="add-coach-day" value="{{ day }}">
+          {{ day }}
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="form-group"><label class="form-label">Max Members</label><input id="add-coach-max" class="form-input" type="number" min="1" value="10"></div>
+    <div class="form-group"><label class="form-label">Coach Fee (₱, added on top of the plan price)</label><input id="add-coach-fee" class="form-input" type="number" min="0" step="0.01" value="0"></div>
+    <button class="btn btn-red" style="width:100%;margin-top:8px;" onclick="addCoach()">ADD COACH</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="delete-coach-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="closeModal('delete-coach-modal')">✕</button>
+    <div class="modal-title" style="text-align:center;">DELETE COACH</div>
+    <div style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;">
+      Are you sure you want to remove <strong id="delete-coach-name"></strong> from the coach roster? This can't be undone.
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+      <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="closeModal('delete-coach-modal')">NO</button>
+      <button class="btn btn-red" id="confirm-coach-delete-btn" style="width:100%;justify-content:center;" onclick="confirmDeleteCoach()">YES, DELETE</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="confirm-coach-save-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="closeModal('confirm-coach-save-modal')">✕</button>
+    <div class="modal-title" style="text-align:center;">CONFIRM SAVE</div>
+    <div style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;">
+      Are you sure you want to save this coach's changes?
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+      <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="closeModal('confirm-coach-save-modal')">NO</button>
+      <button class="btn btn-red" id="confirm-coach-save-btn" style="width:100%;justify-content:center;" onclick="confirmCoachUpdate()">YES</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="coach-save-success-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="closeCoachSaveSuccessModal()">✕</button>
+    <div style="display:flex;justify-content:center;margin-bottom:14px;">
+      <div style="width:56px;height:56px;border-radius:50%;background:rgba(34,197,94,0.15);border:1px solid rgba(34,197,94,0.3);display:flex;align-items:center;justify-content:center;">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+    </div>
+    <div class="modal-title" style="text-align:center;">SUCCESS</div>
+    <div style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
+      Coach details successfully saved.
+    </div>
+    <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="closeCoachSaveSuccessModal()">OK</button>
+  </div>
+</div>
+
+<!-- Toast Container -->
+<div class="toast-container" id="toast-container"></div>
+
+<script id="staff-dashboard-data" type="application/json">{{ {'new_announcements': new_announcements}|tojson }}</script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
+<script src="{{ url_for('static', filename='js/tr-common.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tr-staff.js') }}"></script>
+</body>
+</html>
