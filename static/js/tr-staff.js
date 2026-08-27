@@ -709,13 +709,62 @@ const StaffModule = (() => {
     _updateWalkInAmount();
   }
 
+  // ── Check-in / Out: status pill + search filtering ──
+  let checkinStatusFilter = 'all';
+
+  /** Called when a status pill (All / Active / Pending / Expired) is clicked */
+  function filterCheckinByStatus(status, pillEl) {
+    checkinStatusFilter = status;
+    document.querySelectorAll('#staff-checkin .status-pill').forEach(p => p.classList.remove('active'));
+    if (pillEl) pillEl.classList.add('active');
+    _applyCheckinFilter();
+  }
+
   /** Filter the Check-in/Out member table by name as the staff member types */
   function filterCheckinTable(term) {
-    const search = (term || '').trim().toLowerCase();
-    document.querySelectorAll('#checkin-table tbody tr[data-name]').forEach(row => {
-      const match = row.dataset.name.includes(search);
-      row.style.display = match ? '' : 'none';
+    _applyCheckinFilter();
+  }
+
+  function _applyCheckinFilter() {
+    const searchEl = document.getElementById('checkin-search');
+    const search   = (searchEl?.value || '').trim().toLowerCase();
+    const rows     = document.querySelectorAll('#checkin-table tbody tr[data-name]');
+    let visibleCount = 0;
+
+    rows.forEach(row => {
+      const statusMatch = checkinStatusFilter === 'all' || row.dataset.status === checkinStatusFilter;
+      const nameMatch    = !search || row.dataset.name.includes(search);
+      const show = statusMatch && nameMatch;
+      row.style.display = show ? '' : 'none';
+      if (show) visibleCount++;
     });
+
+    const emptyState = document.getElementById('checkin-empty-state');
+    if (emptyState) emptyState.style.display = (rows.length && visibleCount === 0) ? 'block' : 'none';
+  }
+
+  /** Show/hide the ID column in the Check-in/Out table */
+  function toggleCheckinIdColumn() {
+    const table = document.getElementById('checkin-table');
+    const btn   = document.getElementById('toggle-checkin-id-btn');
+    if (!table || !btn) return;
+    const cells = table.querySelectorAll('.col-checkin-id');
+    const isHidden = btn.dataset.hidden === 'true';
+    cells.forEach(cell => { cell.style.display = isHidden ? '' : 'none'; });
+    btn.dataset.hidden = isHidden ? 'false' : 'true';
+    btn.textContent = isHidden ? '👁 HIDE ID' : '🙈 SHOW ID';
+  }
+
+  /** Show/hide the ID column in the Member Directory table */
+  function toggleMemberIdColumn() {
+    const table = document.getElementById('members-table');
+    const btn   = document.getElementById('toggle-id-btn');
+    if (!table || !btn) return;
+    const cells = table.querySelectorAll('.col-member-id');
+    const isHidden = btn.dataset.hidden === 'true';
+    cells.forEach(cell => { cell.style.display = isHidden ? '' : 'none'; });
+    btn.dataset.hidden = isHidden ? 'false' : 'true';
+    btn.textContent = isHidden ? '👁 HIDE ID' : '🙈 SHOW ID';
   }
 
   // ── Member Directory: status pill + search filtering ──
@@ -1046,7 +1095,7 @@ const StaffModule = (() => {
     });
   }
 
-  return { init, tab, promptRecordPayment, confirmRecordPayment, cancelRecordPayment, closePaymentRecordedModal, checkInMember, checkOutMember, filterCheckinTable, filterMembersByStatus, filterMembersTable, viewPaymentProof, onPayMemberInput, onPayStudentToggle, updatePayAmountDisplay, generateReport, submitCoachUpdate, confirmCoachUpdate, closeCoachSaveSuccessModal, toggleCoachEdit, addCoach, promptDeleteCoach, confirmDeleteCoach,
+  return { init, tab, promptRecordPayment, confirmRecordPayment, cancelRecordPayment, closePaymentRecordedModal, checkInMember, checkOutMember, filterCheckinTable, filterCheckinByStatus, filterMembersByStatus, filterMembersTable, toggleMemberIdColumn, toggleCheckinIdColumn, viewPaymentProof, onPayMemberInput, onPayStudentToggle, updatePayAmountDisplay, generateReport, submitCoachUpdate, confirmCoachUpdate, closeCoachSaveSuccessModal, toggleCoachEdit, addCoach, promptDeleteCoach, confirmDeleteCoach,
            generateStaffAnalyticsReport, clearStaffReportDateRange, refreshStaffReport, exportStaffReportPDF, submitWalkIn, confirmWalkIn, confirmWalkInSubmit, toggleWalkInCoach };
 })();
 
@@ -1067,12 +1116,15 @@ document.addEventListener('DOMContentLoaded', () => {
   window.checkInMember  = (idOrValue) => StaffModule.checkInMember(idOrValue);
   window.checkOutMember = (idOrValue) => StaffModule.checkOutMember(idOrValue);
   window.filterCheckinTable   = (term) => StaffModule.filterCheckinTable(term);
+  window.filterCheckinByStatus = (status, el) => StaffModule.filterCheckinByStatus(status, el);
   window.submitWalkIn         = () => StaffModule.submitWalkIn();
   window.confirmWalkIn        = () => StaffModule.confirmWalkIn();
   window.confirmWalkInSubmit  = () => StaffModule.confirmWalkInSubmit();
   window.toggleWalkInCoach    = () => StaffModule.toggleWalkInCoach();
   window.filterMembersByStatus = (status, el) => StaffModule.filterMembersByStatus(status, el);
   window.filterMembersTable    = () => StaffModule.filterMembersTable();
+  window.toggleMemberIdColumn  = () => StaffModule.toggleMemberIdColumn();
+  window.toggleCheckinIdColumn = () => StaffModule.toggleCheckinIdColumn();
   window.viewPaymentProof      = (url, title) => StaffModule.viewPaymentProof(url, title);
   window.onPayMemberInput      = (value) => StaffModule.onPayMemberInput(value);
   window.onPayStudentToggle    = () => StaffModule.onPayStudentToggle();

@@ -55,7 +55,7 @@
         <span class="nav-icon">👥</span> View Members
       </div>
       <div class="nav-item" id="nav-staff-notices" onclick="staffTab('notices',this)">
-        <span class="nav-icon">📢</span> Notices
+        <span class="nav-icon">📢</span> Announcement
       </div>
       <div class="nav-item" id="nav-staff-analytics" onclick="staffTab('analytics',this)">
         <span class="nav-icon">📈</span> Analytics
@@ -101,13 +101,18 @@
               <select class="form-input" id="staff-checkin-quick">
                 <option value="">Choose a member...</option>
                 {% for m in members %}
+                {% if m.status == 'Active' %}
                 <option value="{{ m.email }}">{{ m.name }} — {{ m.status }}</option>
+                {% endif %}
                 {% endfor %}
               </select>
             </div>
             <div style="display:flex;gap:10px;">
               <button class="btn btn-green"  style="flex:1;" onclick="checkInMember('staff-checkin-quick')">✓ CHECK IN</button>
               <button class="btn btn-outline" style="flex:1;" onclick="checkOutMember('staff-checkin-quick')">← CHECK OUT</button>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:8px;">
+              Only members with an active plan are listed. To check out someone whose plan lapsed mid-visit, use the table in the Check-in / Out tab.
             </div>
           </div>
         </div>
@@ -496,14 +501,37 @@
         <div><div class="page-title">CHECK-IN / OUT</div><div class="page-subtitle">Record member entry and exit</div></div>
         <input class="search-input" id="checkin-search" placeholder="Search members..." oninput="filterCheckinTable(this.value)">
       </div>
+
+      <!-- Status filter pills -->
+      <div class="status-filter-bar" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
+        <button type="button" class="status-pill active" data-status="all" onclick="filterCheckinByStatus('all', this)">All</button>
+        <button type="button" class="status-pill" data-status="active" onclick="filterCheckinByStatus('active', this)">Active</button>
+        <button type="button" class="status-pill" data-status="pending" onclick="filterCheckinByStatus('pending', this)">Pending</button>
+        <button type="button" class="status-pill" data-status="expired" onclick="filterCheckinByStatus('expired', this)">Expired</button>
+        <button type="button" class="btn btn-outline btn-sm" id="toggle-checkin-id-btn" style="margin-left:auto;" onclick="toggleCheckinIdColumn()">👁 HIDE ID</button>
+      </div>
+
       <div class="panel">
         <table class="data-table" id="checkin-table">
-          <thead><tr><th>Member</th><th>Plan</th><th>Check-in</th><th>Check-out</th><th>Duration</th><th>Action</th></tr></thead>
+          <thead><tr><th class="col-checkin-id">ID</th><th>Member</th><th>Plan</th><th>Status</th><th>Check-in</th><th>Check-out</th><th>Duration</th><th>Action</th></tr></thead>
           <tbody>
             {% for m in members_checkin %}
-            <tr data-name="{{ m.name|lower }}" data-email="{{ m.email }}">
+            <tr data-name="{{ m.name|lower }}" data-email="{{ m.email }}"
+                data-status="{{ 'active' if m.plan_status == 'Active' else 'pending' if m.plan_status == 'Pending' else 'expired' }}">
+              <td class="col-checkin-id">#{{ m.id }}</td>
               <td>{{ m.name }}</td>
               <td>{{ m.plan }}</td>
+              <td>
+                {% if m.plan_status == 'Active' %}
+                <span class="badge badge-green">Active</span>
+                {% elif m.plan_status == 'Pending' %}
+                <span class="badge badge-blue">Pending</span>
+                {% elif m.plan_status == 'Expired' %}
+                <span class="badge badge-red">Expired</span>
+                {% else %}
+                <span class="badge badge-red">{{ m.plan_status }}</span>
+                {% endif %}
+              </td>
               <td class="cell-checkin">{{ m.check_in }}</td>
               <td class="cell-checkout">{{ m.check_out }}</td>
               <td class="cell-duration">
@@ -516,16 +544,21 @@
               <td class="cell-action">
                 {% if m.checkin_status == 'in' %}
                 <button class="btn btn-outline btn-sm" onclick="checkOutMember('{{ m.email }}')">← CHECK OUT</button>
+                {% elif m.plan_status != 'Active' %}
+                <button class="btn btn-outline btn-sm" disabled title="Plan is {{ m.plan_status|lower }} — check-in unavailable" style="opacity:0.5;cursor:not-allowed;">UNAVAILABLE</button>
                 {% else %}
                 <button class="btn btn-green btn-sm" onclick="checkInMember('{{ m.email }}')">✓ CHECK IN</button>
                 {% endif %}
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="6" style="text-align:center;color:var(--muted);">No members with a plan yet.</td></tr>
+            <tr><td colspan="8" style="text-align:center;color:var(--muted);">No members with a plan yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
+        <div id="checkin-empty-state" style="display:none;text-align:center;color:var(--muted);padding:20px;">
+          No members match this filter.
+        </div>
       </div>
     </div><!-- /staff-checkin -->
 
@@ -537,21 +570,22 @@
       </div>
 
       <!-- Status filter pills -->
-      <div class="status-filter-bar" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+      <div class="status-filter-bar" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
         <button type="button" class="status-pill active" data-status="all" onclick="filterMembersByStatus('all', this)">All</button>
         <button type="button" class="status-pill" data-status="active" onclick="filterMembersByStatus('active', this)">Active</button>
         <button type="button" class="status-pill" data-status="pending" onclick="filterMembersByStatus('pending', this)">Pending</button>
         <button type="button" class="status-pill" data-status="expired" onclick="filterMembersByStatus('expired', this)">Expired</button>
+        <button type="button" class="btn btn-outline btn-sm" id="toggle-id-btn" style="margin-left:auto;" onclick="toggleMemberIdColumn()">👁 HIDE ID</button>
       </div>
 
       <div class="panel">
         <table class="data-table" id="members-table">
-          <thead><tr><th>ID</th><th>Name</th><th>Plan</th><th>Expiry</th><th>Status</th></tr></thead>
+          <thead><tr><th class="col-member-id">ID</th><th>Name</th><th>Plan</th><th>Expiry</th><th>Status</th></tr></thead>
           <tbody>
             {% for m in members %}
             <tr data-name="{{ m.name|lower }}"
                 data-status="{{ 'active' if m.status == 'Active' else 'pending' if m.status == 'Pending' else 'expired' }}">
-              <td>#{{ m.id }}</td><td>{{ m.name }}</td><td>{{ m.plan }}</td><td>{{ m.expiry }}</td>
+              <td class="col-member-id">#{{ m.id }}</td><td>{{ m.name }}</td><td>{{ m.plan }}</td><td>{{ m.expiry }}</td>
               <td>
                 {% if m.status == 'Active' %}
                 <span class="badge badge-green">Active</span>
@@ -665,10 +699,10 @@
 
     <!-- ── Notices ──────────────────────── -->
     <div id="staff-notices" class="sub-panel">
-      <div class="page-header"><div><div class="page-title">NOTICES</div><div class="page-subtitle">Announcements from admin</div></div></div>
+      <div class="page-header"><div><div class="page-title">ANNOUNCEMENT</div><div class="page-subtitle">Announcements from admin</div></div></div>
       <div class="panel">
         <div class="panel notice-panel" style="margin-bottom:0;">
-          <div class="panel-header"><div class="panel-title">📢 Active Notices</div></div>
+          <div class="panel-header"><div class="panel-title">📢 Active Announcements</div></div>
           <div class="panel-body">
             {% for a in announcements %}
             <div style="margin-bottom:12px;">
@@ -677,7 +711,7 @@
               <div style="font-size:11px;color:var(--muted);margin-top:6px;">Posted by {{ a.posted_by.full_name if a.posted_by else 'Admin' }} · {{ a.created_at.strftime('%b %d, %Y') if a.created_at else '' }}</div>
             </div>
             {% else %}
-            <div style="color:var(--muted);font-size:13px;">No active notices right now.</div>
+            <div style="color:var(--muted);font-size:13px;">No active announcements right now.</div>
             {% endfor %}
           </div>
         </div>

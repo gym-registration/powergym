@@ -2964,6 +2964,32 @@ def staff_delete_coach():
     return jsonify(success=True, message=f'{name} removed from the coach roster.')
 
 
+def _member_plan_status(member_id):
+    """Status label for one member's current plan — 'No Plan', 'Expired',
+    'Declined', 'Pending', or 'Active'. Same rules as _get_members_with_plans(),
+    kept as its own lightweight lookup so check-in/out doesn't need to query
+    every member just to check one."""
+    membership = Membership.query.filter_by(member_id=member_id).first()
+    if membership is None or membership.plan_id is None:
+        return 'No Plan'
+    today = _today_manila()
+    if membership.expiry_date and membership.expiry_date < today:
+        return 'Expired'
+    if membership.status == 'declined':
+        return 'Declined'
+    if membership.status == 'pending':
+        return 'Pending'
+    return 'Active'
+
+
+_PLAN_STATUS_BLOCK_REASON = {
+    'No Plan':  'does not have a membership plan',
+    'Pending':  "membership plan is still pending approval",
+    'Expired':  'membership plan has expired',
+    'Declined': 'membership plan request was declined',
+}
+
+
 @app.route('/staff/checkin', methods=['POST'])
 def staff_checkin():
     if session.get('role') not in ('staff', 'admin'):
@@ -2973,6 +2999,14 @@ def staff_checkin():
     member, error = _find_member(data.get('member_identifier'))
     if error:
         return jsonify(success=False, error=error), 404
+
+    plan_status = _member_plan_status(member.id)
+    if plan_status != 'Active':
+        reason = _PLAN_STATUS_BLOCK_REASON.get(plan_status, 'membership is not active')
+        return jsonify(
+            success=False,
+            error=f'{member.first_name} {reason} — check-in is unavailable until the plan is active.'
+        ), 403
 
     open_entry = Attendance.query.filter_by(member_id=member.id, check_out=None).first()
     if open_entry is not None:
@@ -3008,6 +3042,13 @@ def staff_checkout():
         .first()
     )
     if entry is None:
+        # No open session to close. Since check-in is gated on an active
+        # plan, the only way to reach a real open entry here is if the
+        # plan was active at check-in time — so this is always the
+        # legitimate "nothing to check out" case, never a bypass of the
+        # check-in gate. We deliberately do NOT re-check plan status
+        # once an entry IS open, so a plan that lapses mid-visit doesn't
+        # strand the member checked in with no way to close it out.
         return jsonify(success=False, error=f'{member.first_name} has no open check-in to close.'), 409
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -3025,6 +3066,7 @@ def staff_checkout():
         time=_to_manila(now).strftime('%I:%M %p').lstrip('0'),
         duration=duration_text,
     )
+
 
 
 @app.route('/staff/walkin', methods=['POST'])
