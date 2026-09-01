@@ -261,9 +261,37 @@ function closeModal(id) {
   if (el) el.classList.remove('open');
 }
 
-/** Open the Terms & Policy modal from registration, and unlock the
- *  "I agree" checkbox once the member closes it (✕ button or backdrop
- *  click) so they can't check it without opening the terms first. */
+/** Terms & Policy read-time gate state. secondsLeft counts down only while
+ *  the modal is open, and persists across multiple opens/closes in the
+ *  same page load — so a member can't unlock the checkbox by opening and
+ *  immediately closing the modal several times. The required duration
+ *  comes from the modal's data-read-seconds attribute (admin-editable). */
+let termsSecondsLeft = null;
+let termsCountdownId = null;
+
+function _termsFormatTime(s) {
+  if (s >= 60) {
+    const m = Math.floor(s / 60), r = s % 60;
+    return r ? `${m}m ${r}s` : `${m}m`;
+  }
+  return `${s}s`;
+}
+
+function _termsUpdateTimerDisplay() {
+  const timerEl = document.getElementById('terms-timer');
+  if (!timerEl) return;
+  if (termsSecondsLeft > 0) {
+    timerEl.textContent = `Please keep reading — you can agree in ${_termsFormatTime(termsSecondsLeft)}.`;
+  } else {
+    timerEl.textContent = "You've reviewed the Terms & Policy — you may close this and check \u201cI agree.\u201d";
+  }
+}
+
+/** Open the Terms & Policy modal from registration. The "I agree"
+ *  checkbox only unlocks once the member has kept the modal open for the
+ *  estimated read time (data-read-seconds on the modal) and then closes
+ *  it (✕ button or backdrop click) — so they can't check it without
+ *  actually spending time on the terms first. */
 function openTermsModal() {
   openModal('terms-modal');
   const modal = document.getElementById('terms-modal');
@@ -271,10 +299,34 @@ function openTermsModal() {
   const hint = document.getElementById('reg-terms-hint');
   if (!modal) return;
 
+  if (termsSecondsLeft === null) {
+    const configured = parseInt(modal.dataset.readSeconds, 10);
+    termsSecondsLeft = Number.isFinite(configured) && configured > 0 ? configured : 30;
+  }
+  _termsUpdateTimerDisplay();
+
+  if (termsCountdownId) clearInterval(termsCountdownId);
+  termsCountdownId = setInterval(() => {
+    if (termsSecondsLeft > 0) {
+      termsSecondsLeft -= 1;
+      _termsUpdateTimerDisplay();
+    }
+    if (termsSecondsLeft <= 0) {
+      clearInterval(termsCountdownId);
+      termsCountdownId = null;
+    }
+  }, 1000);
+
   const observer = new MutationObserver(() => {
     if (!modal.classList.contains('open')) {
-      if (checkbox) checkbox.disabled = false;
-      if (hint) hint.style.display = 'none';
+      if (termsCountdownId) { clearInterval(termsCountdownId); termsCountdownId = null; }
+      if (termsSecondsLeft <= 0) {
+        if (checkbox) checkbox.disabled = false;
+        if (hint) hint.style.display = 'none';
+      } else if (hint) {
+        hint.textContent = `Please reopen and review the Terms & Policy for ${_termsFormatTime(termsSecondsLeft)} more before you can agree.`;
+        hint.style.display = 'block';
+      }
       observer.disconnect();
     }
   });

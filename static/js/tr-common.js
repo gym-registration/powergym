@@ -405,6 +405,9 @@ function submitChangePassword() {
         return;
       }
       [currentEl, newEl, confirmEl].forEach(el => { if (el) el.value = ''; });
+      // Fields were cleared programmatically (no 'input' event fires), so
+      // hide the save button ourselves rather than waiting on the listener.
+      if (btn) btn.style.display = 'none';
       showToast(data.message || 'Password changed successfully.', 'success');
     })
     .catch(() => {
@@ -437,7 +440,8 @@ function submitProfileUpdate() {
     return;
   }
 
-  const btn = document.querySelector('#pi-fname')?.closest('.panel')?.querySelector('.btn-red');
+  const btn = document.getElementById('pi-save-btn')
+    || document.querySelector('#pi-fname')?.closest('.panel')?.querySelector('.btn-red');
   if (btn) { btn.disabled = true; btn.textContent = 'SAVING...'; }
 
   fetch('/update-profile', {
@@ -460,6 +464,10 @@ function submitProfileUpdate() {
       if (emailEl)  emailEl.textContent  = data.user.email;
       if (avatarEl) avatarEl.textContent = data.user.initials;
 
+      // Saved successfully — the current field values are now the new
+      // "unchanged" baseline, so re-hide the button until something else changes.
+      if (window.FormChangeTracker) window.FormChangeTracker.resetProfileBaseline();
+
       showToast(data.message || 'Profile updated successfully.', 'success');
     })
     .catch(() => {
@@ -467,6 +475,77 @@ function submitProfileUpdate() {
       showToast('Could not reach the server. Please try again.', 'error');
     });
 }
+
+
+/* ════════════════════════════════════════════════
+   5b. FORM CHANGE TRACKER
+   Keeps the "Save Changes" / "Save Password" buttons
+   hidden until the user has actually typed/changed
+   something in the corresponding form. Used on the
+   Settings tab of the admin/staff/member dashboards.
+════════════════════════════════════════════════ */
+const FormChangeTracker = (() => {
+
+  const PROFILE_FIELD_IDS  = ['pi-fname', 'pi-mi', 'pi-lname', 'pi-ext', 'pi-email', 'pi-phone', 'pi-bday'];
+  const PASSWORD_FIELD_IDS = ['cp-current', 'cp-new', 'cp-confirm'];
+
+  let profileBaseline = {};
+
+  function _fieldValue(id) {
+    const el = document.getElementById(id);
+    return el ? el.value : '';
+  }
+
+  function _captureProfileBaseline() {
+    profileBaseline = {};
+    PROFILE_FIELD_IDS.forEach(id => { profileBaseline[id] = _fieldValue(id); });
+  }
+
+  function _profileHasChanges() {
+    return PROFILE_FIELD_IDS.some(id => _fieldValue(id) !== profileBaseline[id]);
+  }
+
+  function _updateProfileButton() {
+    const btn = document.getElementById('pi-save-btn');
+    if (!btn) return;
+    btn.style.display = _profileHasChanges() ? '' : 'none';
+  }
+
+  function _updatePasswordButton() {
+    const btn = document.getElementById('cp-submit-btn');
+    if (!btn) return;
+    const hasInput = PASSWORD_FIELD_IDS.some(id => _fieldValue(id).length > 0);
+    btn.style.display = hasInput ? '' : 'none';
+  }
+
+  /** Re-capture the profile baseline (call after a successful save) and hide the button. */
+  function resetProfileBaseline() {
+    _captureProfileBaseline();
+    _updateProfileButton();
+  }
+
+  /** Wire up listeners for whichever of the two forms exist on this page. */
+  function init() {
+    if (document.getElementById('pi-save-btn') && PROFILE_FIELD_IDS.some(id => document.getElementById(id))) {
+      _captureProfileBaseline();
+      _updateProfileButton();
+      PROFILE_FIELD_IDS.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', _updateProfileButton);
+      });
+    }
+
+    if (document.getElementById('cp-submit-btn')) {
+      _updatePasswordButton();
+      PASSWORD_FIELD_IDS.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', _updatePasswordButton);
+      });
+    }
+  }
+
+  return { init, resetProfileBaseline };
+})();
 
 /** Submit the member self-registration form (used by trmem.html's
  *  "SUBMIT REGISTRATION" button) — validates client-side, posts to the
@@ -1176,4 +1255,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.goTo          = (screen) => Navigation.goToScreen(screen);
   // selectPlan is re-assigned per page (login/member) where relevant; keep a fallback
   if (!window.selectPlan) window.selectPlan = selectPlan;
+
+  window.FormChangeTracker = FormChangeTracker;
+  FormChangeTracker.init();
 });

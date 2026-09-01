@@ -869,7 +869,7 @@
                 <input class="form-input" type="date" id="pi-bday" value="{{ member.birthday.isoformat() if member.birthday else '' }}">
               </div>
             </div>
-            <button class="btn btn-red" style="width:100%;margin-top:8px;" onclick="submitProfileUpdate()">SAVE CHANGES</button>
+            <button class="btn btn-red" id="pi-save-btn" style="width:100%;margin-top:8px;display:none;" onclick="submitProfileUpdate()">SAVE CHANGES</button>
           </div>
         </div>
 
@@ -907,7 +907,7 @@
                 </button>
               </div>
             </div>
-            <button class="btn btn-red" id="cp-submit-btn" style="width:100%;margin-top:8px;" onclick="submitChangePassword()">SAVE PASSWORD</button>
+            <button class="btn btn-red" id="cp-submit-btn" style="width:100%;margin-top:8px;display:none;" onclick="submitChangePassword()">SAVE PASSWORD</button>
           </div>
         </div>
       </div>

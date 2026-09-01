@@ -567,7 +567,7 @@
                 <input class="form-input" type="date" id="pi-bday" value="{{ current_user.birthday.isoformat() if current_user and current_user.birthday else '' }}">
               </div>
             </div>
-            <button class="btn btn-red" style="width:100%;margin-top:8px;" onclick="submitProfileUpdate()">SAVE CHANGES</button>
+            <button class="btn btn-red" id="pi-save-btn" style="width:100%;margin-top:8px;display:none;" onclick="submitProfileUpdate()">SAVE CHANGES</button>
           </div>
         </div>
 
@@ -605,7 +605,7 @@
                 </button>
               </div>
             </div>
-            <button class="btn btn-red" id="cp-submit-btn" style="width:100%;margin-top:8px;" onclick="submitChangePassword()">SAVE PASSWORD</button>
+            <button class="btn btn-red" id="cp-submit-btn" style="width:100%;margin-top:8px;display:none;" onclick="submitChangePassword()">SAVE PASSWORD</button>
           </div>
         </div>
       </div>
@@ -632,6 +632,30 @@
             </div>
           </div>
           <button class="btn btn-red" id="gcash-settings-submit-btn" style="width:100%;margin-top:8px;" onclick="submitGcashSettings()">SAVE GCASH DETAILS</button>
+        </div>
+      </div>
+
+      <!-- Terms & Policy (shown to members during registration) -->
+      <div class="panel" style="margin-top:24px;">
+        <div class="panel-header">
+          <div><div class="panel-title">Terms &amp; Policy</div><div style="font-size:12px;color:var(--muted);margin-top:2px;">Shown in the popup new members must open before they can register. Basic HTML (like &lt;p&gt; and &lt;strong&gt;) is supported.</div></div>
+        </div>
+        <div class="panel-body">
+          <div class="form-group">
+            <label class="form-label">Estimated Read Time (seconds)</label>
+            <input class="form-input" id="terms-read-seconds" type="number" min="5" max="600" step="5"
+                   style="max-width:160px;"
+                   value="{{ gcash_settings.terms_read_seconds if gcash_settings else 30 }}">
+            <div style="font-size:11px;color:var(--muted);margin-top:4px;">
+              Members must keep the Terms &amp; Policy popup open for this long (it can be reopened to keep counting) before the "I agree" checkbox unlocks.
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Terms &amp; Policy Content</label>
+            <textarea class="form-input" id="terms-content-editor" rows="12"
+                      style="font-family:monospace;font-size:12px;line-height:1.5;resize:vertical;">{{ gcash_settings.terms_content if gcash_settings else '' }}</textarea>
+          </div>
+          <button class="btn btn-red" id="terms-settings-submit-btn" style="width:100%;margin-top:8px;" onclick="submitTermsSettings()">SAVE TERMS &amp; POLICY</button>
         </div>
       </div>
 

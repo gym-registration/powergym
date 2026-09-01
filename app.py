@@ -669,12 +669,21 @@ class GymEquipment(db.Model):
 
 class GymSettings(db.Model):
     """Single-row table holding gym-wide settings editable by Admin —
-    currently just the GCash account members send payments to. Always
-    accessed through _get_gym_settings(), which gets/creates row id=1."""
+    the GCash account members send payments to, and the Terms & Policy
+    text/read-time shown during registration. Always accessed through
+    _get_gym_settings(), which gets/creates row id=1."""
     __tablename__ = 'gym_settings'
     id                 = db.Column(db.Integer, primary_key=True, autoincrement=True)
     gcash_number       = db.Column(db.String(20),  nullable=True)
     gcash_account_name = db.Column(db.String(120), nullable=True)
+    # Raw HTML shown inside the Terms & Policy modal on registration.
+    # Admin-editable via Settings → Terms & Policy.
+    terms_content       = db.Column(db.Text, nullable=True)
+    # Minimum number of seconds the modal must be open (accumulated across
+    # opens) before a new member is allowed to check "I agree" — an
+    # estimated-reading-time gate so members can't just tick the box
+    # without spending any time on it.
+    terms_read_seconds  = db.Column(db.Integer, nullable=False, default=30)
     updated_at         = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
                                     onupdate=lambda: datetime.now(timezone.utc))
 
@@ -682,13 +691,52 @@ class GymSettings(db.Model):
         return f"<GymSettings gcash_number={self.gcash_number}>"
 
 
+# Default Terms & Policy text (the content that used to be hardcoded into
+# trmem.html) — seeded onto the settings row the first time it's created,
+# and used as a fallback if an admin ever clears the field entirely.
+DEFAULT_TERMS_HTML = """<p><strong>FITNESS AREA RULES:</strong></p>
+<p>&bull; Use facilities and equipment at your own risk.</p>
+<p>&bull; Use equipment properly and follow directions carefully.</p>
+<p>&bull; Do not lean on the equipment. Keep hands away from moving parts.</p>
+<p>&bull; Consult a physician before beginning an exercise program.</p>
+<p>&bull; No food or drinks (except water). No smoking.</p>
+<p>&bull; Children under 18 must be accompanied by an adult.</p>
+<p>&bull; Proper fitness attire is required. No boots, street shoes, sandals or bare feet.</p>
+<p>&bull; Report any damaged equipment to management immediately. DO NOT USE.</p>
+<p>&bull; Always be courteous and respectful of others.</p>
+<p>&bull; Please return all equipment to its place and wipe down machines after use.</p>
+
+<p style="margin-top:14px;"><strong>ONLINE MEMBERSHIP SYSTEM TERMS:</strong></p>
+<p>&bull; You must provide true and accurate personal information when registering, and keep your login credentials confidential. Accounts may not be shared.</p>
+<p>&bull; Submitting a payment (GCash reference and proof of payment) does not activate your plan immediately &mdash; it remains pending until verified by staff or admin. Power Gym is not liable for delays in verification.</p>
+<p>&bull; Submitting false, altered, or fraudulent proof of payment is grounds for account suspension or termination.</p>
+<p>&bull; The system may be temporarily unavailable due to maintenance or technical issues; Power Gym is not liable for inability to access your dashboard or submit payments during downtime.</p>
+<p>&bull; Password reset is done via a 6-digit One-Time PIN (OTP) sent to your registered email. You have 3 attempts to enter the correct OTP; after 3 incorrect attempts, you must wait 30 minutes before a new OTP can be sent.</p>
+<p>&bull; Personal information, payment references, and uploaded payment screenshots are collected only for account and payment verification, and are accessible only to authorized staff/admin.</p>
+<p>&bull; Check-in and check-out times recorded by staff serve as the official attendance record for your account. Report any discrepancies to staff directly.</p>
+<p>&bull; Members may not attempt to access staff or admin functions, tamper with the system, or access another member's account. Violations may result in account termination.</p>
+<p>&bull; By checking "I agree" and completing registration, you provide valid electronic consent to these Terms &amp; Policy, equivalent to a signed physical agreement.</p>
+
+<p style="margin-top:14px;"><strong>POLICIES:</strong></p>
+<p>&bull; <strong>Refund Policy:</strong> All membership payments are non-refundable once a plan has been activated or renewed.</p>
+<p>&bull; <strong>Cancellation/Freeze Policy:</strong> Membership freezes or cancellations must be requested in person at the front desk and are subject to management approval.</p>
+<p>&bull; <strong>Privacy Policy:</strong> Personal information and payment proof submitted through this system are used solely for account management and payment verification, and will not be shared with third parties without consent.</p>
+<p>&bull; <strong>Photography/CCTV Policy:</strong> The premises may be monitored by CCTV for security purposes. Members consent to being recorded while on the premises.</p>
+<p>&bull; <strong>Amendment Policy:</strong> Power Gym reserves the right to update these Terms &amp; Policy at any time. Continued use of the membership or system constitutes acceptance of the updated terms.</p>"""
+
+
 def _get_gym_settings():
     """Fetch the singleton settings row, creating it with sensible
     defaults on first use so callers never have to null-check."""
     settings = GymSettings.query.get(1)
     if settings is None:
-        settings = GymSettings(id=1, gcash_number='0945 397 0594', gcash_account_name='LYDIA M. EMATA')
+        settings = GymSettings(id=1, gcash_number='0945 397 0594', gcash_account_name='LYDIA M. EMATA',
+                                terms_content=DEFAULT_TERMS_HTML, terms_read_seconds=30)
         db.session.add(settings)
+        db.session.commit()
+    elif not settings.terms_content:
+        # Backfill for rows created before the terms columns existed.
+        settings.terms_content = DEFAULT_TERMS_HTML
         db.session.commit()
     return settings
 
@@ -1208,18 +1256,20 @@ def home():
 @app.route('/trmem.html')
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    gcash_settings = _get_gym_settings()
+
     if request.method == 'POST':
         email    = request.form.get('email', '').strip()
         password = request.form.get('password', '')
 
         if not email or not password:
             flash('Please enter both email and password.', 'error')
-            return render_template('trmem.html')
+            return render_template('trmem.html', gcash_settings=gcash_settings)
 
         user = User.query.filter_by(email=email).first()
         if user is None or not check_password_hash(user.password, password):
             flash('Invalid credentials.', 'error')
-            return render_template('trmem.html')
+            return render_template('trmem.html', gcash_settings=gcash_settings)
 
         session['user_id'] = user.id
         session['role']    = user.role
@@ -1227,7 +1277,7 @@ def login():
         session['name']    = user.full_name
         return redirect(url_for(user.role))
 
-    return render_template('trmem.html')
+    return render_template('trmem.html', gcash_settings=gcash_settings)
 
 
 # ── Forgot / Reset Password (OTP-based) ──────────────────────
@@ -3248,6 +3298,39 @@ def admin_update_gcash_settings():
     return jsonify(success=True, message='GCash payment details updated.', settings={
         'gcash_number':       settings.gcash_number,
         'gcash_account_name': settings.gcash_account_name,
+    })
+
+
+@app.route('/admin/update-terms-settings', methods=['POST'])
+def admin_update_terms_settings():
+    """Admin-only: update the Terms & Policy text shown to new members
+    during registration, and how many seconds they must keep the modal
+    open (an estimated-reading-time gate) before they're allowed to
+    check "I agree". Takes effect immediately for the next registration."""
+    if session.get('role') != 'admin':
+        return jsonify(success=False, error='Unauthorized.'), 403
+
+    data = request.get_json(silent=True) or {}
+    terms_content = (data.get('terms_content') or '').strip()
+    read_seconds_raw = data.get('terms_read_seconds')
+
+    if not terms_content:
+        return jsonify(success=False, error='Terms & Policy content cannot be empty.'), 400
+    try:
+        read_seconds = int(read_seconds_raw)
+    except (TypeError, ValueError):
+        return jsonify(success=False, error='Estimated read time must be a whole number of seconds.'), 400
+    if read_seconds < 5 or read_seconds > 600:
+        return jsonify(success=False, error='Estimated read time must be between 5 and 600 seconds.'), 400
+
+    settings = _get_gym_settings()
+    settings.terms_content      = terms_content
+    settings.terms_read_seconds = read_seconds
+    db.session.commit()
+
+    return jsonify(success=True, message='Terms & Policy updated.', settings={
+        'terms_content':      settings.terms_content,
+        'terms_read_seconds': settings.terms_read_seconds,
     })
 
 
@@ -5707,6 +5790,8 @@ def _run_startup_migrations():
         ('exercises', 'sub_target',      "ALTER TABLE exercises ADD COLUMN sub_target VARCHAR(60) NULL"),
         ('exercises', 'specific_target', "ALTER TABLE exercises ADD COLUMN specific_target VARCHAR(60) NULL"),
         ('exercises', 'instructions',    "ALTER TABLE exercises ADD COLUMN instructions TEXT NULL"),
+        ('gym_settings', 'terms_content',      "ALTER TABLE gym_settings ADD COLUMN terms_content TEXT NULL"),
+        ('gym_settings', 'terms_read_seconds', "ALTER TABLE gym_settings ADD COLUMN terms_read_seconds INT NOT NULL DEFAULT 30"),
     ]
     with db.engine.connect() as conn:
         for table, column, ddl in migrations:

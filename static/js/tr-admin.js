@@ -862,6 +862,45 @@ const AdminModule = (() => {
       });
   }
 
+  /** Save the Terms & Policy content and estimated read-time shown to new
+   *  members during registration. Direct save (no confirm modal, unlike
+   *  GCash) since this doesn't affect money — just a toast on success. */
+  function submitTermsSettings() {
+    const terms_content      = (document.getElementById('terms-content-editor') || {}).value || '';
+    const terms_read_seconds = _val('terms-read-seconds');
+
+    if (!terms_content.trim()) {
+      showToast('Terms & Policy content cannot be empty.', 'error');
+      return;
+    }
+    const seconds = parseInt(terms_read_seconds, 10);
+    if (!Number.isFinite(seconds) || seconds < 5 || seconds > 600) {
+      showToast('Estimated read time must be between 5 and 600 seconds.', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('terms-settings-submit-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'SAVING...'; }
+
+    fetch('/admin/update-terms-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ terms_content, terms_read_seconds: seconds })
+    })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok || !data.success) {
+          showToast((data && data.error) || 'Failed to update Terms & Policy.', 'error');
+          return;
+        }
+        showToast(data.message || 'Terms & Policy updated.', 'success');
+      })
+      .catch(() => showToast('Could not reach the server. Please try again.', 'error'))
+      .finally(() => {
+        if (btn) { btn.disabled = false; btn.textContent = 'SAVE TERMS & POLICY'; }
+      });
+  }
+
   /** Save a coach's available days, capacity, and fee from the admin
    *  Coach tab. Called as the onsubmit handler of each coach card's form —
    *  posts to the same /staff/coach/update endpoint staff uses (it accepts
@@ -1019,7 +1058,7 @@ const AdminModule = (() => {
     generateAnalyticsReport, refreshCurrentReport, exportReportPDF, clearReportDateRange,
     viewPaymentProof, filterMembersByStatus, filterMembersTable,
     publishAnnouncement, confirmPublishAnnouncement, openEditAnnouncementModal, saveEditAnnouncement,
-    toggleAnnouncement, deleteAnnouncement, submitGcashSettings, confirmGcashSettings,
+    toggleAnnouncement, deleteAnnouncement, submitGcashSettings, confirmGcashSettings, submitTermsSettings,
     submitCoachUpdate, confirmCoachUpdate, closeCoachSaveSuccessModal,
     toggleCoachEdit, addCoach, promptDeleteCoach, confirmDeleteCoach
   };
@@ -1054,6 +1093,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.deleteAnnouncement      = AdminModule.deleteAnnouncement;
   window.submitGcashSettings     = AdminModule.submitGcashSettings;
   window.confirmGcashSettings    = AdminModule.confirmGcashSettings;
+  window.submitTermsSettings     = AdminModule.submitTermsSettings;
   window.submitCoachUpdate       = AdminModule.submitCoachUpdate;
   window.confirmCoachUpdate      = AdminModule.confirmCoachUpdate;
   window.closeCoachSaveSuccessModal = AdminModule.closeCoachSaveSuccessModal;
