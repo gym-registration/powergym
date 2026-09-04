@@ -4,14 +4,17 @@ import string
 import calendar
 import csv
 import io
+import time
 from collections import OrderedDict
 from dotenv import load_dotenv
 load_dotenv()  # Reads variables from a .env file in the project root, if present
 
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response
+from markupsafe import Markup, escape
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
 from sqlalchemy.orm import joinedload
+from sqlalchemy.exc import OperationalError
 from flask_mail import Mail, Message
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -260,6 +263,10 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     'pool_pre_ping': True,
     'pool_recycle': 280,
+    # Fail a dead/unreachable connection quickly (10s) instead of hanging
+    # on the OS's own TCP timeout (which is what produced the WinError
+    # 10060 traceback — a multi-minute wait before finally giving up).
+    'connect_args': {'connect_timeout': 10},
 }
 
 # ── Payment proof uploads ────────────────────────────────────
@@ -676,14 +683,17 @@ class GymSettings(db.Model):
     id                 = db.Column(db.Integer, primary_key=True, autoincrement=True)
     gcash_number       = db.Column(db.String(20),  nullable=True)
     gcash_account_name = db.Column(db.String(120), nullable=True)
-    # Raw HTML shown inside the Terms & Policy modal on registration.
-    # Admin-editable via Settings → Terms & Policy.
+    # Plain text shown inside the Terms & Policy modal on registration.
+    # Admin-editable via Settings → Terms & Policy. Blank lines separate
+    # paragraphs; it is escaped and converted to safe HTML at render time
+    # (see terms_text_to_html()) — admins never type HTML here.
     terms_content       = db.Column(db.Text, nullable=True)
     # Minimum number of seconds the modal must be open (accumulated across
     # opens) before a new member is allowed to check "I agree" — an
     # estimated-reading-time gate so members can't just tick the box
-    # without spending any time on it.
-    terms_read_seconds  = db.Column(db.Integer, nullable=False, default=30)
+    # without spending any time on it. Stored in seconds internally; the
+    # admin UI shows/collects this as whole minutes.
+    terms_read_seconds  = db.Column(db.Integer, nullable=False, default=60)
     updated_at         = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
                                     onupdate=lambda: datetime.now(timezone.utc))
 
@@ -694,35 +704,60 @@ class GymSettings(db.Model):
 # Default Terms & Policy text (the content that used to be hardcoded into
 # trmem.html) — seeded onto the settings row the first time it's created,
 # and used as a fallback if an admin ever clears the field entirely.
-DEFAULT_TERMS_HTML = """<p><strong>FITNESS AREA RULES:</strong></p>
-<p>&bull; Use facilities and equipment at your own risk.</p>
-<p>&bull; Use equipment properly and follow directions carefully.</p>
-<p>&bull; Do not lean on the equipment. Keep hands away from moving parts.</p>
-<p>&bull; Consult a physician before beginning an exercise program.</p>
-<p>&bull; No food or drinks (except water). No smoking.</p>
-<p>&bull; Children under 18 must be accompanied by an adult.</p>
-<p>&bull; Proper fitness attire is required. No boots, street shoes, sandals or bare feet.</p>
-<p>&bull; Report any damaged equipment to management immediately. DO NOT USE.</p>
-<p>&bull; Always be courteous and respectful of others.</p>
-<p>&bull; Please return all equipment to its place and wipe down machines after use.</p>
+# Plain text: blank lines become new paragraphs (see terms_text_to_html()).
+DEFAULT_TERMS_TEXT = """FITNESS AREA RULES:
 
-<p style="margin-top:14px;"><strong>ONLINE MEMBERSHIP SYSTEM TERMS:</strong></p>
-<p>&bull; You must provide true and accurate personal information when registering, and keep your login credentials confidential. Accounts may not be shared.</p>
-<p>&bull; Submitting a payment (GCash reference and proof of payment) does not activate your plan immediately &mdash; it remains pending until verified by staff or admin. Power Gym is not liable for delays in verification.</p>
-<p>&bull; Submitting false, altered, or fraudulent proof of payment is grounds for account suspension or termination.</p>
-<p>&bull; The system may be temporarily unavailable due to maintenance or technical issues; Power Gym is not liable for inability to access your dashboard or submit payments during downtime.</p>
-<p>&bull; Password reset is done via a 6-digit One-Time PIN (OTP) sent to your registered email. You have 3 attempts to enter the correct OTP; after 3 incorrect attempts, you must wait 30 minutes before a new OTP can be sent.</p>
-<p>&bull; Personal information, payment references, and uploaded payment screenshots are collected only for account and payment verification, and are accessible only to authorized staff/admin.</p>
-<p>&bull; Check-in and check-out times recorded by staff serve as the official attendance record for your account. Report any discrepancies to staff directly.</p>
-<p>&bull; Members may not attempt to access staff or admin functions, tamper with the system, or access another member's account. Violations may result in account termination.</p>
-<p>&bull; By checking "I agree" and completing registration, you provide valid electronic consent to these Terms &amp; Policy, equivalent to a signed physical agreement.</p>
+- Use facilities and equipment at your own risk.
+- Use equipment properly and follow directions carefully.
+- Do not lean on the equipment. Keep hands away from moving parts.
+- Consult a physician before beginning an exercise program.
+- No food or drinks (except water). No smoking.
+- Children under 18 must be accompanied by an adult.
+- Proper fitness attire is required. No boots, street shoes, sandals or bare feet.
+- Report any damaged equipment to management immediately. DO NOT USE.
+- Always be courteous and respectful of others.
+- Please return all equipment to its place and wipe down machines after use.
 
-<p style="margin-top:14px;"><strong>POLICIES:</strong></p>
-<p>&bull; <strong>Refund Policy:</strong> All membership payments are non-refundable once a plan has been activated or renewed.</p>
-<p>&bull; <strong>Cancellation/Freeze Policy:</strong> Membership freezes or cancellations must be requested in person at the front desk and are subject to management approval.</p>
-<p>&bull; <strong>Privacy Policy:</strong> Personal information and payment proof submitted through this system are used solely for account management and payment verification, and will not be shared with third parties without consent.</p>
-<p>&bull; <strong>Photography/CCTV Policy:</strong> The premises may be monitored by CCTV for security purposes. Members consent to being recorded while on the premises.</p>
-<p>&bull; <strong>Amendment Policy:</strong> Power Gym reserves the right to update these Terms &amp; Policy at any time. Continued use of the membership or system constitutes acceptance of the updated terms.</p>"""
+ONLINE MEMBERSHIP SYSTEM TERMS:
+
+- You must provide true and accurate personal information when registering, and keep your login credentials confidential. Accounts may not be shared.
+- Submitting a payment (GCash reference and proof of payment) does not activate your plan immediately -- it remains pending until verified by staff or admin. Power Gym is not liable for delays in verification.
+- Submitting false, altered, or fraudulent proof of payment is grounds for account suspension or termination.
+- The system may be temporarily unavailable due to maintenance or technical issues; Power Gym is not liable for inability to access your dashboard or submit payments during downtime.
+- Password reset is done via a 6-digit One-Time PIN (OTP) sent to your registered email. You have 3 attempts to enter the correct OTP; after 3 incorrect attempts, you must wait 30 minutes before a new OTP can be sent.
+- Personal information, payment references, and uploaded payment screenshots are collected only for account and payment verification, and are accessible only to authorized staff/admin.
+- Check-in and check-out times recorded by staff serve as the official attendance record for your account. Report any discrepancies to staff directly.
+- Members may not attempt to access staff or admin functions, tamper with the system, or access another member's account. Violations may result in account termination.
+- By checking "I agree" and completing registration, you provide valid electronic consent to these Terms & Policy, equivalent to a signed physical agreement.
+
+POLICIES:
+
+- Refund Policy: All membership payments are non-refundable once a plan has been activated or renewed.
+- Cancellation/Freeze Policy: Membership freezes or cancellations must be requested in person at the front desk and are subject to management approval.
+- Privacy Policy: Personal information and payment proof submitted through this system are used solely for account management and payment verification, and will not be shared with third parties without consent.
+- Photography/CCTV Policy: The premises may be monitored by CCTV for security purposes. Members consent to being recorded while on the premises.
+- Amendment Policy: Power Gym reserves the right to update these Terms & Policy at any time. Continued use of the membership or system constitutes acceptance of the updated terms."""
+
+
+def terms_text_to_html(text):
+    """Turn the admin's plain-text Terms & Policy into safe HTML for the
+    registration modal: escapes everything (so admin-entered text can
+    never inject markup/scripts), then treats a blank line as a paragraph
+    break and a single line break as <br>. Registered below as the Jinja
+    filter `terms_html`."""
+    if not text:
+        return Markup('')
+    normalized = text.replace('\r\n', '\n').strip('\n')
+    paragraphs = [p for p in normalized.split('\n\n') if p.strip()]
+    rendered = []
+    for para in paragraphs:
+        escaped = escape(para)
+        escaped = Markup('<br>').join(escaped.split('\n'))
+        rendered.append(f'<p>{escaped}</p>')
+    return Markup(''.join(rendered))
+
+
+app.jinja_env.filters['terms_html'] = terms_text_to_html
 
 
 def _get_gym_settings():
@@ -731,12 +766,12 @@ def _get_gym_settings():
     settings = GymSettings.query.get(1)
     if settings is None:
         settings = GymSettings(id=1, gcash_number='0945 397 0594', gcash_account_name='LYDIA M. EMATA',
-                                terms_content=DEFAULT_TERMS_HTML, terms_read_seconds=30)
+                                terms_content=DEFAULT_TERMS_TEXT, terms_read_seconds=60)
         db.session.add(settings)
         db.session.commit()
     elif not settings.terms_content:
         # Backfill for rows created before the terms columns existed.
-        settings.terms_content = DEFAULT_TERMS_HTML
+        settings.terms_content = DEFAULT_TERMS_TEXT
         db.session.commit()
     return settings
 
@@ -3304,33 +3339,36 @@ def admin_update_gcash_settings():
 @app.route('/admin/update-terms-settings', methods=['POST'])
 def admin_update_terms_settings():
     """Admin-only: update the Terms & Policy text shown to new members
-    during registration, and how many seconds they must keep the modal
+    during registration, and how many minutes they must keep the modal
     open (an estimated-reading-time gate) before they're allowed to
-    check "I agree". Takes effect immediately for the next registration."""
+    check "I agree". terms_content is always plain text — it's escaped
+    and turned into safe HTML at render time, so admins never write
+    markup here. Takes effect immediately for the next registration."""
     if session.get('role') != 'admin':
         return jsonify(success=False, error='Unauthorized.'), 403
 
     data = request.get_json(silent=True) or {}
     terms_content = (data.get('terms_content') or '').strip()
-    read_seconds_raw = data.get('terms_read_seconds')
+    read_minutes_raw = data.get('terms_read_minutes')
 
     if not terms_content:
         return jsonify(success=False, error='Terms & Policy content cannot be empty.'), 400
     try:
-        read_seconds = int(read_seconds_raw)
+        read_minutes = int(read_minutes_raw)
     except (TypeError, ValueError):
-        return jsonify(success=False, error='Estimated read time must be a whole number of seconds.'), 400
-    if read_seconds < 5 or read_seconds > 600:
-        return jsonify(success=False, error='Estimated read time must be between 5 and 600 seconds.'), 400
+        return jsonify(success=False, error='Estimated read time must be a whole number of minutes.'), 400
+    if read_minutes < 1 or read_minutes > 10:
+        return jsonify(success=False, error='Estimated read time must be between 1 and 10 minutes.'), 400
 
     settings = _get_gym_settings()
     settings.terms_content      = terms_content
-    settings.terms_read_seconds = read_seconds
+    settings.terms_read_seconds = read_minutes * 60
     db.session.commit()
 
     return jsonify(success=True, message='Terms & Policy updated.', settings={
         'terms_content':      settings.terms_content,
         'terms_read_seconds': settings.terms_read_seconds,
+        'terms_read_minutes': read_minutes,
     })
 
 
@@ -5945,17 +5983,50 @@ def _run_startup_migrations():
         print(f"Migration: corrected sub_target on {corrected} existing exercise row(s)")
 
 
+def _run_startup_sequence():
+    """Everything that must happen against the DB before the app can serve
+    requests: create tables, run one-off migrations, and seed default data.
+    Runs inside its own retry wrapper (see _startup_with_retries) so a
+    transient connection blip (dropped Wi-Fi/VPN, a remote DB briefly not
+    responding, etc.) doesn't crash the whole app on startup."""
+    db.create_all()
+    _run_startup_migrations()
+    seed_default_plans()
+    seed_default_coaches()
+    seed_default_equipment()
+    seed_default_fitness_catalog()
+    seed_default_users()
+    _get_gym_settings()  # ensures the GCash settings row exists on first boot
+    print("Tables created, plans and demo users seeded!")
+
+
+def _startup_with_retries(attempts=5, base_delay=2):
+    """Run _run_startup_sequence(), retrying with exponential backoff on
+    connection-level failures (dropped/unreachable MySQL — the
+    OperationalError/TimeoutError combo behind errors like WinError 10060)
+    instead of letting one blip kill the whole app at boot. Anything that
+    isn't a connection problem (bad SQL, bad credentials the DB itself
+    rejects, etc.) is not this kind of transient issue, so it's raised
+    immediately instead of being retried."""
+    for attempt in range(1, attempts + 1):
+        try:
+            _run_startup_sequence()
+            return
+        except OperationalError as e:
+            db.session.rollback()
+            if attempt == attempts:
+                print(f"Startup DB sequence failed after {attempts} attempts — giving up.")
+                raise
+            delay = base_delay * (2 ** (attempt - 1))
+            print(f"Startup DB sequence failed (attempt {attempt}/{attempts}): {e}\n"
+                  f"Retrying in {delay}s — check that MySQL is running and reachable "
+                  f"(DB_HOST={DB_HOST}) if this keeps happening...")
+            time.sleep(delay)
+
+
 if __name__ == '__main__':
     with app.app_context():
-        db.create_all()
-        _run_startup_migrations()
-        seed_default_plans()
-        seed_default_coaches()
-        seed_default_equipment()
-        seed_default_fitness_catalog()
-        seed_default_users()
-        _get_gym_settings()  # ensures the GCash settings row exists on first boot
-        print("Tables created, plans and demo users seeded!")
+        _startup_with_retries()
     # threaded=True lets the dev server handle multiple requests at once
     # instead of one at a time. Without it, every asset a page needs (CSS,
     # JS, fonts, images) gets served sequentially even though the browser

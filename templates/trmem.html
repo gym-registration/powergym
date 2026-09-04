@@ -57,7 +57,7 @@
       </div>
 
       <div style="text-align:right;margin-top:-10px;margin-bottom:18px;">
-        <a href="{{ url_for('forgot_password') }}" class="link-btn" style="font-size:12px;">Forgot password?</a>
+        <a href="{{ url_for('forgot_password') }}" class="link-btn" style="font-size:13px;">Forgot password?</a>
       </div>
 
       <!-- Role hint bar (auto-populated) -->
@@ -66,7 +66,7 @@
       <button class="btn-primary" type="submit">ACCESS SYSTEM</button>
     </form>
 
-    <div style="margin-top:18px;text-align:center;font-size:13px;color:var(--muted);">
+    <div style="margin-top:18px;text-align:center;font-size:15px;color:var(--muted);">
       Not a member? <span class="link-btn" onclick="goTo('register')">Register here</span>
     </div>
 
@@ -135,7 +135,7 @@
           <input class="form-input" id="reg-phone" placeholder="09171234567"
                  maxlength="11" inputmode="numeric" pattern="09\d{9}"
                  oninput="this.value=this.value.replace(/\D/g,'').slice(0,11)">
-          <div style="font-size:11px;color:var(--muted);margin-top:4px;">
+          <div style="font-size:12px;color:var(--muted);margin-top:4px;">
             Must start with 09 and be 11 digits.
           </div>
         </div>
@@ -165,11 +165,11 @@
         </div>
       </div>
       <div class="form-group" style="margin-bottom:16px;">
-        <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--white);cursor:pointer;">
+        <label style="display:flex;align-items:flex-start;gap:8px;font-size:15px;color:var(--white);cursor:pointer;">
           <input type="checkbox" id="reg-terms-check" style="margin-top:3px;" disabled>
           <span>I have read and agree to the <span class="link-btn" onclick="event.preventDefault();openTermsModal()">Terms &amp; Policy</span>.</span>
         </label>
-        <div id="reg-terms-hint" style="font-size:11px;color:var(--muted);margin-top:4px;margin-left:24px;">
+        <div id="reg-terms-hint" style="font-size:12px;color:var(--muted);margin-top:4px;margin-left:24px;">
           Please open and read the Terms &amp; Policy before agreeing.
         </div>
       </div>
@@ -185,41 +185,14 @@
 </div><!-- /screen-register -->
 
 <!-- Terms & Policy popup (opened from the Personal Information step) -->
-<div class="modal-overlay" id="terms-modal">
+<div class="modal-overlay" id="terms-modal" data-read-seconds="{{ gcash_settings.terms_read_seconds if gcash_settings else 60 }}">
   <div class="modal" style="max-width:520px;">
     <button class="modal-close" onclick="closeModal('terms-modal')">✕</button>
     <div class="modal-title">TERMS &amp; POLICY</div>
-    <div id="terms-modal-body" style="font-size:13px;color:var(--muted);line-height:1.7;max-height:60vh;overflow:auto;">
-      <p><strong>FITNESS AREA RULES:</strong></p>
-      <p>• Use facilities and equipment at your own risk.</p>
-      <p>• Use equipment properly and follow directions carefully.</p>
-      <p>• Do not lean on the equipment. Keep hands away from moving parts.</p>
-      <p>• Consult a physician before beginning an exercise program.</p>
-      <p>• No food or drinks (except water). No smoking.</p>
-      <p>• Children under 18 must be accompanied by an adult.</p>
-      <p>• Proper fitness attire is required. No boots, street shoes, sandals or bare feet.</p>
-      <p>• Report any damaged equipment to management immediately. DO NOT USE.</p>
-      <p>• Always be courteous and respectful of others.</p>
-      <p>• Please return all equipment to its place and wipe down machines after use.</p>
-
-      <p style="margin-top:14px;"><strong>ONLINE MEMBERSHIP SYSTEM TERMS:</strong></p>
-      <p>• You must provide true and accurate personal information when registering, and keep your login credentials confidential. Accounts may not be shared.</p>
-      <p>• Submitting a payment (GCash reference and proof of payment) does not activate your plan immediately — it remains pending until verified by staff or admin. Power Gym is not liable for delays in verification.</p>
-      <p>• Submitting false, altered, or fraudulent proof of payment is grounds for account suspension or termination.</p>
-      <p>• The system may be temporarily unavailable due to maintenance or technical issues; Power Gym is not liable for inability to access your dashboard or submit payments during downtime.</p>
-      <p>• Password reset is done via a 6-digit One-Time PIN (OTP) sent to your registered email. You have 3 attempts to enter the correct OTP; after 3 incorrect attempts, you must wait 30 minutes before a new OTP can be sent.</p>
-      <p>• Personal information, payment references, and uploaded payment screenshots are collected only for account and payment verification, and are accessible only to authorized staff/admin.</p>
-      <p>• Check-in and check-out times recorded by staff serve as the official attendance record for your account. Report any discrepancies to staff directly.</p>
-      <p>• Members may not attempt to access staff or admin functions, tamper with the system, or access another member's account. Violations may result in account termination.</p>
-      <p>• By checking "I agree" and completing registration, you provide valid electronic consent to these Terms & Policy, equivalent to a signed physical agreement.</p>
-
-      <p style="margin-top:14px;"><strong>POLICIES:</strong></p>
-      <p>• <strong>Refund Policy:</strong> All membership payments are non-refundable once a plan has been activated or renewed.</p>
-      <p>• <strong>Cancellation/Freeze Policy:</strong> Membership freezes or cancellations must be requested in person at the front desk and are subject to management approval.</p>
-      <p>• <strong>Privacy Policy:</strong> Personal information and payment proof submitted through this system are used solely for account management and payment verification, and will not be shared with third parties without consent.</p>
-      <p>• <strong>Photography/CCTV Policy:</strong> The premises may be monitored by CCTV for security purposes. Members consent to being recorded while on the premises.</p>
-      <p>• <strong>Amendment Policy:</strong> Power Gym reserves the right to update these Terms & Policy at any time. Continued use of the membership or system constitutes acceptance of the updated terms.</p>
+    <div id="terms-modal-body" style="font-size:15px;color:var(--muted);line-height:1.7;max-height:60vh;overflow:auto;">
+      {{ (gcash_settings.terms_content if gcash_settings else '') | terms_html }}
     </div>
+    <div id="terms-timer" style="margin-top:12px;font-size:13px;color:var(--white);text-align:center;font-weight:600;"></div>
   </div>
 </div>
 

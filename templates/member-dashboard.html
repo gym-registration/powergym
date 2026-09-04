@@ -91,17 +91,18 @@
         <div class="panel" style="margin-bottom:0;">
           <div class="panel-header"><div class="panel-title">Quick Stats</div></div>
           <div class="panel-body">
+            {% set weight_pct = (100 - ((goal.current_weight - goal.goal_weight)|abs / goal.current_weight * 100))|round|int if (goal and goal.current_weight and goal.goal_weight and goal.current_weight > 0) else none %}
             <div class="goal-item">
-              <div class="goal-header"><span>Attendance Rate ({{ month_label }})</span><span class="goal-val green" style="font-weight:700;">{{ attendance_rate }}%</span></div>
-              <div class="progress-bar"><div class="progress-fill green" data-width="{{ attendance_rate }}"></div></div>
+              <div class="goal-header"><span>Attendance Rate ({{ month_label }})</span><span class="goal-val {{ 'green' if attendance_rate >= 50 else 'red' }}" style="font-weight:700;">{{ attendance_rate }}%</span></div>
+              <div class="progress-bar"><div class="progress-fill {{ 'green' if attendance_rate >= 50 else '' }}" data-width="{{ attendance_rate }}"></div></div>
             </div>
             <div class="goal-item">
-              <div class="goal-header"><span>Weight Goal</span><span style="color:var(--red);font-weight:700;">{% if goal and goal.current_weight and goal.goal_weight %}{{ goal.current_weight }}/{{ goal.goal_weight }}kg{% else %}Not set{% endif %}</span></div>
-              <div class="progress-bar"><div class="progress-fill" data-width="{% if goal and goal.current_weight and goal.goal_weight and goal.current_weight > 0 %}{{ (100 - ((goal.current_weight - goal.goal_weight)|abs / goal.current_weight * 100))|round|int }}{% else %}0{% endif %}"></div></div>
+              <div class="goal-header"><span>Weight Goal</span><span style="color:{% if weight_pct is none %}var(--muted){% elif weight_pct >= 70 %}var(--green){% else %}var(--red){% endif %};font-weight:700;">{% if goal and goal.current_weight and goal.goal_weight %}{{ goal.current_weight }}/{{ goal.goal_weight }}kg{% else %}Not set{% endif %}</span></div>
+              <div class="progress-bar"><div class="progress-fill {% if weight_pct is none %}muted{% elif weight_pct >= 70 %}green{% endif %}" data-width="{{ weight_pct if weight_pct is not none else 0 }}"></div></div>
             </div>
             <div class="goal-item">
               <div class="goal-header"><span>Membership Used</span><span class="goal-val {% if plan and plan.days_left > 3 %}green{% elif plan %}red{% endif %}" style="font-weight:700;">{% if plan %}{{ plan.days_used }}/{{ plan.days_total }} days{% else %}—{% endif %}</span></div>
-              <div class="progress-bar"><div class="progress-fill" data-width="{{ plan.percent_used if plan else 0 }}"></div></div>
+              <div class="progress-bar"><div class="progress-fill {% if plan and plan.days_left > 3 %}green{% elif not plan %}muted{% endif %}" data-width="{{ plan.percent_used if plan else 0 }}"></div></div>
             </div>
           </div>
         </div>
@@ -127,7 +128,7 @@
           <div style="{% if not loop.first %}margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08);{% endif %}">
             <div style="font-weight:600;margin-bottom:4px;">{{ a.title }}</div>
             <div style="white-space:pre-wrap;">{{ a.body }}</div>
-            <div style="font-size:11px;color:var(--muted);margin-top:6px;">{{ a.created_at.strftime('%b %d, %Y') if a.created_at else '' }}</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:6px;">{{ a.created_at.strftime('%b %d, %Y') if a.created_at else '' }}</div>
           </div>
           {% endfor %}
           {% else %}
@@ -151,7 +152,7 @@
       {% endif %}
       <div class="grid-2" style="grid-template-columns: 2.2fr 1fr;">
         <!-- Choose / Upgrade / Renew -->
-        <div class="panel">
+        <div class="panel" id="choose-plan-panel">
           <div class="panel-header"><div class="panel-title">{% if plan %}Upgrade / Renew{% else %}Choose a Plan{% endif %}</div></div>
           <div class="panel-body">
             {% if plan_active %}
@@ -215,9 +216,11 @@
             {% endif %}
             <div class="plan-grid">
               {% for p in content_plans %}
-              <div class="plan-card" onclick="selectPlan(this,'{{ p.name|lower }}')">
+              <div class="plan-card{% if p.name == 'Monthly' %} plan-card-popular{% endif %}" onclick="selectPlan(this,'{{ p.name|lower }}')">
+                {% if p.name == 'Monthly' %}<div class="plan-card-tag">MOST POPULAR</div>{% endif %}
                 <div class="plan-name">{{ p.name }}</div>
                 <div class="plan-price">₱{{ '{:,.0f}'.format(p.price) if p.price == p.price|int else '{:,.2f}'.format(p.price) }}</div>
+                <div class="plan-period">for {{ p.duration_days }} day{{ 's' if p.duration_days != 1 else '' }}</div>
                 <div class="plan-view-link" onclick="event.stopPropagation();openPlanModal('{{ p.name|lower }}')">👁 View Inclusions</div>
               </div>
               {% else %}
@@ -231,7 +234,7 @@
               <div class="form-group">
                 <label class="form-label">When do you want to start?</label>
                 <input class="form-input" type="date" id="member-renew-start">
-                <div style="font-size:11px;color:var(--muted);margin-top:4px;">
+                <div style="font-size:14px;color:var(--muted);margin-top:4px;">
                   Pick today to start right away, or a future date if you'd rather begin later.
                 </div>
               </div>
@@ -246,12 +249,12 @@
                 <label class="form-label">Upload School ID (front, photo or scan)</label>
                 <input class="form-input" type="file" id="member-student-id" accept="image/*"
                        onchange="previewStudentId(this)">
-                <div style="font-size:11px;color:var(--muted);margin-top:4px;">
+                <div style="font-size:14px;color:var(--muted);margin-top:4px;">
                   Required to verify student status. Admin will confirm before your plan is approved.
                 </div>
                 <img id="member-student-id-preview" class="proof-preview" alt="School ID preview" style="display:none;">
               </div>
-              <div style="font-size:12px;color:var(--muted);margin-top:4px;margin-bottom:4px;line-height:1.6;">
+              <div style="font-size:14px;color:var(--muted);margin-top:4px;margin-bottom:4px;line-height:1.6;">
                 Submitting sends this plan as a request. Once submitted, go to the
                 <strong>Payment</strong> tab to choose Cash or GCash and complete payment —
                 your plan activates once staff or admin confirms it.
@@ -269,8 +272,8 @@
           <div class="panel-header"><div class="panel-title">Current Plan</div></div>
           <div class="panel-body">
             {% if plan %}
-            <div style="font-family:'Bebas Neue';font-size:36px;color:var(--red);margin-bottom:4px;">{{ plan.name|upper }}</div>
-            <div style="font-size:13px;color:var(--muted);margin-bottom:4px;">₱{{ '%.0f'|format(plan.price) }}</div>
+            <div style="font-family:'Bebas Neue';font-size:40px;color:var(--red);margin-bottom:4px;">{{ plan.name|upper }}</div>
+            <div style="font-size:15px;color:var(--muted);margin-bottom:4px;">₱{{ '%.0f'|format(plan.price) }}</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px;">
               <span class="badge {% if plan.status == 'Active' %}badge-green{% elif plan.status == 'Expired' %}badge-red{% else %}badge-gold{% endif %}">
                 PLAN: {{ plan.status|upper }}
@@ -288,8 +291,8 @@
             {% endif %}
             <div class="progress-bar" style="margin-top:16px;"><div class="progress-fill" data-width="{{ plan.percent_used }}"></div></div>
             {% else %}
-            <div style="font-family:'Bebas Neue';font-size:28px;color:var(--muted);margin-bottom:8px;">NO ACTIVE PLAN</div>
-            <div style="font-size:13px;color:var(--muted);">Select a plan below to get started.</div>
+            <div style="font-family:'Bebas Neue';font-size:31px;color:var(--muted);margin-bottom:8px;">NO ACTIVE PLAN</div>
+            <div style="font-size:15px;color:var(--muted);">Select a plan below to get started.</div>
             {% endif %}
           </div>
         </div>
@@ -313,15 +316,15 @@
         <div class="panel-body">
           <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">
             <div>
-              <div style="font-family:'Bebas Neue';font-size:28px;color:var(--red);">{{ awaiting_approval.plan_name|upper }} PLAN</div>
-              <div style="font-size:12px;color:var(--muted);">Requested start: {{ awaiting_approval.start_date }}</div>
+              <div style="font-family:'Bebas Neue';font-size:31px;color:var(--red);">{{ awaiting_approval.plan_name|upper }} PLAN</div>
+              <div style="font-size:13px;color:var(--muted);">Requested start: {{ awaiting_approval.start_date }}</div>
               {% if awaiting_approval.is_student %}
-              <div style="font-size:11px;color:var(--gold);margin-top:4px;">🎓 Student discount applied</div>
+              <div style="font-size:12px;color:var(--gold);margin-top:4px;">🎓 Student discount applied</div>
               {% endif %}
             </div>
-            <div style="font-family:'Bebas Neue';font-size:32px;color:var(--white);">₱{{ awaiting_approval.amount }}</div>
+            <div style="font-family:'Bebas Neue';font-size:36px;color:var(--white);">₱{{ awaiting_approval.amount }}</div>
           </div>
-          <div style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:14px;">
+          <div style="font-size:15px;color:var(--muted);line-height:1.6;margin-bottom:14px;">
             {% if awaiting_approval.request_status == 'Processing' %}
             ⏳ Staff is currently reviewing your plan request — it can no longer be cancelled.
             {% else %}
@@ -342,13 +345,13 @@
         <div class="panel-body">
           <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:16px;">
             <div>
-              <div style="font-family:'Bebas Neue';font-size:28px;color:var(--red);">{{ pending_payment.plan_name|upper }} PLAN</div>
-              <div style="font-size:12px;color:var(--muted);">Requested start: {{ pending_payment.start_date }}</div>
+              <div style="font-family:'Bebas Neue';font-size:31px;color:var(--red);">{{ pending_payment.plan_name|upper }} PLAN</div>
+              <div style="font-size:13px;color:var(--muted);">Requested start: {{ pending_payment.start_date }}</div>
               {% if pending_payment.is_student %}
-              <div style="font-size:11px;color:var(--gold);margin-top:4px;">🎓 Student discount applied</div>
+              <div style="font-size:12px;color:var(--gold);margin-top:4px;">🎓 Student discount applied</div>
               {% endif %}
             </div>
-            <div style="font-family:'Bebas Neue';font-size:32px;color:var(--white);">₱{{ pending_payment.amount }}</div>
+            <div style="font-family:'Bebas Neue';font-size:36px;color:var(--white);">₱{{ pending_payment.amount }}</div>
           </div>
 
           {% if pending_payment.needs_method %}
@@ -362,22 +365,22 @@
             </div>
             <div class="form-group" id="payment-gcash-fields" style="display:none;">
               <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:14px 16px;margin-bottom:16px;">
-                <div style="font-size:11px;color:var(--muted);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:6px;">Send GCash payment to</div>
-                <div style="font-family:'Bebas Neue';font-size:24px;color:var(--white);letter-spacing:1px;">{{ gcash_settings.gcash_number if gcash_settings else '0945 397 0594' }}</div>
-                <div style="font-size:13px;color:var(--muted);margin-top:2px;">{{ gcash_settings.gcash_account_name if gcash_settings else 'LYDIA M. EMATA' }}</div>
+                <div style="font-size:12px;color:var(--muted);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:6px;">Send GCash payment to</div>
+                <div style="font-family:'Bebas Neue';font-size:27px;color:var(--white);letter-spacing:1px;">{{ gcash_settings.gcash_number if gcash_settings else '0945 397 0594' }}</div>
+                <div style="font-size:15px;color:var(--muted);margin-top:2px;">{{ gcash_settings.gcash_account_name if gcash_settings else 'LYDIA M. EMATA' }}</div>
               </div>
               <label class="form-label">GCash Reference Number</label>
               <input class="form-input" id="payment-gcash-reference" placeholder="e.g. 1234567890123">
               <label class="form-label" style="margin-top:14px;">Proof of Payment (screenshot)</label>
               <input class="form-input" type="file" id="payment-gcash-proof" accept="image/*"
                      onchange="previewGcashProof(this)">
-              <div style="font-size:11px;color:var(--muted);margin-top:4px;">
+              <div style="font-size:12px;color:var(--muted);margin-top:4px;">
                 Upload a screenshot of your GCash payment confirmation. Admin will verify it
                 before your membership is activated.
               </div>
               <img id="payment-gcash-proof-preview" class="proof-preview" alt="GCash proof preview" style="display:none;">
             </div>
-            <div style="font-size:12px;color:var(--muted);margin-top:4px;margin-bottom:4px;line-height:1.6;">
+            <div style="font-size:13px;color:var(--muted);margin-top:4px;margin-bottom:4px;line-height:1.6;">
               If paying by Cash, settle payment at the front desk with staff. If paying by GCash,
               attach your reference number and proof of payment above.
             </div>
@@ -386,7 +389,7 @@
             </button>
           </div>
           {% else %}
-          <div style="font-size:13px;color:var(--muted);line-height:1.6;">
+          <div style="font-size:15px;color:var(--muted);line-height:1.6;">
             Payment method: <strong style="color:var(--white);">{{ pending_payment.method }}</strong>{% if pending_payment.reference %} · Reference: <strong style="color:var(--white);">{{ pending_payment.reference }}</strong>{% endif %}
             {% if pending_payment.method == 'GCash' %}
             <br>Your payment is submitted and awaiting verification by admin.
@@ -524,7 +527,7 @@
               </div>
             </div>
 
-            <div style="font-size:11px;color:var(--muted);margin-bottom:16px;">
+            <div style="font-size:12px;color:var(--muted);margin-bottom:16px;">
               {% if member_age %}
               Age: <strong style="color:var(--white);">{{ member_age }}</strong> (calculated from your birthday on file)
               {% else %}
@@ -566,30 +569,30 @@
                no AI, no diet/meal/workout recommendations yet) -->
           <div id="fw-step-3" class="fw-step-panel" style="display:none;">
             <div class="panel-title" style="margin-bottom:4px;">Your Fitness Targets</div>
-            <div id="fw-goal-note" style="font-size:12px;color:var(--muted);margin-bottom:16px;"></div>
+            <div id="fw-goal-note" style="font-size:13px;color:var(--muted);margin-bottom:16px;"></div>
 
             <div class="goal-item">
               <div class="goal-header"><span class="goal-label">BMI</span><span class="goal-val red" id="fw-result-bmi">—</span></div>
-              <div style="font-size:11px;color:var(--muted);">An estimate based on your height and weight.</div>
+              <div style="font-size:12px;color:var(--muted);">An estimate based on your height and weight.</div>
             </div>
             <div class="goal-item">
               <div class="goal-header"><span class="goal-label">BMR</span><span class="goal-val red" id="fw-result-bmr">—</span></div>
-              <div style="font-size:11px;color:var(--muted);">Estimated calories your body uses at rest.</div>
+              <div style="font-size:12px;color:var(--muted);">Estimated calories your body uses at rest.</div>
             </div>
             <div class="goal-item">
               <div class="goal-header"><span class="goal-label">TDEE</span><span class="goal-val red" id="fw-result-tdee">—</span></div>
-              <div style="font-size:11px;color:var(--muted);">Estimated calories your body uses in a typical day based on your activity.</div>
+              <div style="font-size:12px;color:var(--muted);">Estimated calories your body uses in a typical day based on your activity.</div>
             </div>
             <div class="goal-item">
               <div class="goal-header"><span class="goal-label">Daily Calorie Target</span><span class="goal-val red" id="fw-result-calorie">—</span></div>
-              <div style="font-size:11px;color:var(--muted);">Estimated daily calorie intake based on your selected goal.</div>
+              <div style="font-size:12px;color:var(--muted);">Estimated daily calorie intake based on your selected goal.</div>
             </div>
             <div class="goal-item">
               <div class="goal-header"><span class="goal-label">Daily Protein Target</span><span class="goal-val green" id="fw-result-protein">—</span></div>
-              <div style="font-size:11px;color:var(--muted);">Estimated daily protein target based on your current weight.</div>
+              <div style="font-size:12px;color:var(--muted);">Estimated daily protein target based on your current weight.</div>
             </div>
 
-            <div style="font-size:11px;color:var(--muted);margin-top:12px;">These are general fitness estimates for the Power Gym system, not medical prescriptions.</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:12px;">These are general fitness estimates for the Power Gym system, not medical prescriptions.</div>
 
             <button class="btn btn-outline" style="width:100%;margin-top:16px;" onclick="fitnessWizardEditGoal()">← BACK TO GOAL</button>
           </div><!-- /fw-step-3 -->
@@ -600,8 +603,8 @@
                or birthday missing) so Step 1/2 data is never lost. -->
           <div id="fw-confirm" class="fw-step-panel" style="display:none;">
             <div style="text-align:center;padding:16px 0;">
-              <div style="font-size:15px;color:var(--white);">Your goal is set to <strong id="fw-confirm-goal-label" class="goal-val red"></strong>.</div>
-              <div style="font-size:12px;color:var(--muted);margin-top:10px;" id="fw-confirm-message">Calculating your fitness targets...</div>
+              <div style="font-size:17px;color:var(--white);">Your goal is set to <strong id="fw-confirm-goal-label" class="goal-val red"></strong>.</div>
+              <div style="font-size:13px;color:var(--muted);margin-top:10px;" id="fw-confirm-message">Calculating your fitness targets...</div>
               <button class="btn btn-outline" style="margin-top:16px;display:none;" id="fw-confirm-retry-btn" onclick="retryFitnessCalculation()">RETRY CALCULATION</button>
               <button class="btn btn-outline" style="margin-top:8px;" onclick="fitnessWizardEditGoal()">CHANGE GOAL</button>
             </div>
@@ -623,9 +626,9 @@
       <div class="panel" id="fitness-plan-panel" style="display:none;margin-bottom:20px;">
         <div class="panel-header"><div class="panel-title">Your Personalized Fitness Plan</div></div>
         <div class="panel-body">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:16px;">General fitness and nutrition guidance only. This is not medical advice.</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:16px;">General fitness and nutrition guidance only. This is not medical advice.</div>
 
-          <div id="fp-status-message" style="display:none;font-size:13px;color:var(--muted);text-align:center;padding:16px 0;"></div>
+          <div id="fp-status-message" style="display:none;font-size:15px;color:var(--muted);text-align:center;padding:16px 0;"></div>
 
           <div id="fp-plan-content" style="display:none;">
 
@@ -665,7 +668,7 @@
 
             <!-- OVERVIEW -->
             <div class="fp-tab-panel" id="fp-panel-overview" data-fp-panel="overview">
-              <div style="font-size:13px;color:var(--white);line-height:1.7;margin-bottom:18px;">
+              <div style="font-size:15px;color:var(--white);line-height:1.7;margin-bottom:18px;">
                 This plan is generated from your fitness profile and your Step 3 calculated targets. Explore your
                 nutrition targets, recommended foods and meals, workouts, equipment, and general tips for your
                 <strong id="fp-overview-goal-label" class="red">—</strong> goal using the tabs above.
@@ -701,17 +704,17 @@
 
             <!-- FOODS & MEALS -->
             <div class="fp-tab-panel" id="fp-panel-foods" data-fp-panel="foods" style="display:none;">
-              <div class="panel-title" style="font-size:14px;margin-bottom:10px;">Recommended Foods</div>
+              <div class="panel-title" style="font-size:16px;margin-bottom:10px;">Recommended Foods</div>
               <div class="fp-card-grid" id="fp-foods-list"></div>
 
-              <div class="panel-title" style="font-size:14px;margin:22px 0 10px;">Sample Daily Meal Plan</div>
+              <div class="panel-title" style="font-size:16px;margin:22px 0 10px;">Sample Daily Meal Plan</div>
               <div class="fp-card-grid" id="fp-meal-plan"></div>
-              <div style="font-size:11px;color:var(--muted);margin-top:12px;" id="fp-meal-plan-total"></div>
+              <div style="font-size:12px;color:var(--muted);margin-top:12px;" id="fp-meal-plan-total"></div>
             </div>
 
             <!-- WORKOUTS -->
             <div class="fp-tab-panel" id="fp-panel-workouts" data-fp-panel="workouts" style="display:none;">
-              <div style="font-size:12px;color:var(--muted);margin-bottom:14px;" id="fp-workout-frequency"></div>
+              <div style="font-size:13px;color:var(--muted);margin-bottom:14px;" id="fp-workout-frequency"></div>
 
               <!-- Day 1–7 navigation, styled like the top-level plan tabs
                    so it reads as "tabs within a tab" — only one day's
@@ -728,8 +731,8 @@
 
             <!-- TIPS -->
             <div class="fp-tab-panel" id="fp-panel-tips" data-fp-panel="tips" style="display:none;">
-              <ul id="fp-tips-list" style="font-size:13px;color:var(--white);line-height:1.9;padding-left:18px;margin:0;"></ul>
-              <div style="font-size:11px;color:var(--muted);margin-top:16px;">General fitness and nutrition guidance only. This is not medical advice.</div>
+              <ul id="fp-tips-list" style="font-size:15px;color:var(--white);line-height:1.9;padding-left:18px;margin:0;"></ul>
+              <div style="font-size:12px;color:var(--muted);margin-top:16px;">General fitness and nutrition guidance only. This is not medical advice.</div>
             </div>
 
           </div><!-- /fp-plan-content -->
@@ -743,11 +746,11 @@
             {% if goal %}
             <div class="goal-item">
               <div class="goal-header"><span class="goal-label">Weight</span><span class="goal-val red">{{ goal.current_weight if goal.current_weight else '—' }} kg</span></div>
-              <div style="font-size:11px;color:var(--muted);">Goal: {{ goal.goal_weight if goal.goal_weight else '—' }} kg</div>
+              <div style="font-size:12px;color:var(--muted);">Goal: {{ goal.goal_weight if goal.goal_weight else '—' }} kg</div>
             </div>
             <div class="goal-item">
               <div class="goal-header"><span class="goal-label">BMI</span><span class="goal-val red">{{ goal.current_bmi if goal.current_bmi else '—' }}</span></div>
-              <div style="font-size:11px;color:var(--muted);">Normal range: 18.5–24.9</div>
+              <div style="font-size:12px;color:var(--muted);">Normal range: 18.5–24.9</div>
             </div>
             {% else %}
             <div style="text-align:center;color:var(--muted);padding:20px 0;">No body goals logged yet. Complete the Fitness Goal Setup above to add your first entry.</div>
@@ -758,8 +761,8 @@
           <div class="panel-header"><div class="panel-title">Notes</div></div>
           <div class="panel-body">
             {% if goal and goal.notes %}
-            <div style="font-size:13px;color:var(--white);line-height:1.6;">{{ goal.notes }}</div>
-            <div style="margin-top:16px;font-size:11px;color:var(--muted);">Last updated: {{ goal.recorded_at.strftime('%b %d, %Y') }}</div>
+            <div style="font-size:15px;color:var(--white);line-height:1.6;">{{ goal.notes }}</div>
+            <div style="margin-top:16px;font-size:12px;color:var(--muted);">Last updated: {{ goal.recorded_at.strftime('%b %d, %Y') }}</div>
             {% else %}
             <div style="text-align:center;color:var(--muted);padding:20px 0;">No notes yet.</div>
             {% endif %}
@@ -781,17 +784,17 @@
         <div class="panel service-card" style="position:relative;">
           <button type="button" class="service-eye-btn" title="See equipment used for this service"
                   onclick="event.stopPropagation(); openServiceModal({{ s.id }});"
-                  style="position:absolute;bottom:8px;right:8px;width:28px;height:28px;border-radius:50%;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.35);color:var(--white);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;">
+                  style="position:absolute;bottom:8px;right:8px;width:28px;height:28px;border-radius:50%;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.35);color:var(--white);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;">
             👁️
           </button>
           <div class="panel-body" style="text-align:center;" onclick="openServiceModal({{ s.id }})">
             {% if s.image_path %}
             <div style="width:56px;height:56px;margin:0 auto 10px;border-radius:8px;background-size:cover;background-position:center;background-image:url('{{ url_for('static', filename=s.image_path) }}');"></div>
             {% else %}
-            <div style="font-size:36px;margin-bottom:10px;">{{ s.icon or '🛎️' }}</div>
+            <div style="font-size:40px;margin-bottom:10px;">{{ s.icon or '🛎️' }}</div>
             {% endif %}
             <div class="panel-title">{{ s.name }}</div>
-            {% if s.description %}<div style="font-size:12px;color:var(--muted);margin-top:6px;">{{ s.description }}</div>{% endif %}
+            {% if s.description %}<div style="font-size:13px;color:var(--muted);margin-top:6px;">{{ s.description }}</div>{% endif %}
           </div>
         </div>
         {% else %}
@@ -862,7 +865,7 @@
                 <input class="form-input" id="pi-phone" placeholder="09171234567" maxlength="11" inputmode="numeric" pattern="09\d{9}"
                        value="{{ member.phone or '' }}"
                        oninput="this.value=this.value.replace(/\D/g,'').slice(0,11)">
-                <div style="font-size:11px;color:var(--muted);margin-top:4px;">Must start with 09 and be 11 digits.</div>
+                <div style="font-size:12px;color:var(--muted);margin-top:4px;">Must start with 09 and be 11 digits.</div>
               </div>
               <div class="form-group">
                 <label class="form-label">Birthday</label>
@@ -923,9 +926,9 @@
 <div class="modal-overlay" id="service-modal">
   <div class="modal">
     <button class="modal-close" onclick="closeModal('service-modal')">✕</button>
-    <div style="font-size:40px;text-align:center;margin-bottom:6px;" id="service-modal-icon">🛎️</div>
+    <div style="font-size:45px;text-align:center;margin-bottom:6px;" id="service-modal-icon">🛎️</div>
     <div class="modal-title" style="text-align:center;" id="service-modal-title">SERVICE</div>
-    <div style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:18px;" id="service-modal-subtitle"></div>
+    <div style="font-size:15px;color:var(--muted);text-align:center;margin-bottom:18px;" id="service-modal-subtitle"></div>
     <div class="panel-title" id="service-modal-list-title" style="margin-bottom:4px;">What's included</div>
     <ul class="plan-features" id="service-modal-list"></ul>
   </div>
@@ -935,7 +938,7 @@
   <div class="modal">
     <button class="modal-close" onclick="closeModal('exercise-instructions-modal')">✕</button>
     <div class="modal-title" style="text-align:center;" id="exercise-instructions-modal-title">EXERCISE</div>
-    <div style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:18px;" id="exercise-instructions-modal-subtitle"></div>
+    <div style="font-size:15px;color:var(--muted);text-align:center;margin-bottom:18px;" id="exercise-instructions-modal-subtitle"></div>
     <div class="panel-title" style="margin-bottom:4px;">Step-by-step instructions</div>
     <ol class="exercise-instructions-list" id="exercise-instructions-modal-steps"></ol>
   </div>
@@ -945,8 +948,8 @@
   <div class="modal">
     <button class="modal-close" onclick="closeModal('plan-modal')">✕</button>
     <div class="modal-title" style="text-align:center;" id="plan-modal-title">MONTHLY</div>
-    <div style="font-family:'Bebas Neue';font-size:30px;color:var(--red);text-align:center;margin-bottom:4px;" id="plan-modal-price">₱900</div>
-    <div style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:18px;" id="plan-modal-subtitle">Full gym access, billed monthly</div>
+    <div style="font-family:'Bebas Neue';font-size:34px;color:var(--red);text-align:center;margin-bottom:4px;" id="plan-modal-price">₱900</div>
+    <div style="font-size:15px;color:var(--muted);text-align:center;margin-bottom:18px;" id="plan-modal-subtitle">Full gym access, billed monthly</div>
     <div class="panel-title" style="margin-bottom:4px;">What's included</div>
     <ul class="plan-features" id="plan-modal-list"></ul>
     <button class="btn btn-red" style="margin-top:18px;width:100%;" id="plan-modal-select-btn" onclick="selectPlanFromModal()">SELECT THIS PLAN</button>
@@ -957,47 +960,47 @@
   <div class="modal" style="max-width:420px;">
     <button class="modal-close" onclick="cancelPlanRequest()">✕</button>
     <div class="modal-title" style="text-align:center;">CONFIRM YOUR REQUEST</div>
-    <div style="font-size:13px;color:var(--muted);text-align:center;line-height:1.6;margin:10px 0 16px;">
+    <div style="font-size:15px;color:var(--muted);text-align:center;line-height:1.6;margin:10px 0 16px;">
       Review your invoice below, then confirm.
     </div>
 
     <div style="background:var(--dark);border:1px solid var(--border);border-radius:8px;padding:14px 16px;">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13px;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:15px;">
         <span style="color:var(--muted);">Plan</span>
         <strong id="confirm-plan-name" style="color:var(--red);">MONTHLY</strong>
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13px;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:15px;">
         <span style="color:var(--muted);">Regular Price</span>
         <span id="confirm-plan-regular-price">₱900</span>
       </div>
-      <div id="confirm-plan-discount-row" style="display:none;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13px;">
+      <div id="confirm-plan-discount-row" style="display:none;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:15px;">
         <span style="color:var(--green);">Student Discount</span>
         <span id="confirm-plan-discount-amount" style="color:var(--green);">−₱0</span>
       </div>
-      <div id="confirm-plan-coach-row" style="display:none;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13px;">
+      <div id="confirm-plan-coach-row" style="display:none;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:15px;">
         <span style="color:var(--muted);">Coach</span>
         <span id="confirm-plan-coach-name" style="text-align:right;">—</span>
       </div>
-      <div id="confirm-plan-coach-fee-row" style="display:none;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13px;">
+      <div id="confirm-plan-coach-fee-row" style="display:none;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:15px;">
         <span style="color:var(--muted);">Coach Fee</span>
         <span id="confirm-plan-coach-fee">₱0</span>
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13px;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:15px;">
         <span style="color:var(--muted);">Start Date</span>
         <strong id="confirm-plan-date">—</strong>
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13px;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:15px;">
         <span style="color:var(--muted);">Expires</span>
         <strong id="confirm-plan-end-date">—</strong>
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;margin-top:8px;border-top:1px solid var(--border);">
-        <span style="font-family:'Bebas Neue',sans-serif;font-size:15px;letter-spacing:1px;color:var(--white);">TOTAL TO PAY</span>
-        <span id="confirm-plan-total" style="font-family:'Bebas Neue',sans-serif;font-size:24px;color:var(--red);">₱900</span>
+        <span style="font-family:'Bebas Neue',sans-serif;font-size:17px;letter-spacing:1px;color:var(--white);">TOTAL TO PAY</span>
+        <span id="confirm-plan-total" style="font-family:'Bebas Neue',sans-serif;font-size:27px;color:var(--red);">₱900</span>
       </div>
     </div>
 
 
-    <div style="font-size:11px;color:var(--muted);text-align:center;margin:8px 0 0;line-height:1.6;">
+    <div style="font-size:12px;color:var(--muted);text-align:center;margin:8px 0 0;line-height:1.6;">
       Payment is completed in the Payment tab after staff/admin approve this request.
     </div>
 
@@ -1017,7 +1020,7 @@
       </div>
     </div>
     <div class="modal-title" style="text-align:center;">REQUEST SUCCESSFUL</div>
-    <div id="plan-success-message" style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
+    <div id="plan-success-message" style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
       You successfully requested your plan.
     </div>
     <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="closePlanSuccessModal()">OK</button>
@@ -1033,7 +1036,7 @@
       </div>
     </div>
     <div class="modal-title" style="text-align:center;">MEMBERSHIP APPROVED!</div>
-    <div id="plan-approved-message" style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
+    <div id="plan-approved-message" style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
       Congratulations! Your membership plan has been approved. Please proceed to payment.
     </div>
     <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
@@ -1052,7 +1055,7 @@
       </div>
     </div>
     <div class="modal-title" style="text-align:center;">PAYMENT SUCCESSFUL</div>
-    <div id="payment-approved-message" style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
+    <div id="payment-approved-message" style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
       You have successfully paid your membership plan!
     </div>
     <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="closePaymentApprovedModal()">OK</button>
@@ -1068,7 +1071,7 @@
       </div>
     </div>
     <div class="modal-title" style="text-align:center;">REQUEST DECLINED</div>
-    <div id="plan-declined-message" style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
+    <div id="plan-declined-message" style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
       Your plan request was declined.
     </div>
     <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="closePlanDeclinedModal()">OK</button>
@@ -1079,12 +1082,12 @@
   <div class="modal" style="max-width:440px;">
     <button class="modal-close" onclick="closeAnnouncementNoticeModal()">✕</button>
     <div style="display:flex;justify-content:center;margin-bottom:14px;">
-      <div style="width:56px;height:56px;border-radius:50%;background:rgba(245,197,24,0.15);border:1px solid rgba(245,197,24,0.3);display:flex;align-items:center;justify-content:center;font-size:26px;">📢</div>
+      <div style="width:56px;height:56px;border-radius:50%;background:rgba(245,197,24,0.15);border:1px solid rgba(245,197,24,0.3);display:flex;align-items:center;justify-content:center;font-size:29px;">📢</div>
     </div>
     <div class="modal-title" style="text-align:center;">NOTICE FROM THE ADMIN</div>
     <div id="announcement-notice-title" style="font-weight:700;text-align:center;margin-top:12px;color:var(--gold);"></div>
-    <div id="announcement-notice-body" style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:10px 0;white-space:pre-wrap;"></div>
-    <div id="announcement-notice-counter" style="font-size:11px;color:var(--muted);text-align:center;margin-bottom:16px;"></div>
+    <div id="announcement-notice-body" style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:10px 0;white-space:pre-wrap;"></div>
+    <div id="announcement-notice-counter" style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:16px;"></div>
     <button class="btn btn-red" id="announcement-notice-btn" style="width:100%;justify-content:center;" onclick="closeAnnouncementNoticeModal()">OK</button>
   </div>
 </div>
@@ -1093,7 +1096,7 @@
   <div class="modal" style="max-width:400px;">
     <button class="modal-close" onclick="cancelWithdrawRequest()">✕</button>
     <div class="modal-title" style="text-align:center;">CANCEL PLAN REQUEST?</div>
-    <div style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;">
+    <div style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;">
       Are you sure you want to cancel this plan request? Staff won't see it anymore,
       and you can submit a new request anytime.
     </div>
@@ -1108,7 +1111,7 @@
   <div class="modal" style="max-width:400px;">
     <button class="modal-close" onclick="cancelSubmitPayment()">✕</button>
     <div class="modal-title" style="text-align:center;" id="confirm-payment-title">CONFIRM PAYMENT</div>
-    <div style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;" id="confirm-payment-text">
+    <div style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;" id="confirm-payment-text">
       Are you sure you want to submit your payment?
     </div>
     <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
@@ -1127,7 +1130,7 @@
       </div>
     </div>
     <div class="modal-title" style="text-align:center;">PAYMENT SUBMITTED</div>
-    <div id="payment-submit-success-message" style="font-size:14px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
+    <div id="payment-submit-success-message" style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
       You have successfully submitted your payment. Please wait for admin's approval.
     </div>
     <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="closePaymentSubmitSuccessModal()">OK</button>

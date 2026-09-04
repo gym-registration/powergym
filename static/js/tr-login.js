@@ -198,7 +198,7 @@ const Navigation = (() => {
 
     if (role && configs[role]) {
       const cfg = configs[role];
-      bar.style.cssText = `display:block;background:${cfg.bg};color:${cfg.color};border:1px solid ${cfg.border};margin-bottom:16px;padding:10px 14px;border-radius:4px;font-size:12px;font-weight:600;letter-spacing:1px;text-transform:uppercase;`;
+      bar.style.cssText = `display:block;background:${cfg.bg};color:${cfg.color};border:1px solid ${cfg.border};margin-bottom:16px;padding:10px 14px;border-radius:4px;font-size:13px;font-weight:600;letter-spacing:1px;text-transform:uppercase;`;
       bar.textContent = cfg.text;
       tag.textContent = cfg.tagText;
     } else {
@@ -261,13 +261,24 @@ function closeModal(id) {
   if (el) el.classList.remove('open');
 }
 
-/** Terms & Policy read-time gate state. secondsLeft counts down only while
- *  the modal is open, and persists across multiple opens/closes in the
- *  same page load — so a member can't unlock the checkbox by opening and
- *  immediately closing the modal several times. The required duration
- *  comes from the modal's data-read-seconds attribute (admin-editable). */
-let termsSecondsLeft = null;
-let termsCountdownId = null;
+/** Terms & Policy read-time + auto-scroll gate state. The content
+ *  auto-scrolls on its own, driven purely by elapsed time against the
+ *  admin-configured duration (data-read-seconds on the modal) — the
+ *  member doesn't scroll it themselves; it reaches the bottom exactly
+ *  when the timer reaches 0, no sooner. secondsLeft/openedAtMs/
+ *  secondsLeftAtOpen track that countdown and persist across multiple
+ *  opens/closes in the same page load (so closing and reopening the
+ *  modal resumes the scroll from where it left off, instead of letting
+ *  someone unlock the checkbox by opening and immediately closing the
+ *  modal several times). The "I agree" checkbox unlocks once the
+ *  auto-scroll has actually reached the bottom, which can only happen
+ *  once the full duration has elapsed. */
+let termsSecondsLeft      = null; // whole seconds remaining, for display
+let termsTotalSeconds     = null; // admin-configured duration
+let termsSecondsLeftAtOpen = null; // snapshot of secondsLeft when this open began
+let termsOpenedAtMs       = null; // performance.now() when this open began
+let termsHasScrolledToBottom = false;
+let termsAutoScrollRAF    = null;
 
 function _termsFormatTime(s) {
   if (s >= 60) {
@@ -281,56 +292,132 @@ function _termsUpdateTimerDisplay() {
   const timerEl = document.getElementById('terms-timer');
   if (!timerEl) return;
   if (termsSecondsLeft > 0) {
-    timerEl.textContent = `Please keep reading — you can agree in ${_termsFormatTime(termsSecondsLeft)}.`;
+    timerEl.textContent = `Reading automatically — you can agree in ${_termsFormatTime(termsSecondsLeft)}.`;
   } else {
-    timerEl.textContent = "You've reviewed the Terms & Policy — you may close this and check \u201cI agree.\u201d";
+    timerEl.textContent = "You've reached the end of the Terms & Policy — you may close this and check \u201cI agree.\u201d";
   }
 }
 
-/** Open the Terms & Policy modal from registration. The "I agree"
- *  checkbox only unlocks once the member has kept the modal open for the
- *  estimated read time (data-read-seconds on the modal) and then closes
- *  it (✕ button or backdrop click) — so they can't check it without
- *  actually spending time on the terms first. */
+/** Drives the auto-scroll every animation frame while the modal is
+ *  open: computes elapsed time since this open began (added to
+ *  whatever was already used up in earlier opens), maps that onto a
+ *  0..1 ratio of the admin's total duration, and sets scrollTop to that
+ *  same ratio of the scrollable content. Reaching ratio 1 — which can
+ *  only happen once the full duration has elapsed — satisfies both the
+ *  timer and the "reached the bottom" requirement together. */
+function _termsAutoScrollTick(bodyEl) {
+  const elapsedThisOpen = (performance.now() - termsOpenedAtMs) / 1000;
+  const effectiveSecondsLeft = Math.max(0, termsSecondsLeftAtOpen - elapsedThisOpen);
+  const shownSecondsLeft = Math.ceil(effectiveSecondsLeft);
+  if (shownSecondsLeft !== termsSecondsLeft) {
+    termsSecondsLeft = shownSecondsLeft;
+    _termsUpdateTimerDisplay();
+  }
+
+  const total = termsTotalSeconds || 1;
+  const ratio = Math.min(1, Math.max(0, 1 - effectiveSecondsLeft / total));
+  const maxScrollable = Math.max(0, bodyEl.scrollHeight - bodyEl.clientHeight);
+  bodyEl.scrollTop = ratio * maxScrollable;
+
+  if (effectiveSecondsLeft <= 0) {
+    termsSecondsLeft = 0;
+    termsHasScrolledToBottom = true;
+    _termsUpdateTimerDisplay();
+    termsAutoScrollRAF = null;
+    return;
+  }
+
+  termsAutoScrollRAF = requestAnimationFrame(() => _termsAutoScrollTick(bodyEl));
+}
+
+/** Open the Terms & Policy modal from registration. The content
+ *  auto-scrolls itself over the admin-configured read time (accumulated
+ *  across opens/closes) and the "I agree" checkbox only unlocks once
+ *  that auto-scroll has actually reached the bottom — then the member
+ *  closes the modal (✕ button or backdrop click) — so there's no way to
+ *  reach "agree" without the full duration having elapsed. */
 function openTermsModal() {
   openModal('terms-modal');
   const modal = document.getElementById('terms-modal');
+  const body = document.getElementById('terms-modal-body');
   const checkbox = document.getElementById('reg-terms-check');
   const hint = document.getElementById('reg-terms-hint');
   if (!modal) return;
 
   if (termsSecondsLeft === null) {
     const configured = parseInt(modal.dataset.readSeconds, 10);
-    termsSecondsLeft = Number.isFinite(configured) && configured > 0 ? configured : 30;
+    termsSecondsLeft = termsTotalSeconds = Number.isFinite(configured) && configured > 0 ? configured : 30;
   }
   _termsUpdateTimerDisplay();
 
-  if (termsCountdownId) clearInterval(termsCountdownId);
-  termsCountdownId = setInterval(() => {
-    if (termsSecondsLeft > 0) {
-      termsSecondsLeft -= 1;
-      _termsUpdateTimerDisplay();
-    }
-    if (termsSecondsLeft <= 0) {
-      clearInterval(termsCountdownId);
-      termsCountdownId = null;
-    }
-  }, 1000);
+  if (body && termsSecondsLeft > 0) {
+    // The member isn't driving this scroll, so don't let stray wheel/
+    // touch/keyboard input fight the auto-scroll while it's running.
+    body.style.overflowY = 'hidden';
+    termsSecondsLeftAtOpen = termsSecondsLeft;
+    // Deferred a frame so scrollHeight/clientHeight reflect real
+    // post-layout geometry instead of racing the modal's
+    // display:none -> display:flex switch.
+    requestAnimationFrame(() => {
+      termsOpenedAtMs = performance.now();
+      if (termsAutoScrollRAF) cancelAnimationFrame(termsAutoScrollRAF);
+      _termsAutoScrollTick(body);
+    });
+  } else if (body) {
+    // Time's already up from an earlier open — let the member freely
+    // scroll back through the content to re-read it.
+    body.style.overflowY = 'auto';
+  }
 
   const observer = new MutationObserver(() => {
     if (!modal.classList.contains('open')) {
-      if (termsCountdownId) { clearInterval(termsCountdownId); termsCountdownId = null; }
-      if (termsSecondsLeft <= 0) {
+      if (termsAutoScrollRAF) { cancelAnimationFrame(termsAutoScrollRAF); termsAutoScrollRAF = null; }
+      if (body) body.style.overflowY = 'auto';
+      if (termsSecondsLeft <= 0 && termsHasScrolledToBottom) {
         if (checkbox) checkbox.disabled = false;
         if (hint) hint.style.display = 'none';
       } else if (hint) {
-        hint.textContent = `Please reopen and review the Terms & Policy for ${_termsFormatTime(termsSecondsLeft)} more before you can agree.`;
+        hint.textContent = `Please reopen and let it finish reading — ${_termsFormatTime(termsSecondsLeft)} left — before you can agree.`;
         hint.style.display = 'block';
       }
       observer.disconnect();
     }
   });
   observer.observe(modal, { attributes: true, attributeFilter: ['class'] });
+}
+
+/** Hard safety net for the Terms & Policy gate, wired up once on page
+ *  load. Two problems this guards against, on top of the modal-close
+ *  check above:
+ *   1. A stale "checked + enabled" checkbox restored by the browser's
+ *      back/forward cache after a real reload — the disabled attribute
+ *      in the HTML resets, but a prior enable/check from JS can survive
+ *      in a frozen page state.
+ *   2. Any other path (devtools, extensions, a future bug) that flips
+ *      the checkbox on before the gate is actually satisfied.
+ *  It force-resets the checkbox to disabled+unchecked on load, and on
+ *  every change event re-verifies the real gate state (elapsed time +
+ *  scrolled-to-bottom) before allowing the check to stand — instantly
+ *  reverting it otherwise. */
+function _initTermsGateGuard() {
+  const checkbox = document.getElementById('reg-terms-check');
+  if (!checkbox) return;
+
+  checkbox.disabled = true;
+  checkbox.checked = false;
+
+  checkbox.addEventListener('change', () => {
+    const satisfied = termsSecondsLeft !== null && termsSecondsLeft <= 0 && termsHasScrolledToBottom;
+    if (checkbox.checked && !satisfied) {
+      checkbox.checked = false;
+      checkbox.disabled = true;
+      const hint = document.getElementById('reg-terms-hint');
+      if (hint) {
+        hint.textContent = 'Please open and read the Terms & Policy before agreeing.';
+        hint.style.display = 'block';
+      }
+    }
+  });
 }
 
 /** Show the "please wait, submitting..." overlay while a slow request
@@ -760,7 +847,7 @@ const ContentManager = (() => {
       ? `<div class="content-card-price">₱${Number(item.price).toLocaleString()} / ${item.duration_days} day${item.duration_days == 1 ? '' : 's'}</div>`
       : '';
     const categoryBadge = (!isPlan && item.category)
-      ? `<div style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);">${_esc(item.category)}</div>`
+      ? `<div style="font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);">${_esc(item.category)}</div>`
       : '';
     let inclusionsHtml = '';
     if (isPlan && item.inclusions) {
@@ -1025,11 +1112,11 @@ const ContentManager = (() => {
       // machines, so they don't belong in a service's equipment list.
       const items = allItems.filter(eq => !eq.is_facility);
       if (!items.length) {
-        list.innerHTML = '<div style="font-size:12px;color:var(--muted);">No equipment set up yet — add some under the Equipment tab first.</div>';
+        list.innerHTML = '<div style="font-size:13px;color:var(--muted);">No equipment set up yet — add some under the Equipment tab first.</div>';
         return;
       }
       list.innerHTML = items.map(eq => `
-        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--white);cursor:pointer;background:rgba(255,255,255,0.04);padding:6px 10px;border-radius:6px;">
+        <label style="display:flex;align-items:center;gap:6px;font-size:15px;color:var(--white);cursor:pointer;background:rgba(255,255,255,0.04);padding:6px 10px;border-radius:6px;">
           <input type="checkbox" class="cf-equipment-check" value="${eq.id}" ${checked.has(String(eq.id)) ? 'checked' : ''}>
           <span>${eq.icon || '🏋️'} ${_esc(eq.name)}</span>
         </label>`).join('');
@@ -1037,15 +1124,15 @@ const ContentManager = (() => {
     if (cache.equipment !== null) {
       render(cache.equipment);
     } else {
-      list.innerHTML = '<div style="font-size:12px;color:var(--muted);">Loading equipment…</div>';
+      list.innerHTML = '<div style="font-size:13px;color:var(--muted);">Loading equipment…</div>';
       fetch(ENDPOINTS.equipment.list)
         .then(res => res.json())
         .then(data => {
-          if (!data.success) { list.innerHTML = '<div style="font-size:12px;color:var(--muted);">Could not load equipment.</div>'; return; }
+          if (!data.success) { list.innerHTML = '<div style="font-size:13px;color:var(--muted);">Could not load equipment.</div>'; return; }
           cache.equipment = data.items;
           render(data.items);
         })
-        .catch(() => { list.innerHTML = '<div style="font-size:12px;color:var(--muted);">Could not reach the server.</div>'; });
+        .catch(() => { list.innerHTML = '<div style="font-size:13px;color:var(--muted);">Could not reach the server.</div>'; });
     }
   }
 
@@ -1208,6 +1295,7 @@ function closeAnnouncementNoticeModal() {
    DOMContentLoaded listeners on top of this one.
 ════════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', () => {
+  _initTermsGateGuard();
   window.openModal     = openModal;
   window.closeModal    = closeModal;
   window.openTermsModal = openTermsModal;

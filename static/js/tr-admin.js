@@ -289,7 +289,7 @@ const AdminModule = (() => {
 
     panel.style.display = 'block';
     title.textContent = 'Loading…';
-    body.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:14px 0;">Generating report…</div>';
+    body.innerHTML = '<div style="color:var(--muted);font-size:15px;padding:14px 0;">Generating report…</div>';
 
     const params = new URLSearchParams({ range });
     if (fromDate && toDate) { params.set('from', fromDate); params.set('to', toDate); }
@@ -300,7 +300,7 @@ const AdminModule = (() => {
         if (!ok || !data.success) {
           showToast((data && data.error) || 'Could not generate report.', 'error');
           title.textContent = 'Report';
-          body.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:14px 0;">Could not load this report. Try Refresh.</div>';
+          body.innerHTML = '<div style="color:var(--muted);font-size:15px;padding:14px 0;">Could not load this report. Try Refresh.</div>';
           return;
         }
 
@@ -310,11 +310,11 @@ const AdminModule = (() => {
         title.textContent = `${report.title} — ${report.range_label} — Generated ${new Date().toLocaleString()}`;
         body.innerHTML = `
           <div class="stats-grid" style="grid-template-columns:repeat(${report.stats.length},1fr);margin-bottom:14px;">
-            ${report.stats.map(s => `<div class="stat-card"><div class="stat-value" style="font-size:24px;">${s.value}</div><div class="stat-label">${s.label}</div></div>`).join('')}
+            ${report.stats.map(s => `<div class="stat-card"><div class="stat-value" style="font-size:27px;">${s.value}</div><div class="stat-label">${s.label}</div></div>`).join('')}
           </div>
           ${report.chart_series && report.chart_series.length ? `
           <div style="margin-bottom:16px;">
-            <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">${report.chart_label}</div>
+            <div style="font-size:13px;color:var(--muted);margin-bottom:8px;">${report.chart_label}</div>
             ${_renderReportChartCanvas(type, report.chart_series)}
           </div>` : ''}
           ${_renderRevenueBreakdowns(type, report)}
@@ -322,7 +322,7 @@ const AdminModule = (() => {
           <table class="data-table">
             <thead><tr>${report.headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
             <tbody>${report.rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody>
-          </table>` : '<div style="color:var(--muted);font-size:13px;padding:14px 0;">No records found for this range.</div>'}`;
+          </table>` : '<div style="color:var(--muted);font-size:15px;padding:14px 0;">No records found for this range.</div>'}`;
 
         if (report.chart_series && report.chart_series.length) _mountReportChart(type, report.chart_series);
 
@@ -331,7 +331,7 @@ const AdminModule = (() => {
       .catch(() => {
         showToast('Could not reach the server. Please try again.', 'error');
         title.textContent = 'Report';
-        body.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:14px 0;">Could not load this report. Try Refresh.</div>';
+        body.innerHTML = '<div style="color:var(--muted);font-size:15px;padding:14px 0;">Could not load this report. Try Refresh.</div>';
       });
   }
 
@@ -347,7 +347,7 @@ const AdminModule = (() => {
 
     const byPlanTable = hasByPlan ? `
       <div style="flex:1;min-width:220px;">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Revenue by Plan</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:8px;">Revenue by Plan</div>
         <table class="data-table">
           <thead><tr><th>Plan</th><th>Total</th></tr></thead>
           <tbody>${report.by_plan.map(r => `<tr><td>${r.plan}</td><td>\u20b1${r.total}</td></tr>`).join('')}</tbody>
@@ -356,7 +356,7 @@ const AdminModule = (() => {
 
     const byStaffTable = hasByStaff ? `
       <div style="flex:1;min-width:220px;">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Cash Collected by Staff</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:8px;">Cash Collected by Staff</div>
         <table class="data-table">
           <thead><tr><th>Staff</th><th>Total</th><th>Txns</th></tr></thead>
           <tbody>${report.cash_by_staff.map(r => `<tr><td>${r.staff}</td><td>\u20b1${r.total}</td><td>${r.count}</td></tr>`).join('')}</tbody>
@@ -420,7 +420,7 @@ const AdminModule = (() => {
           <div style="position:relative;flex:0 0 auto;width:220px;height:220px;">
             <canvas id="report-chart-canvas" role="img" aria-label="Pie chart — ${label}"></canvas>
           </div>
-          <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--muted);white-space:nowrap;">${legend}</div>
+          <div style="display:flex;flex-direction:column;gap:8px;font-size:13px;color:var(--muted);white-space:nowrap;">${legend}</div>
         </div>`;
     }
 
@@ -437,7 +437,7 @@ const AdminModule = (() => {
           <div style="position:relative;flex:1;min-width:0;height:${heightPx}px;">
             <canvas id="report-chart-canvas" role="img" aria-label="Horizontal bar chart — ${label}"></canvas>
           </div>
-          <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--muted);white-space:nowrap;">${legend}</div>
+          <div style="display:flex;flex-direction:column;gap:8px;font-size:13px;color:var(--muted);white-space:nowrap;">${legend}</div>
         </div>`;
     }
 
@@ -637,8 +637,8 @@ const AdminModule = (() => {
         <div style="font-weight:600;margin-bottom:4px;" data-ann-title>${_escAnn(item.title)}</div>
         <span class="badge badge-green" data-ann-status-badge>Published</span>
       </div>
-      <div style="font-size:13px;color:var(--muted);white-space:pre-wrap;" data-ann-body>${_escAnn(item.body)}</div>
-      <div style="margin-top:8px;font-size:11px;color:var(--muted);">Posted by ${_escAnn(item.posted_by)} · <span data-ann-target-label>${TARGET_LABELS[item.target] || 'All Members'}</span> · ${_escAnn(item.created_at)}</div>
+      <div style="font-size:15px;color:var(--muted);white-space:pre-wrap;" data-ann-body>${_escAnn(item.body)}</div>
+      <div style="margin-top:8px;font-size:12px;color:var(--muted);">Posted by ${_escAnn(item.posted_by)} · <span data-ann-target-label>${TARGET_LABELS[item.target] || 'All Members'}</span> · ${_escAnn(item.created_at)}</div>
       <div style="margin-top:10px;display:flex;gap:8px;">
         <button class="btn btn-outline btn-sm" onclick="openEditAnnouncementModal(${item.id})">EDIT</button>
         <button class="btn btn-outline btn-sm" onclick="toggleAnnouncement(${item.id}, this)">UNPUBLISH</button>
@@ -800,7 +800,7 @@ const AdminModule = (() => {
         if (item) item.remove();
         const list = document.getElementById('admin-announcements-list');
         if (list && !list.querySelector('.announcement-item')) {
-          list.innerHTML = '<div id="admin-announcements-empty" style="color:var(--muted);font-size:13px;padding:14px 0;">No announcements yet. Compose one above to get started.</div>';
+          list.innerHTML = '<div id="admin-announcements-empty" style="color:var(--muted);font-size:15px;padding:14px 0;">No announcements yet. Compose one above to get started.</div>';
         }
         showToast('Announcement deleted.', 'success');
       })
@@ -867,15 +867,15 @@ const AdminModule = (() => {
    *  GCash) since this doesn't affect money — just a toast on success. */
   function submitTermsSettings() {
     const terms_content      = (document.getElementById('terms-content-editor') || {}).value || '';
-    const terms_read_seconds = _val('terms-read-seconds');
+    const terms_read_minutes = _val('terms-read-minutes');
 
     if (!terms_content.trim()) {
       showToast('Terms & Policy content cannot be empty.', 'error');
       return;
     }
-    const seconds = parseInt(terms_read_seconds, 10);
-    if (!Number.isFinite(seconds) || seconds < 5 || seconds > 600) {
-      showToast('Estimated read time must be between 5 and 600 seconds.', 'error');
+    const minutes = parseInt(terms_read_minutes, 10);
+    if (!Number.isFinite(minutes) || minutes < 1 || minutes > 10) {
+      showToast('Estimated read time must be between 1 and 10 minutes.', 'error');
       return;
     }
 
@@ -885,7 +885,7 @@ const AdminModule = (() => {
     fetch('/admin/update-terms-settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ terms_content, terms_read_seconds: seconds })
+      body: JSON.stringify({ terms_content, terms_read_minutes: minutes })
     })
       .then(res => res.json().then(data => ({ ok: res.ok, data })))
       .then(({ ok, data }) => {

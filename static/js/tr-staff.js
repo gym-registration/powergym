@@ -863,7 +863,7 @@ const StaffModule = (() => {
 
     panel.style.display = 'block';
     title.textContent = 'Loading…';
-    body.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:14px 0;">Generating report…</div>';
+    body.innerHTML = '<div style="color:var(--muted);font-size:15px;padding:14px 0;">Generating report…</div>';
 
     const params = new URLSearchParams();
     if (fromDate && toDate) { params.set('from', fromDate); params.set('to', toDate); }
@@ -874,7 +874,7 @@ const StaffModule = (() => {
         if (!ok || !data.success) {
           showToast((data && data.error) || 'Could not generate report.', 'error');
           title.textContent = 'Report';
-          body.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:14px 0;">Could not load this report. Try Refresh.</div>';
+          body.innerHTML = '<div style="color:var(--muted);font-size:15px;padding:14px 0;">Could not load this report. Try Refresh.</div>';
           return;
         }
 
@@ -884,11 +884,11 @@ const StaffModule = (() => {
         title.textContent = `${report.title} — ${report.range_label} — Generated ${new Date().toLocaleString()}`;
         body.innerHTML = `
           <div class="stats-grid" style="grid-template-columns:repeat(${report.stats.length},1fr);margin-bottom:14px;">
-            ${report.stats.map(s => `<div class="stat-card"><div class="stat-value" style="font-size:24px;">${s.value}</div><div class="stat-label">${s.label}</div></div>`).join('')}
+            ${report.stats.map(s => `<div class="stat-card"><div class="stat-value" style="font-size:27px;">${s.value}</div><div class="stat-label">${s.label}</div></div>`).join('')}
           </div>
           ${report.chart_series && report.chart_series.length ? `
           <div style="margin-bottom:16px;">
-            <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">${report.chart_label}</div>
+            <div style="font-size:13px;color:var(--muted);margin-bottom:8px;">${report.chart_label}</div>
             ${_renderStaffReportChartCanvas(type, report.chart_series)}
           </div>` : ''}
           ${_renderStaffRevenueBreakdowns(type, report)}
@@ -896,7 +896,7 @@ const StaffModule = (() => {
           <table class="data-table">
             <thead><tr>${report.headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
             <tbody>${report.rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody>
-          </table>` : '<div style="color:var(--muted);font-size:13px;padding:14px 0;">No records found for this range.</div>'}`;
+          </table>` : '<div style="color:var(--muted);font-size:15px;padding:14px 0;">No records found for this range.</div>'}`;
 
         if (report.chart_series && report.chart_series.length) _mountStaffReportChart(type, report.chart_series);
 
@@ -905,7 +905,7 @@ const StaffModule = (() => {
       .catch(() => {
         showToast('Could not reach the server. Please try again.', 'error');
         title.textContent = 'Report';
-        body.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:14px 0;">Could not load this report. Try Refresh.</div>';
+        body.innerHTML = '<div style="color:var(--muted);font-size:15px;padding:14px 0;">Could not load this report. Try Refresh.</div>';
       });
   }
 
@@ -921,7 +921,7 @@ const StaffModule = (() => {
 
     const byPlanTable = hasByPlan ? `
       <div style="flex:1;min-width:220px;">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Cash Revenue by Plan</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:8px;">Cash Revenue by Plan</div>
         <table class="data-table">
           <thead><tr><th>Plan</th><th>Total</th></tr></thead>
           <tbody>${report.by_plan.map(r => `<tr><td>${r.plan}</td><td>\u20b1${r.total}</td></tr>`).join('')}</tbody>
@@ -930,7 +930,7 @@ const StaffModule = (() => {
 
     const byStaffTable = hasByStaff ? `
       <div style="flex:1;min-width:220px;">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Cash Collected by Staff</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:8px;">Cash Collected by Staff</div>
         <table class="data-table">
           <thead><tr><th>Staff</th><th>Total</th><th>Txns</th></tr></thead>
           <tbody>${report.cash_by_staff.map(r => `<tr><td>${r.staff}</td><td>\u20b1${r.total}</td><td>${r.count}</td></tr>`).join('')}</tbody>
@@ -986,7 +986,7 @@ const StaffModule = (() => {
           <div style="position:relative;flex:0 0 auto;width:220px;height:220px;">
             <canvas id="staff-report-chart-canvas" role="img" aria-label="Pie chart — ${label}"></canvas>
           </div>
-          <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--muted);white-space:nowrap;">${legend}</div>
+          <div style="display:flex;flex-direction:column;gap:8px;font-size:13px;color:var(--muted);white-space:nowrap;">${legend}</div>
         </div>`;
     }
 
@@ -1001,7 +1001,7 @@ const StaffModule = (() => {
           <div style="position:relative;flex:1;min-width:0;height:${heightPx}px;">
             <canvas id="staff-report-chart-canvas" role="img" aria-label="Horizontal bar chart — ${label}"></canvas>
           </div>
-          <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--muted);white-space:nowrap;">${legend}</div>
+          <div style="display:flex;flex-direction:column;gap:8px;font-size:13px;color:var(--muted);white-space:nowrap;">${legend}</div>
         </div>`;
     }
 

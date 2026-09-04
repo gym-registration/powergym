@@ -198,7 +198,7 @@ const Navigation = (() => {
 
     if (role && configs[role]) {
       const cfg = configs[role];
-      bar.style.cssText = `display:block;background:${cfg.bg};color:${cfg.color};border:1px solid ${cfg.border};margin-bottom:16px;padding:10px 14px;border-radius:4px;font-size:12px;font-weight:600;letter-spacing:1px;text-transform:uppercase;`;
+      bar.style.cssText = `display:block;background:${cfg.bg};color:${cfg.color};border:1px solid ${cfg.border};margin-bottom:16px;padding:10px 14px;border-radius:4px;font-size:13px;font-weight:600;letter-spacing:1px;text-transform:uppercase;`;
       bar.textContent = cfg.text;
       tag.textContent = cfg.tagText;
     } else {
@@ -299,11 +299,63 @@ function hideLoadingOverlay() {
   if (el) el.classList.remove('open');
 }
 
-/** Payment verification (used by admin) — calls the real backend endpoint */
+/** Payment verification (used by admin and staff) — clicking Approve/Confirm
+ *  or Reject on a request card doesn't fire the request immediately. It
+ *  first opens a confirmation modal (see confirmVerifyPayment /
+ *  cancelVerifyPayment below) that spells out exactly which member, plan,
+ *  and amount are about to be approved or rejected, so staff/admin always
+ *  see what they're accepting before it's final. */
+let _pendingVerifyPayment = null;
+
 function verifyPayment(btn, action) {
   const card = btn.closest('.verify-card');
   if (!card) return;
 
+  const paymentId = card.dataset.paymentId;
+  if (!paymentId) { showToast('Missing payment reference — cannot verify.', 'error'); return; }
+
+  const memberName = card.dataset.memberName || 'this member';
+  const plan       = card.dataset.plan || 'this plan';
+  const amount     = card.dataset.amount;
+
+  _pendingVerifyPayment = { card, action };
+
+  const titleEl   = document.getElementById('confirm-verify-payment-title');
+  const messageEl = document.getElementById('confirm-verify-payment-message');
+  const detailsEl = document.getElementById('confirm-verify-payment-details');
+  const yesBtn    = document.getElementById('confirm-verify-payment-btn');
+
+  if (titleEl) titleEl.textContent = action === 'reject' ? 'REJECT REQUEST' : 'CONFIRM PAYMENT';
+  if (messageEl) {
+    messageEl.textContent = action === 'reject'
+      ? `Reject ${memberName}'s request for the ${plan} plan?`
+      : `Approve ${memberName}'s request for the ${plan} plan?`;
+  }
+  if (detailsEl) detailsEl.textContent = amount ? `Amount: ₱${amount}` : '';
+  if (yesBtn) yesBtn.className = action === 'reject' ? 'btn btn-red' : 'btn btn-green';
+
+  openModal('confirm-verify-payment-modal');
+}
+
+/** "NO" / ✕ on the verify-payment confirmation modal — discards it, no
+ *  request is sent and no buttons on the card are disabled. */
+function cancelVerifyPayment() {
+  closeModal('confirm-verify-payment-modal');
+  _pendingVerifyPayment = null;
+}
+
+/** "YES" on the verify-payment confirmation modal — actually sends the
+ *  approve/reject request that verifyPayment() staged. */
+function confirmVerifyPayment() {
+  closeModal('confirm-verify-payment-modal');
+  if (!_pendingVerifyPayment) return;
+  const { card, action } = _pendingVerifyPayment;
+  _pendingVerifyPayment = null;
+  _doVerifyPayment(card, action);
+}
+
+/** Actually performs the approve/reject call against the backend. */
+function _doVerifyPayment(card, action) {
   const paymentId = card.dataset.paymentId;
   if (!paymentId) { showToast('Missing payment reference — cannot verify.', 'error'); return; }
 
@@ -787,7 +839,7 @@ const ContentManager = (() => {
       ? `<div class="content-card-price">₱${Number(item.price).toLocaleString()} / ${item.duration_days} day${item.duration_days == 1 ? '' : 's'}</div>`
       : '';
     const categoryBadge = (!isPlan && item.category)
-      ? `<div style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);">${_esc(item.category)}</div>`
+      ? `<div style="font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);">${_esc(item.category)}</div>`
       : '';
     let inclusionsHtml = '';
     if (isPlan && item.inclusions) {
@@ -1054,11 +1106,11 @@ const ContentManager = (() => {
       // machines, so they don't belong in a service's equipment list.
       const items = allItems.filter(eq => !eq.is_facility);
       if (!items.length) {
-        list.innerHTML = '<div style="font-size:12px;color:var(--muted);">No equipment set up yet — add some under the Equipment tab first.</div>';
+        list.innerHTML = '<div style="font-size:13px;color:var(--muted);">No equipment set up yet — add some under the Equipment tab first.</div>';
         return;
       }
       list.innerHTML = items.map(eq => `
-        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--white);cursor:pointer;background:rgba(255,255,255,0.04);padding:6px 10px;border-radius:6px;">
+        <label style="display:flex;align-items:center;gap:6px;font-size:15px;color:var(--white);cursor:pointer;background:rgba(255,255,255,0.04);padding:6px 10px;border-radius:6px;">
           <input type="checkbox" class="cf-equipment-check" value="${eq.id}" ${checked.has(String(eq.id)) ? 'checked' : ''}>
           <span>${eq.icon || '🏋️'} ${_esc(eq.name)}</span>
         </label>`).join('');
@@ -1066,15 +1118,15 @@ const ContentManager = (() => {
     if (cache.equipment !== null) {
       render(cache.equipment);
     } else {
-      list.innerHTML = '<div style="font-size:12px;color:var(--muted);">Loading equipment…</div>';
+      list.innerHTML = '<div style="font-size:13px;color:var(--muted);">Loading equipment…</div>';
       fetch(ENDPOINTS.equipment.list)
         .then(res => res.json())
         .then(data => {
-          if (!data.success) { list.innerHTML = '<div style="font-size:12px;color:var(--muted);">Could not load equipment.</div>'; return; }
+          if (!data.success) { list.innerHTML = '<div style="font-size:13px;color:var(--muted);">Could not load equipment.</div>'; return; }
           cache.equipment = data.items;
           render(data.items);
         })
-        .catch(() => { list.innerHTML = '<div style="font-size:12px;color:var(--muted);">Could not reach the server.</div>'; });
+        .catch(() => { list.innerHTML = '<div style="font-size:13px;color:var(--muted);">Could not reach the server.</div>'; });
     }
   }
 
@@ -1246,6 +1298,8 @@ document.addEventListener('DOMContentLoaded', () => {
   window.buildAttGrid  = buildAttGrid;
   window.doLogout      = doLogout;
   window.verifyPayment = verifyPayment;
+  window.confirmVerifyPayment = confirmVerifyPayment;
+  window.cancelVerifyPayment = cancelVerifyPayment;
   window.submitChangePassword = submitChangePassword;
   window.submitProfileUpdate  = submitProfileUpdate;
   window.completeRegistration = completeRegistration;
