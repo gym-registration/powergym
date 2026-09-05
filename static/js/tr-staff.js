@@ -485,6 +485,7 @@ const StaffModule = (() => {
         }
         showToast(`${data.member_name} checked in at ${data.time}`, 'success');
         _applyRowCheckIn(row, identifier, data.time);
+        _playCheckAnimation(row, 'in');
       })
       .catch(() => {
         if (btn) { btn.disabled = false; btn.textContent = originalLabel; }
@@ -516,6 +517,7 @@ const StaffModule = (() => {
         }
         showToast(`${data.member_name} checked out at ${data.time} (${data.duration})`, 'success');
         _applyRowCheckOut(row, identifier, data.time, data.duration);
+        _playCheckAnimation(row, 'out');
       })
       .catch(() => {
         if (btn) { btn.disabled = false; btn.textContent = originalLabel; }
@@ -529,6 +531,50 @@ const StaffModule = (() => {
     return document.querySelector(`#checkin-table tbody tr[data-email="${CSS.escape(email)}"]`) || null;
   }
 
+  /** The ECG waveform markup shown in the action cell right after a
+   *  Check-in. It is itself the clickable "button" — tapping it plays a
+   *  flatline animation, then automatically checks the member out. */
+  function _ecgIndicatorHTML(email) {
+    return `<button type="button" class="btn btn-ecg btn-sm ecg-enter" onclick="flatlineAndCheckOut(this, '${email}')" title="Tap to check out">` +
+      `<svg class="ecg-svg" viewBox="0 0 120 24" preserveAspectRatio="none">` +
+      `<path class="ecg-path" d="M0,12 L8,12 L10,15 L13,2 L16,20 L19,12 L26,12 L29,8 L32,12 L60,12 L68,12 L70,15 L73,2 L76,20 L79,12 L86,12 L89,8 L92,12 L120,12" />` +
+      `</svg></button>`;
+  }
+
+  /** The flatline markup that plays when staff taps the ECG waveform —
+   *  a straight red line drawing itself, signalling the check-in session
+   *  has ended, right before the actual check-out request fires. */
+  function _flatlineHTML() {
+    return `<svg class="ecg-svg" viewBox="0 0 120 24" preserveAspectRatio="none">` +
+      `<path class="ecg-flatline-path" d="M0,12 L120,12" />` +
+      `</svg>`;
+  }
+
+  const FLATLINE_DURATION_MS = 650;
+
+  /** Staff taps the ECG waveform in the action cell: the waveform turns
+   *  into a red flatline (checking-in has ended), then a "CHECK OUT"
+   *  label pops up and stays put — staff taps it to actually check the
+   *  member out (it does not disappear or fire on its own). */
+  function flatlineAndCheckOut(el, email) {
+    const actionCell = el.closest('.cell-action');
+    if (!actionCell) return;
+    el.disabled = true;
+    el.classList.remove('btn-ecg');
+    el.classList.add('btn-ecg-dying');
+    el.removeAttribute('onclick');
+    el.title = 'Checking out…';
+    el.innerHTML = _flatlineHTML();
+
+    setTimeout(() => {
+      el.innerHTML = '<span class="ecg-checkout-label">CHECK OUT</span>';
+      el.classList.add('ecg-ready');
+      el.disabled = false;
+      el.title = 'Tap to confirm check out';
+      el.onclick = () => checkOutMember(email);
+    }, FLATLINE_DURATION_MS);
+  }
+
   /** Patch a table row in place after a successful check-in — no page reload */
   function _applyRowCheckIn(row, email, timeText) {
     if (!row) return;
@@ -537,7 +583,9 @@ const StaffModule = (() => {
     const actionCell   = row.querySelector('.cell-action');
     if (checkInCell)  checkInCell.textContent = timeText;
     if (durationCell) durationCell.innerHTML = `<span class="live-duration" data-checkin="${new Date().toISOString()}">Ongoing</span>`;
-    if (actionCell)   actionCell.innerHTML = `<button class="btn btn-outline btn-sm" onclick="checkOutMember('${email}')">← CHECK OUT</button>`;
+    // Don't jump straight to the Check-out button — show the live ECG
+    // waveform first; staff has to tap it to reveal Check-out.
+    if (actionCell)   actionCell.innerHTML = _ecgIndicatorHTML(email);
   }
 
   /** Patch a table row in place after a successful check-out — no page reload */
@@ -551,14 +599,90 @@ const StaffModule = (() => {
     if (actionCell)   actionCell.innerHTML = `<button class="btn btn-green btn-sm" onclick="checkInMember('${email}')">✓ CHECK IN</button>`;
   }
 
+  /** Small visual reward on a successful check-in/out: flashes the row,
+   *  pops the new action button, and floats a "✓ IN" / "OUT" label up
+   *  from it. Purely cosmetic — safe to no-op if the row/button is gone. */
+  function _playCheckAnimation(row, direction) {
+    if (!row) return;
+    const flashClass = direction === 'in' ? 'row-flash-in' : 'row-flash-out';
+    row.classList.remove('row-flash-in', 'row-flash-out');
+    // Force reflow so the animation restarts if the row was just flashed
+    void row.offsetWidth;
+    row.classList.add(flashClass);
+    row.addEventListener('animationend', () => row.classList.remove(flashClass), { once: true });
+
+    const actionCell = row.querySelector('.cell-action');
+    const btn = actionCell ? actionCell.querySelector('button') : null;
+    if (!btn) return;
+
+    btn.classList.add('btn-pop');
+    btn.addEventListener('animationend', () => btn.classList.remove('btn-pop'), { once: true });
+
+    const burst = document.createElement('span');
+    burst.className = 'checkin-burst' + (direction === 'out' ? ' burst-out' : '');
+    burst.textContent = direction === 'in' ? '✓ IN' : '✓ OUT';
+    actionCell.appendChild(burst);
+    burst.addEventListener('animationend', () => burst.remove(), { once: true });
+  }
+
   // ── Walk In: guest info form -> /staff/walkin -> Recent Walk-Ins table ──
 
-  /** Show/hide the coach picker when "Avail a Coach?" is toggled, and
+  /** Which walk-in plan is currently chosen — 'Daily' or 'Boxing'.
+   *  Defaults to 'Daily' since that card starts pre-selected. */
+  let _selectedWalkInPlan = 'Daily';
+
+  /** Selects a walk-in plan card (Daily / Boxing), updates the "Amount to
+   *  collect" base price, and swaps which plan's description/inclusions
+   *  are shown. Boxing's coach is included in its flat rate (not a paid
+   *  add-on), but staff still need to pick *which* coach — so Boxing hides
+   *  the "Avail a Coach?" yes/no toggle and shows the coach picker directly
+   *  and mandatorily, instead of hiding coach selection altogether. */
+  function selectWalkInPlan(card, planType, price) {
+    const grid = card.closest('.plan-grid');
+    if (grid) grid.querySelectorAll('.plan-card').forEach(c => c.classList.remove('selected'));
+    card.classList.add('selected');
+    _selectedWalkInPlan = planType;
+
+    const display = document.getElementById('walkin-amount-display');
+    if (display) display.dataset.baseAmount = String(price);
+
+    const dailyInfo = document.getElementById('walkin-plan-daily-info');
+    const boxingInfo = document.getElementById('walkin-plan-boxing-info');
+    const isDaily = planType === 'Daily';
+    if (dailyInfo) dailyInfo.style.display = isDaily ? '' : 'none';
+    if (boxingInfo) boxingInfo.style.display = isDaily ? 'none' : '';
+
+    const questionRow = document.getElementById('walkin-coach-question-row');
+    const selectRow = document.getElementById('walkin-coach-select-row');
+    const selectLabel = document.getElementById('walkin-coach-select-label');
+
+    if (isDaily) {
+      // Back to the normal optional, paid add-on flow — reset to "No"
+      // rather than carrying over Boxing's forced coach selection.
+      if (questionRow) questionRow.style.display = '';
+      const coachToggleEl = document.getElementById('walkin-wants-coach');
+      if (coachToggleEl) coachToggleEl.selectedIndex = 0;
+      if (selectRow) selectRow.style.display = 'none';
+      const coachNameEl = document.getElementById('walkin-coach-name');
+      if (coachNameEl) coachNameEl.selectedIndex = 0;
+      if (selectLabel) selectLabel.textContent = 'Select Coach';
+    } else {
+      // Boxing: no paid toggle, coach picker always shown and required.
+      if (questionRow) questionRow.style.display = 'none';
+      if (selectRow) selectRow.style.display = 'block';
+      if (selectLabel) selectLabel.textContent = 'Select Coach (included, no extra charge)';
+    }
+
+    _updateWalkInAmount();
+  }
+
+  /** Show/hide the coach picker when "Avail a Coach?" is toggled (Daily
+   *  only — Boxing's picker is always visible via selectWalkInPlan), and
    *  keep the "Amount to collect" display in sync with the flat coach fee. */
   function toggleWalkInCoach() {
     const wantsCoach = document.getElementById('walkin-wants-coach')?.value === 'yes';
-    const group = document.getElementById('walkin-coach-group');
-    if (group) group.style.display = wantsCoach ? 'block' : 'none';
+    const selectRow = document.getElementById('walkin-coach-select-row');
+    if (selectRow) selectRow.style.display = wantsCoach ? 'block' : 'none';
     if (!wantsCoach) {
       const coachEl = document.getElementById('walkin-coach-name');
       if (coachEl) coachEl.selectedIndex = 0;
@@ -566,14 +690,17 @@ const StaffModule = (() => {
     _updateWalkInAmount();
   }
 
-  /** Recompute "Amount to collect" = Daily plan price + (coach fee if opted in) */
+  /** Recompute "Amount to collect" = plan base price + (Daily's optional
+   *  paid coach fee, if opted in — never applies to Boxing, whose coach
+   *  is already included in the flat rate). */
   function _updateWalkInAmount() {
     const display = document.getElementById('walkin-amount-display');
     if (!display) return;
     const base = parseFloat(display.dataset.baseAmount || '0') || 0;
     const coachFee = parseFloat(display.dataset.coachFee || '0') || 0;
-    const wantsCoach = document.getElementById('walkin-wants-coach')?.value === 'yes';
-    const total = base + (wantsCoach ? coachFee : 0);
+    const isBoxing = _selectedWalkInPlan === 'Boxing';
+    const paidCoachOptedIn = !isBoxing && document.getElementById('walkin-wants-coach')?.value === 'yes';
+    const total = base + (paidCoachOptedIn ? coachFee : 0);
     display.textContent = '₱' + total.toLocaleString('en-PH', {
       minimumFractionDigits: total % 1 === 0 ? 0 : 2,
       maximumFractionDigits: 2
@@ -591,7 +718,10 @@ const StaffModule = (() => {
     const ext   = document.getElementById('walkin-ext')?.value || '';
     const phone = _val('walkin-phone').trim();
     const email = _val('walkin-email').trim();
-    const wantsCoach = document.getElementById('walkin-wants-coach')?.value === 'yes';
+    // Boxing always includes (and requires choosing) a coach; Daily's
+    // coach is the optional paid add-on toggle.
+    const isBoxing = _selectedWalkInPlan === 'Boxing';
+    const wantsCoach = isBoxing || document.getElementById('walkin-wants-coach')?.value === 'yes';
     const coachName  = wantsCoach ? (document.getElementById('walkin-coach-name')?.value || '') : '';
 
     if (!fname || !lname) {
@@ -603,7 +733,7 @@ const StaffModule = (() => {
       return null;
     }
     if (wantsCoach && !coachName) {
-      showToast('Please select a coach, or turn off "Avail a Coach?"', 'error');
+      showToast(isBoxing ? 'Please select a coach for the Boxing session' : 'Please select a coach, or turn off "Avail a Coach?"', 'error');
       return null;
     }
 
@@ -645,7 +775,8 @@ const StaffModule = (() => {
         phone: phone,
         email: email,
         wants_coach: wantsCoach,
-        coach_name: coachName
+        coach_name: coachName,
+        plan_type: _selectedWalkInPlan
       })
     })
       .then(res => res.json().then(data => ({ ok: res.ok, data })))
@@ -676,6 +807,7 @@ const StaffModule = (() => {
     tr.innerHTML = `
       <td>${walkin.name}</td>
       <td>${walkin.phone}</td>
+      <td>${walkin.plan || '—'}</td>
       <td>₱${walkin.amount}</td>
       <td>Cash</td>
       <td>${walkin.coach || '—'}</td>
@@ -700,12 +832,12 @@ const StaffModule = (() => {
     });
     const extEl = document.getElementById('walkin-ext');
     if (extEl) extEl.selectedIndex = 0;
-    const coachToggleEl = document.getElementById('walkin-wants-coach');
-    if (coachToggleEl) coachToggleEl.selectedIndex = 0;
-    const coachGroupEl = document.getElementById('walkin-coach-group');
-    if (coachGroupEl) coachGroupEl.style.display = 'none';
-    const coachNameEl = document.getElementById('walkin-coach-name');
-    if (coachNameEl) coachNameEl.selectedIndex = 0;
+
+    // Reset plan selection back to Daily so the next guest starts fresh —
+    // this also resets the coach toggle/picker back to their Daily defaults.
+    const dailyCard = document.getElementById('walkin-plan-daily');
+    if (dailyCard) selectWalkInPlan(dailyCard, 'Daily', parseFloat(dailyCard.dataset.price || '0'));
+
     _updateWalkInAmount();
   }
 
@@ -1095,8 +1227,8 @@ const StaffModule = (() => {
     });
   }
 
-  return { init, tab, promptRecordPayment, confirmRecordPayment, cancelRecordPayment, closePaymentRecordedModal, checkInMember, checkOutMember, filterCheckinTable, filterCheckinByStatus, filterMembersByStatus, filterMembersTable, toggleMemberIdColumn, toggleCheckinIdColumn, viewPaymentProof, onPayMemberInput, onPayStudentToggle, updatePayAmountDisplay, generateReport, submitCoachUpdate, confirmCoachUpdate, closeCoachSaveSuccessModal, toggleCoachEdit, addCoach, promptDeleteCoach, confirmDeleteCoach,
-           generateStaffAnalyticsReport, clearStaffReportDateRange, refreshStaffReport, exportStaffReportPDF, submitWalkIn, confirmWalkIn, confirmWalkInSubmit, toggleWalkInCoach };
+  return { init, tab, promptRecordPayment, confirmRecordPayment, cancelRecordPayment, closePaymentRecordedModal, checkInMember, checkOutMember, flatlineAndCheckOut, filterCheckinTable, filterCheckinByStatus, filterMembersByStatus, filterMembersTable, toggleMemberIdColumn, toggleCheckinIdColumn, viewPaymentProof, onPayMemberInput, onPayStudentToggle, updatePayAmountDisplay, generateReport, submitCoachUpdate, confirmCoachUpdate, closeCoachSaveSuccessModal, toggleCoachEdit, addCoach, promptDeleteCoach, confirmDeleteCoach,
+           generateStaffAnalyticsReport, clearStaffReportDateRange, refreshStaffReport, exportStaffReportPDF, submitWalkIn, confirmWalkIn, confirmWalkInSubmit, toggleWalkInCoach, selectWalkInPlan };
 })();
 
 
@@ -1115,12 +1247,14 @@ document.addEventListener('DOMContentLoaded', () => {
   window.closePaymentRecordedModal = () => StaffModule.closePaymentRecordedModal();
   window.checkInMember  = (idOrValue) => StaffModule.checkInMember(idOrValue);
   window.checkOutMember = (idOrValue) => StaffModule.checkOutMember(idOrValue);
+  window.flatlineAndCheckOut = (el, email) => StaffModule.flatlineAndCheckOut(el, email);
   window.filterCheckinTable   = (term) => StaffModule.filterCheckinTable(term);
   window.filterCheckinByStatus = (status, el) => StaffModule.filterCheckinByStatus(status, el);
   window.submitWalkIn         = () => StaffModule.submitWalkIn();
   window.confirmWalkIn        = () => StaffModule.confirmWalkIn();
   window.confirmWalkInSubmit  = () => StaffModule.confirmWalkInSubmit();
   window.toggleWalkInCoach    = () => StaffModule.toggleWalkInCoach();
+  window.selectWalkInPlan     = (card, planType, price) => StaffModule.selectWalkInPlan(card, planType, price);
   window.filterMembersByStatus = (status, el) => StaffModule.filterMembersByStatus(status, el);
   window.filterMembersTable    = () => StaffModule.filterMembersTable();
   window.toggleMemberIdColumn  = () => StaffModule.toggleMemberIdColumn();

@@ -21,9 +21,11 @@ const MemberModule = (() => {
   // ── State ──
   let _plansByKey     = {};   // key -> {key,name,price,duration_days,description,inclusions,image_path}
   let _servicesById   = {};   // id  -> {id,name,description,image_path,category,icon,equipment:[{name,icon}]}
+  let _equipmentById  = {};   // id  -> {id,name,description,image_path,category,icon} — used by the machine "how-to-use" guide modal
   let _exercisesById  = {};   // id  -> exercise object (populated when the weekly routine renders)
 
   let _selectedPlanKey   = null;
+  let _promoSelected      = false; // true while a promo card is availed — student discount question hides while this is true
   let _pendingPlanRequest = null; // { formData } staged between submitRenewalPayment() and confirmPlanRequest()
   let _pendingPaymentMethod = null; // { formData } staged between submitPaymentMethod() and confirmSubmitPayment()
   let _withdrawPaymentId = null;
@@ -91,6 +93,7 @@ const MemberModule = (() => {
     // Plans / services lookup tables (used by the plan/service detail modals)
     (_parseJSON('member-plans-data') || []).forEach(p => { _plansByKey[p.key] = p; });
     (_parseJSON('member-services-data') || []).forEach(s => { _servicesById[s.id] = s; });
+    (_parseJSON('member-equipment-data') || []).forEach(e => { _equipmentById[e.id] = e; });
 
     _initFitnessWizard();
     _initProgressBars();
@@ -172,6 +175,97 @@ const MemberModule = (() => {
     if (grid) grid.querySelectorAll('.plan-card').forEach(c => c.classList.remove('selected'));
     card.classList.add('selected');
     _selectedPlanKey = key;
+
+    // Picking a regular plan supersedes any availed promo — student
+    // discounts are relevant again once a real plan is in play.
+    if (_promoSelected) {
+      _promoSelected = false;
+      // Use _paintPromoSelected (not a bare classList.remove) — promo
+      // cards carry their selected look as inline styles + an injected
+      // checkmark div (see _paintPromoSelected below), so just stripping
+      // the .selected class leaves that inline highlight on screen.
+      document.querySelectorAll('#member-membership-promo .plan-card.selected')
+        .forEach(c => _paintPromoSelected(c, false));
+    }
+    _applyStudentFieldVisibility();
+  }
+
+  /** Toggle-selects a promo card. Availing a promo hides the "Are you a
+   *  student?" question below, since promo pricing doesn't stack with the
+   *  student discount. Selecting a promo also clears any chosen plan card,
+   *  since a member is availing the promo instead of a regular plan.
+   *
+   *  The selected look (border, glow, checkmark) is painted with inline
+   *  styles here rather than left entirely to CSS classes, so it renders
+   *  correctly even if the page's stylesheet is stale/cached — only this
+   *  JS file needs to be current for the highlight to show up. */
+  function selectPromo(card) {
+    const grid = card.closest('.plan-grid');
+    const wasSelected = card.classList.contains('selected');
+    if (grid) grid.querySelectorAll('.plan-card').forEach(c => _paintPromoSelected(c, false));
+
+    if (wasSelected) {
+      _promoSelected = false;
+    } else {
+      _paintPromoSelected(card, true);
+      _promoSelected = true;
+      _selectedPlanKey = null;
+      // Scoped to #choose-plan-grid specifically (not the whole panel) —
+      // #choose-plan-panel also contains this promo grid, so a panel-wide
+      // selector here would immediately strip the .selected class we just
+      // added to this very card, leaving its highlight orphaned from state
+      // and letting a plan get selected alongside it later.
+      document.querySelectorAll('#choose-plan-grid .plan-card.selected')
+        .forEach(c => c.classList.remove('selected'));
+    }
+    _applyStudentFieldVisibility();
+  }
+
+  /** Applies (or clears) the selected-promo look directly via inline
+   *  styles + a real DOM checkmark badge, independent of the stylesheet. */
+  function _paintPromoSelected(card, on) {
+    card.classList.toggle('selected', on);
+    if (on) {
+      card.style.borderColor = '#e61e25';
+      card.style.background = 'rgba(230,30,37,0.1)';
+      card.style.boxShadow = '0 12px 30px rgba(230,30,37,0.28)';
+      card.style.transform = 'translateY(-3px)';
+      if (!card.querySelector('.promo-selected-check')) {
+        const check = document.createElement('div');
+        check.className = 'promo-selected-check';
+        check.textContent = '✓';
+        check.style.cssText =
+          'position:absolute;top:14px;right:14px;width:22px;height:22px;' +
+          'border-radius:50%;background:#e61e25;color:#fff;font-size:13px;' +
+          'font-weight:700;display:flex;align-items:center;justify-content:center;' +
+          'line-height:1;pointer-events:none;';
+        card.appendChild(check);
+      }
+    } else {
+      card.style.borderColor = '';
+      card.style.background = '';
+      card.style.boxShadow = '';
+      card.style.transform = '';
+      const check = card.querySelector('.promo-selected-check');
+      if (check) check.remove();
+    }
+  }
+
+  /** Shows/hides the "Are you a student?" question (and resets it) based
+   *  on whether a promo is currently availed. */
+  function _applyStudentFieldVisibility() {
+    const studentGroup = document.getElementById('member-renew-student-group');
+    const studentSelect = document.getElementById('member-renew-student');
+    if (!studentGroup) return;
+
+    if (_promoSelected) {
+      studentGroup.style.display = 'none';
+      if (studentSelect) studentSelect.value = 'no';
+      const idGroup = document.getElementById('member-student-id-group');
+      if (idGroup) idGroup.style.display = 'none';
+    } else {
+      studentGroup.style.display = '';
+    }
   }
 
   function openPlanModal(key) {
@@ -219,11 +313,26 @@ const MemberModule = (() => {
 
   function previewStudentId(input) {
     const preview = document.getElementById('member-student-id-preview');
+    const removeBtn = document.getElementById('member-student-id-remove');
     const file = input.files && input.files[0];
     if (!preview || !file) return;
     const reader = new FileReader();
-    reader.onload = e => { preview.src = e.target.result; preview.style.display = 'block'; };
+    reader.onload = e => {
+      preview.src = e.target.result;
+      preview.style.display = 'block';
+      if (removeBtn) removeBtn.style.display = 'inline-block';
+    };
     reader.readAsDataURL(file);
+  }
+
+  /** Clears a wrongly-picked school ID file so the member can choose again. */
+  function removeStudentId() {
+    const input = document.getElementById('member-student-id');
+    const preview = document.getElementById('member-student-id-preview');
+    const removeBtn = document.getElementById('member-student-id-remove');
+    if (input) input.value = '';
+    if (preview) { preview.src = ''; preview.style.display = 'none'; }
+    if (removeBtn) removeBtn.style.display = 'none';
   }
 
   /** Validates the plan request form, then shows the invoice confirmation
@@ -368,11 +477,26 @@ const MemberModule = (() => {
 
   function previewGcashProof(input) {
     const preview = document.getElementById('payment-gcash-proof-preview');
+    const removeBtn = document.getElementById('payment-gcash-proof-remove');
     const file = input.files && input.files[0];
     if (!preview || !file) return;
     const reader = new FileReader();
-    reader.onload = e => { preview.src = e.target.result; preview.style.display = 'block'; };
+    reader.onload = e => {
+      preview.src = e.target.result;
+      preview.style.display = 'block';
+      if (removeBtn) removeBtn.style.display = 'inline-block';
+    };
     reader.readAsDataURL(file);
+  }
+
+  /** Clears a wrongly-picked GCash proof file so the member can choose again. */
+  function removeGcashProof() {
+    const input = document.getElementById('payment-gcash-proof');
+    const preview = document.getElementById('payment-gcash-proof-preview');
+    const removeBtn = document.getElementById('payment-gcash-proof-remove');
+    if (input) input.value = '';
+    if (preview) { preview.src = ''; preview.style.display = 'none'; }
+    if (removeBtn) removeBtn.style.display = 'none';
   }
 
   function submitPaymentMethod() {
@@ -509,6 +633,42 @@ const MemberModule = (() => {
     }
 
     openModal('service-modal');
+  }
+
+  /* ════════════════════════════════════════════════
+     GYM MACHINES/EQUIPMENT — how-to-use guide modal
+  ════════════════════════════════════════════════ */
+
+  function openEquipmentModal(id) {
+    const eq = _equipmentById[id];
+    if (!eq) return;
+
+    const imgWrap = document.getElementById('equipment-modal-image-wrap');
+    const img     = document.getElementById('equipment-modal-image');
+    const iconEl  = document.getElementById('equipment-modal-icon');
+
+    if (eq.image_path) {
+      img.src = eq.image_path;
+      img.alt = eq.name || 'Equipment guide photo';
+      imgWrap.style.display = '';
+      iconEl.style.display = 'none';
+    } else {
+      imgWrap.style.display = 'none';
+      iconEl.textContent = eq.icon || '🏋️';
+      iconEl.style.display = '';
+    }
+
+    document.getElementById('equipment-modal-title').textContent = (eq.name || 'EQUIPMENT').toUpperCase();
+    document.getElementById('equipment-modal-category').textContent = eq.category || '';
+
+    const descEl = document.getElementById('equipment-modal-description');
+    if (descEl) {
+      descEl.textContent = eq.description
+        ? eq.description
+        : 'No usage guide has been added for this equipment yet.';
+    }
+
+    openModal('equipment-guide-modal');
   }
 
   function openExerciseInstructionsModal(exerciseId) {
@@ -876,14 +1036,14 @@ const MemberModule = (() => {
   }
 
   return {
-    init, tab, selectPlan, openPlanModal, selectPlanFromModal,
-    toggleStudentIdField, previewStudentId, submitRenewalPayment,
+    init, tab, selectPlan, selectPromo, openPlanModal, selectPlanFromModal,
+    toggleStudentIdField, previewStudentId, removeStudentId, submitRenewalPayment,
     cancelPlanRequest, confirmPlanRequest, closePlanSuccessModal,
     closePlanApprovedModal, goToPaymentFromApproval, closePaymentApprovedModal,
     closePlanDeclinedModal, withdrawPlanRequest, cancelWithdrawRequest, confirmWithdrawRequest,
-    togglePaymentProofField, previewGcashProof, submitPaymentMethod,
+    togglePaymentProofField, previewGcashProof, removeGcashProof, submitPaymentMethod,
     cancelSubmitPayment, confirmSubmitPayment, closePaymentSubmitSuccessModal,
-    changeAttendanceMonth, openServiceModal, openExerciseInstructionsModal,
+    changeAttendanceMonth, openServiceModal, openEquipmentModal, openExerciseInstructionsModal,
     submitFitnessStep1, selectFitnessGoal, fitnessWizardBack, submitFitnessStep2,
     retryFitnessCalculation, fitnessWizardEditGoal, switchFitnessPlanTab,
   };
@@ -905,10 +1065,12 @@ document.addEventListener('DOMContentLoaded', () => {
   // surfaces that problem in the console instead of hiding it.
   window.memberTab               = (tabName, el) => MemberModule.tab(tabName, el);
   window.selectPlan              = (card, key) => MemberModule.selectPlan(card, key);
+  window.selectPromo             = (card) => MemberModule.selectPromo(card);
   window.openPlanModal           = (key) => MemberModule.openPlanModal(key);
   window.selectPlanFromModal     = () => MemberModule.selectPlanFromModal();
   window.toggleStudentIdField    = (el) => MemberModule.toggleStudentIdField(el);
   window.previewStudentId        = (input) => MemberModule.previewStudentId(input);
+  window.removeStudentId         = () => MemberModule.removeStudentId();
   window.submitRenewalPayment    = () => MemberModule.submitRenewalPayment();
   window.cancelPlanRequest       = () => MemberModule.cancelPlanRequest();
   window.confirmPlanRequest      = () => MemberModule.confirmPlanRequest();
@@ -922,12 +1084,14 @@ document.addEventListener('DOMContentLoaded', () => {
   window.confirmWithdrawRequest  = () => MemberModule.confirmWithdrawRequest();
   window.togglePaymentProofField = (el) => MemberModule.togglePaymentProofField(el);
   window.previewGcashProof       = (input) => MemberModule.previewGcashProof(input);
+  window.removeGcashProof        = () => MemberModule.removeGcashProof();
   window.submitPaymentMethod     = () => MemberModule.submitPaymentMethod();
   window.cancelSubmitPayment     = () => MemberModule.cancelSubmitPayment();
   window.confirmSubmitPayment    = () => MemberModule.confirmSubmitPayment();
   window.closePaymentSubmitSuccessModal = () => MemberModule.closePaymentSubmitSuccessModal();
   window.changeAttendanceMonth   = (delta) => MemberModule.changeAttendanceMonth(delta);
   window.openServiceModal        = (id) => MemberModule.openServiceModal(id);
+  window.openEquipmentModal      = (id) => MemberModule.openEquipmentModal(id);
   window.submitFitnessStep1      = () => MemberModule.submitFitnessStep1();
   window.selectFitnessGoal       = (card) => MemberModule.selectFitnessGoal(card);
   window.fitnessWizardBack       = () => MemberModule.fitnessWizardBack();

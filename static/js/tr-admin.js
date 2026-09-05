@@ -566,12 +566,17 @@ const AdminModule = (() => {
     return expiry;
   }
 
-  /** Show the uploaded payment proof (image or PDF) in a modal before approving/rejecting */
-  function viewPaymentProof(url) {
+  /** Show the uploaded payment proof (image or PDF) in a modal before approving/rejecting.
+   *  `title` lets callers relabel the modal — e.g. "School ID Proof" vs the
+   *  default "Payment Proof" — so the two don't look identical when opened. */
+  function viewPaymentProof(url, title) {
     const img     = document.getElementById('proof-modal-img');
     const pdfNote = document.getElementById('proof-modal-pdf-note');
     const pdfLink = document.getElementById('proof-modal-pdf-link');
+    const titleEl = document.getElementById('proof-modal-title');
     if (!img || !pdfNote || !pdfLink) return;
+
+    if (titleEl) titleEl.textContent = (title || 'Payment Proof').toUpperCase();
 
     const isPdf = /\.pdf($|\?)/i.test(url);
 

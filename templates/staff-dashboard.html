@@ -259,22 +259,41 @@
         <div class="panel-header"><div class="panel-title">Select a Plan</div></div>
         <div class="panel-body">
           {% if daily_plan %}
-          <div class="plan-grid" style="grid-template-columns:1fr;max-width:280px;">
-            <div class="plan-card selected">
+          <div class="plan-grid" style="grid-template-columns:1fr 1fr;max-width:560px;">
+            <div class="plan-card selected" id="walkin-plan-daily" data-price="{{ daily_plan.price }}"
+                 onclick="selectWalkInPlan(this,'Daily',{{ daily_plan.price }})">
               <div class="plan-name">{{ daily_plan.name }}</div>
               <div class="plan-price">₱{{ '{:,.0f}'.format(daily_plan.price) if daily_plan.price == daily_plan.price|int else '{:,.2f}'.format(daily_plan.price) }}</div>
             </div>
+            <div class="plan-card" id="walkin-plan-boxing" data-price="{{ WALKIN_BOXING_FEE }}"
+                 onclick="selectWalkInPlan(this,'Boxing',{{ WALKIN_BOXING_FEE }})">
+              <div class="plan-name">Boxing</div>
+              <div class="plan-price">₱{{ '{:,.0f}'.format(WALKIN_BOXING_FEE) if WALKIN_BOXING_FEE == WALKIN_BOXING_FEE|int else '{:,.2f}'.format(WALKIN_BOXING_FEE) }}</div>
+            </div>
           </div>
-          {% if daily_plan.description %}
-          <div style="margin-top:14px;color:var(--muted);font-size:15px;line-height:1.6;">{{ daily_plan.description }}</div>
-          {% endif %}
-          {% if daily_plan.inclusions_list %}
-          <ul class="plan-features" style="margin-top:14px;">
-            {% for item in daily_plan.inclusions_list %}
-            <li>{{ item }}</li>
-            {% endfor %}
-          </ul>
-          {% endif %}
+          <div id="walkin-plan-daily-info">
+            <div style="margin-top:14px;color:var(--muted);font-size:15px;line-height:1.6;">
+              {% if daily_plan.description %}{{ daily_plan.description }}{% endif %}
+            </div>
+            {% if daily_plan.inclusions_list %}
+            <ul class="plan-features" style="margin-top:14px;">
+              {% for item in daily_plan.inclusions_list %}
+              <li>{{ item }}</li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+          </div>
+          <div id="walkin-plan-boxing-info" style="display:none;">
+            <div style="margin-top:14px;color:var(--muted);font-size:15px;line-height:1.6;">
+              Good for one day only — a single walk-in session, not a recurring membership.
+            </div>
+            <ul class="plan-features" style="margin-top:14px;">
+              <li>One day access only</li>
+              <li>Includes a boxing coach for the session</li>
+              <li>Shower room and locker access</li>
+              <li>Learn boxing skills and technique fundamentals</li>
+            </ul>
+          </div>
           {% else %}
           <div style="text-align:center;color:var(--muted);padding:30px;">
             No "Daily" plan is set up yet. Add one from Admin → Plans to enable walk-ins.
@@ -337,7 +356,7 @@
               Walk-in entries are Cash only, collected and confirmed on the spot.
             </div>
           </div>
-          <div class="form-row">
+          <div class="form-row" id="walkin-coach-question-row">
             <div class="form-group">
               <label class="form-label">Avail a Coach?</label>
               <select class="form-input" id="walkin-wants-coach" onchange="toggleWalkInCoach()" style="max-width:320px;">
@@ -345,8 +364,10 @@
                 <option value="yes">Yes (+₱{{ '{:,.0f}'.format(WALKIN_COACH_FEE) }})</option>
               </select>
             </div>
-            <div class="form-group" id="walkin-coach-group" style="display:none;">
-              <label class="form-label">Select Coach</label>
+          </div>
+          <div class="form-row" id="walkin-coach-select-row" style="display:none;">
+            <div class="form-group">
+              <label class="form-label" id="walkin-coach-select-label">Select Coach</label>
               <select class="form-input" id="walkin-coach-name" style="max-width:320px;">
                 <option value="">Select a coach</option>
                 {% for c in coaches %}
@@ -370,19 +391,20 @@
           <div style="font-size:13px;color:var(--muted);">Today's total: <strong style="color:var(--white);">₱{{ walkin_total_today }}</strong></div>
         </div>
         <table class="data-table" id="walkin-table">
-          <thead><tr><th>Name</th><th>Phone</th><th>Amount</th><th>Method</th><th>Coach</th><th>Time</th></tr></thead>
+          <thead><tr><th>Name</th><th>Phone</th><th>Plan</th><th>Amount</th><th>Method</th><th>Coach</th><th>Time</th></tr></thead>
           <tbody id="walkin-table-body">
             {% for w in walkins_today %}
             <tr>
               <td>{{ w.name }}</td>
               <td>{{ w.phone }}</td>
+              <td>{{ w.plan }}</td>
               <td>₱{{ w.amount }}</td>
               <td>{{ w.method }}</td>
               <td>{{ w.coach }}</td>
               <td>{{ w.time }}</td>
             </tr>
             {% else %}
-            <tr id="walkin-empty-row"><td colspan="6" style="text-align:center;color:var(--muted);">No walk-ins recorded yet today.</td></tr>
+            <tr id="walkin-empty-row"><td colspan="7" style="text-align:center;color:var(--muted);">No walk-ins recorded yet today.</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -866,6 +888,8 @@
             <button class="btn btn-red" onclick="ContentManager.openForm(document.querySelector('.content-subtab.active').dataset.contentType, null)">+ ADD NEW</button>
           </div>
 
+          <div class="content-category-filters" id="content-category-filters" style="display:none;"></div>
+
           <div class="content-grid" id="content-grid-plans"></div>
           <div class="content-grid" id="content-grid-services" style="display:none;"></div>
           <div class="content-grid" id="content-grid-facilities" style="display:none;"></div>
@@ -885,7 +909,7 @@
     <button class="modal-close" onclick="closeModal('view-proof-modal')">✕</button>
     <div class="modal-title" id="proof-modal-title">PAYMENT PROOF</div>
     <div id="proof-modal-body">
-      <img id="proof-modal-img" src="" alt="Payment proof" style="display:none;max-width:100%;max-height:60vh;border-radius:6px;border:1px solid var(--border);">
+      <img id="proof-modal-img" src="" alt="Payment proof" style="display:none;max-width:100%;max-height:60vh;margin:0 auto;border-radius:6px;border:1px solid var(--border);">
       <div id="proof-modal-pdf-note" style="display:none;">
         <p style="color:var(--muted);font-size:15px;margin-bottom:16px;">This proof was uploaded as a PDF file.</p>
         <a id="proof-modal-pdf-link" href="#" target="_blank" class="btn btn-red" style="display:inline-block;">OPEN PDF</a>

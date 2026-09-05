@@ -214,7 +214,7 @@
               </div>
             </div>
             {% endif %}
-            <div class="plan-grid">
+            <div class="plan-grid" id="choose-plan-grid">
               {% for p in content_plans %}
               <div class="plan-card{% if p.name == 'Monthly' %} plan-card-popular{% endif %}" onclick="selectPlan(this,'{{ p.name|lower }}')">
                 {% if p.name == 'Monthly' %}<div class="plan-card-tag">MOST POPULAR</div>{% endif %}
@@ -229,6 +229,39 @@
             </div>
             <script id="member-plans-data" type="application/json">{{ plans_data|tojson }}</script>
 
+            <!-- Promo (merged into My Membership, shown before the plan request form) -->
+            <div id="member-membership-promo" style="margin-top:20px;padding-top:20px;border-top:1px solid var(--border);">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                <span style="font-size:18px;">🎁</span>
+                <div class="form-label" style="margin-bottom:0;">Promo</div>
+              </div>
+              <div style="font-size:14px;color:var(--muted);margin-bottom:16px;">
+                Current deals and discounts for Power Gym members
+              </div>
+              {% set default_promos = [
+                {'title': '16 Sessions', 'price': 3500, 'period': 'Limited-time offer'},
+                {'title': 'Boxing', 'price': 4000, 'period': 'Limited-time offer'}
+              ] %}
+              {% set promo_list = promos if promos else default_promos %}
+              <div class="plan-grid">
+                {% for promo in promo_list %}
+                <div class="plan-card plan-card-popular" onclick="selectPromo(this)">
+                  <div class="plan-card-tag">PROMO</div>
+                  <div class="plan-name">{{ promo.title }}</div>
+                  <div class="plan-price">₱{{ '{:,.0f}'.format(promo.price) if promo.price == promo.price|int else '{:,.2f}'.format(promo.price) }}</div>
+                  <div class="plan-period">{{ promo.period if promo.period else 'Limited-time offer' }}</div>
+                  <div class="plan-view-link"{% if promo.description %} title="{{ promo.description }}"{% endif %}>👁 View Details</div>
+                  {% if promo.valid_until %}<div style="font-size:12px;color:var(--muted);margin-top:10px;">Valid until {{ promo.valid_until }}</div>{% endif %}
+                </div>
+                {% else %}
+                <div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:20px;">No promos available right now. Check back soon.</div>
+                {% endfor %}
+              </div>
+              <div style="font-size:13px;color:var(--muted);margin-top:12px;">
+                Tap a promo to avail it — student discounts don't apply to promo pricing, so that question is hidden below when a promo is selected.
+              </div>
+            </div>
+
             <!-- Plan request -->
             <div class="proof-upload-box">
               <div class="form-group">
@@ -238,7 +271,7 @@
                   Pick today to start right away, or a future date if you'd rather begin later.
                 </div>
               </div>
-              <div class="form-group">
+              <div class="form-group" id="member-renew-student-group">
                 <label class="form-label">Are you a student?</label>
                 <select class="form-input" id="member-renew-student" onchange="toggleStudentIdField(this)">
                   <option value="no">No</option>
@@ -252,7 +285,11 @@
                 <div style="font-size:14px;color:var(--muted);margin-top:4px;">
                   Required to verify student status. Admin will confirm before your plan is approved.
                 </div>
-                <img id="member-student-id-preview" class="proof-preview" alt="School ID preview" style="display:none;">
+                <div class="proof-preview-wrap">
+                  <img id="member-student-id-preview" class="proof-preview" alt="School ID preview" style="display:none;">
+                  <button type="button" id="member-student-id-remove" class="proof-remove-btn"
+                          style="display:none;" onclick="removeStudentId()">✕ Remove &amp; replace</button>
+                </div>
               </div>
               <div style="font-size:14px;color:var(--muted);margin-top:4px;margin-bottom:4px;line-height:1.6;">
                 Submitting sends this plan as a request. Once submitted, go to the
@@ -378,7 +415,11 @@
                 Upload a screenshot of your GCash payment confirmation. Admin will verify it
                 before your membership is activated.
               </div>
-              <img id="payment-gcash-proof-preview" class="proof-preview" alt="GCash proof preview" style="display:none;">
+              <div class="proof-preview-wrap">
+                <img id="payment-gcash-proof-preview" class="proof-preview" alt="GCash proof preview" style="display:none;">
+                <button type="button" id="payment-gcash-proof-remove" class="proof-remove-btn"
+                        style="display:none;" onclick="removeGcashProof()">✕ Remove &amp; replace</button>
+              </div>
             </div>
             <div style="font-size:13px;color:var(--muted);margin-top:4px;margin-bottom:4px;line-height:1.6;">
               If paying by Cash, settle payment at the front desk with staff. If paying by GCash,
@@ -802,6 +843,7 @@
         {% endfor %}
       </div>
       <script id="member-services-data" type="application/json">{{ services_data|tojson }}</script>
+      <script id="member-equipment-data" type="application/json">{{ equipment_data|tojson }}</script>
 
       <div class="panel" style="margin-top:20px;">
         <div class="panel-header"><div class="panel-title">Gym Machines and Equipment</div></div>
@@ -811,7 +853,7 @@
             <div class="equip-category-title"><span class="equip-category-icon">{{ category_icon }}</span> {{ category }}</div>
             <div class="equip-grid">
               {% for eq in items %}
-              <div class="equip-item"><span class="equip-item-icon">{{ eq.icon or '🏋️' }}</span> {{ eq.name }}</div>
+              <div class="equip-item" style="cursor:pointer;" title="Tap for a how-to-use guide" onclick="openEquipmentModal({{ eq.id }})"><span class="equip-item-icon">{{ eq.icon or '🏋️' }}</span> {{ eq.name }}</div>
               {% endfor %}
             </div>
           </div>
@@ -931,6 +973,22 @@
     <div style="font-size:15px;color:var(--muted);text-align:center;margin-bottom:18px;" id="service-modal-subtitle"></div>
     <div class="panel-title" id="service-modal-list-title" style="margin-bottom:4px;">What's included</div>
     <ul class="plan-features" id="service-modal-list"></ul>
+  </div>
+</div>
+
+<div class="modal-overlay" id="equipment-guide-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('equipment-guide-modal')">✕</button>
+    <div id="equipment-modal-image-wrap" style="display:none;width:100%;aspect-ratio:4/3;border-radius:10px;overflow:hidden;margin-bottom:14px;background:rgba(255,255,255,0.04);">
+      <img id="equipment-modal-image" src="" alt="" style="width:100%;height:100%;object-fit:cover;display:block;">
+    </div>
+    <div id="equipment-modal-icon" style="display:none;font-size:45px;text-align:center;margin-bottom:6px;"></div>
+    <div class="modal-title" style="text-align:center;" id="equipment-modal-title">EQUIPMENT</div>
+    <div style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:14px;" id="equipment-modal-category"></div>
+    <div class="panel-title" style="margin-bottom:4px;">How to use this equipment</div>
+    <div style="font-size:15px;color:var(--white);line-height:1.7;white-space:pre-line;" id="equipment-modal-description">
+      No usage guide has been added for this equipment yet.
+    </div>
   </div>
 </div>
 

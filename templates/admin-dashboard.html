@@ -124,7 +124,7 @@
               </div>
               <div style="display:flex;gap:8px;">
                 {% if p.is_student and p.student_id_image_path %}
-                <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl)">🎓 View School ID</button>
+                <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof')">🎓 View School ID</button>
                 {% endif %}
                 {% if p.stage == 'approval' %}
                 <span class="badge badge-muted" style="align-self:center;">⏳ Awaiting staff approval</span>
@@ -251,7 +251,7 @@
               <button class="btn btn-sm btn-outline" data-proof-url="{{ url_for('static', filename=p.proof_image_path) }}" onclick="viewPaymentProof(this.dataset.proofUrl)">👁 View Proof</button>
               {% endif %}
               {% if p.is_student and p.student_id_image_path %}
-              <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl)">🎓 View School ID</button>
+              <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof')">🎓 View School ID</button>
               {% endif %}
               {% if p.stage == 'approval' %}
               <span class="badge badge-muted" style="align-self:center;">⏳ Awaiting staff approval</span>
@@ -681,6 +681,8 @@
             <button class="btn btn-red" onclick="ContentManager.openForm(document.querySelector('.content-subtab.active').dataset.contentType, null)">+ ADD NEW</button>
           </div>
 
+          <div class="content-category-filters" id="content-category-filters" style="display:none;"></div>
+
           <div class="content-grid" id="content-grid-plans"></div>
           <div class="content-grid" id="content-grid-services" style="display:none;"></div>
           <div class="content-grid" id="content-grid-facilities" style="display:none;"></div>
@@ -714,9 +716,9 @@
 <div class="modal-overlay" id="view-proof-modal">
   <div class="modal" style="max-width:520px;text-align:center;">
     <button class="modal-close" onclick="closeModal('view-proof-modal')">✕</button>
-    <div class="modal-title">PAYMENT PROOF</div>
+    <div class="modal-title" id="proof-modal-title">PAYMENT PROOF</div>
     <div id="proof-modal-body">
-      <img id="proof-modal-img" src="" alt="Payment proof" style="display:none;max-width:100%;max-height:60vh;border-radius:6px;border:1px solid var(--border);">
+      <img id="proof-modal-img" src="" alt="Payment proof" style="display:none;max-width:100%;max-height:60vh;margin:0 auto;border-radius:6px;border:1px solid var(--border);">
       <div id="proof-modal-pdf-note" style="display:none;">
         <p style="color:var(--muted);font-size:15px;margin-bottom:16px;">This proof was uploaded as a PDF file.</p>
         <a id="proof-modal-pdf-link" href="#" target="_blank" class="btn btn-red" style="display:inline-block;">OPEN PDF</a>

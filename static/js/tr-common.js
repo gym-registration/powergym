@@ -738,6 +738,7 @@ const ContentManager = (() => {
   // Which value of is_facility each tab represents, and therefore which
   // value gets saved automatically when adding/editing from that tab.
   const IS_FACILITY_TYPE = { facilities: true, machines: false };
+  const DEFAULT_CATEGORY_JS = 'General'; // mirrors app.py's DEFAULT_CATEGORY, used when an item has no category set
 
   let currentType = 'plans';
   // cache.equipment holds the single raw list backing both the
@@ -746,6 +747,9 @@ const ContentManager = (() => {
   let cache = { plans: null, services: null, equipment: null };
   let pendingDelete = null; // { type, id }
   let loaded = false;
+  // Category filter for the "machines" tab only (e.g. "Free Weights",
+  // "Cardio Equipment") — 'ALL' shows every machine regardless of category.
+  let categoryFilter = 'ALL';
 
   function ensureLoaded() {
     if (loaded) return;
@@ -755,6 +759,7 @@ const ContentManager = (() => {
 
   function showType(type) {
     currentType = type;
+    categoryFilter = 'ALL';
     document.querySelectorAll('.content-subtab').forEach(el => {
       el.classList.toggle('active', el.dataset.contentType === type);
     });
@@ -762,9 +767,14 @@ const ContentManager = (() => {
       const grid = document.getElementById('content-grid-' + t);
       if (grid) grid.style.display = (t === type) ? 'grid' : 'none';
     });
+    const filterBar = document.getElementById('content-category-filters');
+    if (filterBar) filterBar.style.display = (type === 'machines') ? 'flex' : 'none';
     if (type === 'facilities' || type === 'machines') {
       if (cache.equipment === null) _fetchEquipment();
-      else _renderGrid(type, _filterEquipment(type));
+      else {
+        _renderGrid(type, _filterEquipment(type));
+        if (type === 'machines') _renderCategoryFilters();
+      }
     } else if (cache[type] === null) {
       _fetchType(type);
     } else {
@@ -772,8 +782,41 @@ const ContentManager = (() => {
     }
   }
 
+  // The unfiltered set of real machines/equipment (excludes facility-zone
+  // photos and any category filter) — used both to render the grid and to
+  // derive the list of distinct categories for the filter chips.
+  function _machineList() {
+    return (cache.equipment || []).filter(it => !it.is_facility);
+  }
+
   function _filterEquipment(type) {
-    return (cache.equipment || []).filter(it => !!it.is_facility === IS_FACILITY_TYPE[type]);
+    const base = (cache.equipment || []).filter(it => !!it.is_facility === IS_FACILITY_TYPE[type]);
+    if (type === 'machines' && categoryFilter !== 'ALL') {
+      return base.filter(it => (it.category || DEFAULT_CATEGORY_JS) === categoryFilter);
+    }
+    return base;
+  }
+
+  function _renderCategoryFilters() {
+    const bar = document.getElementById('content-category-filters');
+    if (!bar) return;
+    const categories = [];
+    _machineList().forEach(it => {
+      const cat = it.category || DEFAULT_CATEGORY_JS;
+      if (!categories.includes(cat)) categories.push(cat);
+    });
+    if (!categories.length) { bar.innerHTML = ''; return; }
+    const chips = ['ALL', ...categories];
+    bar.innerHTML = chips.map(cat => `
+      <button type="button" class="content-category-chip${cat === categoryFilter ? ' active' : ''}"
+              onclick="ContentManager.filterByCategory('${cat.replace(/'/g, "\\'")}')">${_esc(cat === 'ALL' ? 'All' : cat)}</button>
+    `).join('');
+  }
+
+  function filterByCategory(cat) {
+    categoryFilter = cat;
+    _renderCategoryFilters();
+    _renderGrid('machines', _filterEquipment('machines'));
   }
 
   function _fetchType(type) {
@@ -799,6 +842,7 @@ const ContentManager = (() => {
         cache.equipment = data.items;
         if (currentType === 'facilities' || currentType === 'machines') {
           _renderGrid(currentType, _filterEquipment(currentType));
+          if (currentType === 'machines') _renderCategoryFilters();
         }
       })
       .catch(() => showToast('Could not reach the server.', 'error'));
@@ -1219,7 +1263,7 @@ const ContentManager = (() => {
       .finally(() => { pendingDelete = null; closeModal('content-delete-modal'); });
   }
 
-  return { ensureLoaded, showType, openForm, previewImage, pickIcon, submit, confirmDelete, cancelDelete, performDelete, refresh, onNameSelectChange, backToNameList };
+  return { ensureLoaded, showType, openForm, previewImage, pickIcon, submit, confirmDelete, cancelDelete, performDelete, refresh, onNameSelectChange, backToNameList, filterByCategory };
 })();
 
 

@@ -419,6 +419,77 @@ body::before {
 #choose-plan-panel .plan-view-link { font-size: 15px; margin-top: auto; cursor: pointer; }
 #choose-plan-panel .form-label { font-size: 16px; }
 #choose-plan-panel .form-input { font-size: 17px; padding: 11px 14px; }
+
+/* ── Promo panel (member dashboard, inside My Membership) — same card treatment as "Choose a Plan" ── */
+#member-membership-promo .plan-grid {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 16px;
+}
+#member-membership-promo .plan-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 22px 20px;
+  background: linear-gradient(160deg, rgba(255,255,255,0.035), rgba(255,255,255,0) 65%);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+}
+#member-membership-promo .plan-card.selected {
+  border-color: var(--red);
+  background: rgba(230,30,37,0.1);
+  box-shadow: 0 12px 30px rgba(230,30,37,0.28);
+  transform: translateY(-3px);
+}
+#member-membership-promo .plan-card.selected::before { opacity: 1; }
+#member-membership-promo .plan-card.selected::after {
+  content: '✓';
+  position: absolute;
+  top: 14px; right: 14px;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--red);
+  color: var(--white);
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#member-membership-promo .plan-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 4px;
+  background: var(--red);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+#member-membership-promo .plan-card:hover {
+  transform: translateY(-5px);
+  border-color: var(--red);
+  background: rgba(230,30,37,0.07);
+  box-shadow: 0 12px 26px rgba(230,30,37,0.18);
+}
+#member-membership-promo .plan-card:hover::before { opacity: 0.65; }
+#member-membership-promo .plan-card-popular { border-color: rgba(230,30,37,0.35); }
+#member-membership-promo .plan-card-tag {
+  align-self: flex-start;
+  background: var(--red);
+  color: var(--white);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  margin-bottom: 10px;
+}
+#member-membership-promo .plan-name { font-size: 20px; letter-spacing: 1.2px; margin-bottom: 4px; }
+#member-membership-promo .plan-price { font-size: 38px; }
+#member-membership-promo .plan-period { font-size: 15px; color: var(--muted); margin-bottom: 10px; }
+#member-membership-promo .plan-view-link { font-size: 15px; margin-top: auto; cursor: pointer; }
+
 #choose-plan-panel .btn { font-size: 16px; }
 #choose-plan-panel .gate-banner-title { font-size: 17.5px; }
 #choose-plan-panel .gate-banner-text { font-size: 15.5px; }
@@ -738,6 +809,138 @@ body::before {
 .data-table td { padding: 14px 16px; font-size: 15px; border-bottom: 1px solid rgba(255,255,255,0.04); }
 .data-table tr:last-child td { border-bottom: none; }
 .data-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+/* Check-in / check-out success flash on the affected row */
+.row-flash-in td, .row-flash-out td {
+  animation: rowFlash 1s ease-out;
+}
+.row-flash-in td { --flash-color: rgba(34,197,94,0.22); }
+.row-flash-out td { --flash-color: rgba(230,30,37,0.16); }
+@keyframes rowFlash {
+  0%   { background: var(--flash-color); }
+  100% { background: transparent; }
+}
+
+/* Little pop animation on the Check-in/Check-out action button itself */
+.btn-pop { animation: btnPop 0.4s ease; }
+@keyframes btnPop {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.16); }
+  60%  { transform: scale(0.94); }
+  100% { transform: scale(1); }
+}
+
+/* Little "✓ IN" / "OUT" burst that floats up from the button on success */
+.checkin-burst {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  pointer-events: none;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--green);
+  white-space: nowrap;
+  animation: checkinBurst 0.75s ease-out forwards;
+  z-index: 5;
+}
+.checkin-burst.burst-out { color: var(--red); }
+@keyframes checkinBurst {
+  0%   { opacity: 0; transform: translate(-50%, 0) scale(0.6); }
+  25%  { opacity: 1; transform: translate(-50%, -10px) scale(1.05); }
+  100% { opacity: 0; transform: translate(-50%, -34px) scale(1.1); }
+}
+.cell-action { position: relative; }
+
+/* ECG waveform indicator — replaces the action button right after a
+   Check-in. Tapping it plays a red flatline, then auto-checks the
+   member out (see flatlineAndCheckOut in tr-staff.js). */
+.btn-ecg {
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  padding: 6px 14px;
+  min-width: 92px;
+  justify-content: center;
+}
+.btn-ecg:hover {
+  background: rgba(34, 197, 94, 0.2);
+  border-color: rgba(34, 197, 94, 0.55);
+  box-shadow: 0 0 14px rgba(0, 230, 118, 0.25);
+}
+/* transitional state while the flatline plays, just before checkout fires */
+.btn-ecg-dying {
+  background: rgba(230, 30, 37, 0.12);
+  border: 1px solid rgba(230, 30, 37, 0.4);
+  padding: 6px 14px;
+  min-width: 92px;
+  justify-content: center;
+  cursor: default;
+}
+/* once the flatline finishes and "CHECK OUT" is showing, it's clickable again */
+.btn-ecg-dying.ecg-ready { cursor: pointer; }
+.btn-ecg-dying.ecg-ready:hover {
+  background: rgba(230, 30, 37, 0.22);
+  border-color: rgba(230, 30, 37, 0.6);
+  box-shadow: 0 0 14px rgba(230, 30, 37, 0.3);
+}
+.ecg-svg {
+  display: block;
+  width: 58px;
+  height: 20px;
+  color: var(--green);
+  overflow: visible;
+  filter: drop-shadow(0 0 3px rgba(0, 230, 118, 0.5));
+}
+.ecg-path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 260;
+  stroke-dashoffset: 260;
+  animation: ecgDraw 1.8s linear infinite;
+}
+@keyframes ecgDraw {
+  0%   { stroke-dashoffset: 260; }
+  85%  { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: 0; }
+}
+/* the red flatline drawn once when staff taps the waveform to check out */
+.ecg-flatline-path {
+  fill: none;
+  stroke: var(--red);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-dasharray: 120;
+  stroke-dashoffset: 120;
+  animation: flatlineDraw 0.55s ease-out forwards;
+  filter: drop-shadow(0 0 5px rgba(230, 30, 37, 0.65));
+}
+@keyframes flatlineDraw {
+  to { stroke-dashoffset: 0; }
+}
+/* the "CHECK OUT" label that pops up right after the flatline finishes,
+   just before the automatic check-out request fires */
+.ecg-checkout-label {
+  display: inline-block;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: var(--red);
+  text-shadow: 0 0 8px rgba(230, 30, 37, 0.5);
+  animation: checkoutLabelPop 0.3s ease;
+}
+@keyframes checkoutLabelPop {
+  from { opacity: 0; transform: scale(0.55); }
+  60%  { opacity: 1; transform: scale(1.12); }
+  100% { opacity: 1; transform: scale(1); }
+}
+/* small pop when the indicator first appears, and when it's swapped out */
+.btn-ecg.ecg-enter { animation: btnPop 0.4s ease; }
+
 
 /* Badges */
 .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
@@ -1121,8 +1324,22 @@ select.form-input option:focus {
   border-color: rgba(142, 184, 255, 0.35);
   box-shadow: 0 0 14px rgba(61, 125, 212, 0.22);
 }
-.proof-preview { width: 170px; max-width: 100%; border: 1px solid var(--border); border-radius: 6px; object-fit: cover; }
+.proof-preview { width: 170px; max-width: 100%; border: 1px solid var(--border); border-radius: 6px; object-fit: cover; display: block; }
 .proof-upload-box { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.proof-preview-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 6px; }
+.proof-remove-btn {
+  background: transparent;
+  border: 1px solid var(--red);
+  color: var(--red);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.proof-remove-btn:hover { background: var(--red); color: var(--white); }
 
 .upload-zone {
   border: 2px dashed var(--border);
@@ -1620,6 +1837,18 @@ body.home-page { overflow-x: hidden; }
   gap: 12px; margin-bottom: 18px; flex-wrap: wrap;
 }
 .content-toolbar .content-toolbar-hint { font-size: 14.5px; color: var(--muted); }
+
+.content-category-filters {
+  display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap;
+}
+.content-category-chip {
+  padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600;
+  letter-spacing: 0.3px; text-transform: uppercase; cursor: pointer;
+  border: 1px solid var(--border); color: var(--muted); background: transparent;
+  transition: all .18s;
+}
+.content-category-chip:hover { color: var(--white); border-color: var(--muted); }
+.content-category-chip.active { background: var(--white); border-color: var(--white); color: #0a0a0a; }
 
 .content-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px;

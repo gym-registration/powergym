@@ -112,6 +112,13 @@ STUDENT_PLAN_PRICES = {
 # one-off day pass rather than an ongoing coaching arrangement.
 WALKIN_COACH_FEE = 350.0
 
+# Flat price for a walk-in Boxing session — a second walk-in option
+# alongside the Daily plan. Unlike Daily, this isn't backed by a
+# MembershipPlan row (Boxing here is a per-visit rate, not a plan
+# members subscribe to), so it's kept as a simple constant like the
+# coach fee above.
+WALKIN_BOXING_FEE = 350.0
+
 
 def _plan_amount(plan, is_student):
     """The amount to actually charge for a plan, applying the student
@@ -476,6 +483,7 @@ class WalkIn(db.Model):
     phone             = db.Column(db.String(15), nullable=True)
     email             = db.Column(db.String(120), nullable=True)
     amount            = db.Column(db.Numeric(10, 2), nullable=False)
+    plan_type         = db.Column(db.String(20), nullable=False, default='Daily')
     method            = db.Column(db.String(32), nullable=False, default='Cash')
     wants_coach       = db.Column(db.Boolean, nullable=False, default=False)
     coach_name        = db.Column(db.String(60), nullable=True)
@@ -3172,6 +3180,16 @@ def staff_walkin():
     email = (data.get('email') or '').strip()
     wants_coach = str(data.get('wants_coach') or '').strip().lower() in ('1', 'true', 'yes', 'on')
     coach_name = (data.get('coach_name') or '').strip()
+    plan_type = (data.get('plan_type') or 'Daily').strip()
+
+    if plan_type not in ('Daily', 'Boxing'):
+        return jsonify(success=False, error='Please select Daily or Boxing.'), 400
+
+    # Boxing includes a coach in its flat rate — always required (staff
+    # picks which coach), but never charged as the separate paid add-on
+    # that applies to Daily walk-ins.
+    if plan_type == 'Boxing':
+        wants_coach = True
 
     if not first_name or not last_name:
         return jsonify(success=False, error='First and last name are required.'), 400
@@ -3184,19 +3202,28 @@ def staff_walkin():
     # so the record stays consistent with the Coach tab.
     if wants_coach:
         if not coach_name:
-            return jsonify(success=False, error='Please select a coach, or turn off "Avail a Coach?".'), 400
+            err = 'Please select a coach for the Boxing session.' if plan_type == 'Boxing' \
+                else 'Please select a coach, or turn off "Avail a Coach?".'
+            return jsonify(success=False, error=err), 400
         coach = Coach.query.filter_by(name=coach_name, is_active=True).first()
         if coach is None:
             return jsonify(success=False, error='Selected coach is not available. Please choose another.'), 400
     else:
         coach_name = ''
 
-    daily_plan = MembershipPlan.query.filter_by(name='Daily').first()
-    if daily_plan is None:
-        return jsonify(success=False, error='No "Daily" plan is set up yet. Add one from Admin → Plans first.'), 400
+    if plan_type == 'Daily':
+        daily_plan = MembershipPlan.query.filter_by(name='Daily').first()
+        if daily_plan is None:
+            return jsonify(success=False, error='No "Daily" plan is set up yet. Add one from Admin → Plans first.'), 400
+        base_amount = float(daily_plan.price)
+    else:  # Boxing — flat walk-in rate, not tied to a MembershipPlan row
+        base_amount = WALKIN_BOXING_FEE
 
-    coach_fee = WALKIN_COACH_FEE if wants_coach else 0.0
-    total_amount = float(daily_plan.price) + coach_fee
+    # The paid coach add-on only exists for Daily's optional toggle —
+    # Boxing's coach is already folded into its flat rate, never billed
+    # separately.
+    coach_fee = WALKIN_COACH_FEE if (wants_coach and plan_type == 'Daily') else 0.0
+    total_amount = base_amount + coach_fee
 
     walkin = WalkIn(
         first_name=first_name,
@@ -3206,6 +3233,7 @@ def staff_walkin():
         phone=phone or None,
         email=email or None,
         amount=total_amount,
+        plan_type=plan_type,
         method='Cash',
         wants_coach=wants_coach,
         coach_name=coach_name or None,
@@ -3222,6 +3250,7 @@ def staff_walkin():
             'id': walkin.id,
             'name': walkin.full_name,
             'phone': walkin.phone or '—',
+            'plan': walkin.plan_type,
             'amount': f'{float(walkin.amount):,.2f}',
             'coach': walkin.coach_name if walkin.wants_coach else '—',
             'time': _to_manila(walkin.created_at).strftime('%I:%M %p').lstrip('0'),
@@ -4008,6 +4037,20 @@ def member():
         'equipment':   [{'name': e.name, 'icon': e.icon or DEFAULT_EQUIPMENT_ICON} for e in s.equipment],
     } for s in content_services]
 
+    # Flat lookup data for the "Gym Machines and Equipment" guide modal —
+    # lets a member click a machine and see the how-to-use photo the
+    # admin/staff uploaded for it (via Manage Content > Equipments and
+    # Machines), plus its description. Facility-zone photos are excluded
+    # since they're not individual machines (see real_equipment above).
+    equipment_data = [{
+        'id':          e.id,
+        'name':        e.name,
+        'description': e.description or '',
+        'image_path':  url_for('static', filename=e.image_path) if e.image_path else '',
+        'category':    e.category or DEFAULT_CATEGORY,
+        'icon':        e.icon or DEFAULT_EQUIPMENT_ICON,
+    } for e in real_equipment]
+
     return render_template(
         'member-dashboard.html',
         member=user,
@@ -4021,6 +4064,7 @@ def member():
         services_by_category=services_by_category,
         plans_data=plans_data,
         services_data=services_data,
+        equipment_data=equipment_data,
         coaches=coaches_data,
         present_days=present_days,
         no_plan_days=no_plan_days,
@@ -4307,6 +4351,7 @@ def staff():
     walkins_today = [{
         'name': w.full_name,
         'phone': w.phone or '—',
+        'plan': w.plan_type,
         'amount': f'{float(w.amount):,.2f}',
         'method': w.method,
         'coach': w.coach_name if w.wants_coach else '—',
@@ -4376,6 +4421,7 @@ def staff():
         walkins_today=walkins_today,
         walkin_total_today=f'{walkin_total_today:,.2f}',
         WALKIN_COACH_FEE=WALKIN_COACH_FEE,
+        WALKIN_BOXING_FEE=WALKIN_BOXING_FEE,
         payment_members=payment_members,
         analytics=analytics,
         report_ranges=REPORT_RANGES,
@@ -4525,8 +4571,9 @@ def _revenue_report(start_date, end_date, method=None):
     for r in rows:
         plan_name = r.plan.name if r.plan else 'Unknown'
         by_plan[plan_name] = by_plan.get(plan_name, 0) + float(r.amount)
-    if walkin_rows:
-        by_plan['Walk-In (Daily)'] = by_plan.get('Walk-In (Daily)', 0) + walkin_total
+    for w in walkin_rows:
+        label = f'Walk-In ({w.plan_type})'
+        by_plan[label] = by_plan.get(label, 0) + float(w.amount)
 
     # Every verified payment — Cash (staff-recorded) or GCash (admin-verified) —
     # is tallied here automatically straight from the Payment table. Walk-ins
@@ -4575,7 +4622,7 @@ def _revenue_report(start_date, end_date, method=None):
     } for p in rows] + [{
         'txn':         f'WI-{w.id}',
         'member':      w.full_name,
-        'plan':        f'Walk-In (Daily) + Coach' if w.wants_coach else 'Walk-In (Daily)',
+        'plan':        f'Walk-In ({w.plan_type}) + Coach' if w.wants_coach else f'Walk-In ({w.plan_type})',
         'method':      w.method,
         'amount':      float(w.amount),
         'raw_dt':      w.created_at,
@@ -5819,6 +5866,8 @@ def _run_startup_migrations():
         ('walk_ins', 'wants_coach', "ALTER TABLE walk_ins ADD COLUMN wants_coach TINYINT(1) NOT NULL DEFAULT 0"),
         ('walk_ins', 'coach_name',  "ALTER TABLE walk_ins ADD COLUMN coach_name VARCHAR(60) NULL"),
         ('walk_ins', 'coach_fee',   "ALTER TABLE walk_ins ADD COLUMN coach_fee DECIMAL(10,2) NOT NULL DEFAULT 0"),
+        # ── Boxing added as a second walk-in option alongside Daily ──
+        ('walk_ins', 'plan_type',   "ALTER TABLE walk_ins ADD COLUMN plan_type VARCHAR(20) NOT NULL DEFAULT 'Daily'"),
         # ── Stage 3 — AI Fitness Goal & Recommendation feature ──
         ('body_goals', 'bmr',              "ALTER TABLE body_goals ADD COLUMN bmr DECIMAL(6,2) NULL"),
         ('body_goals', 'tdee',             "ALTER TABLE body_goals ADD COLUMN tdee DECIMAL(6,2) NULL"),
