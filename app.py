@@ -288,6 +288,12 @@ CONTENT_ALLOWED_EXT   = {'png', 'jpg', 'jpeg', 'webp'}
 CONTENT_MAX_BYTES     = 8 * 1024 * 1024  # 8MB
 os.makedirs(CONTENT_UPLOAD_FOLDER, exist_ok=True)
 
+# ── Member profile picture uploads — mandatory at self-registration ──
+PROFILE_UPLOAD_FOLDER = os.path.join(app.root_path, 'static', 'uploads', 'profile_pictures')
+PROFILE_ALLOWED_EXT   = {'png', 'jpg', 'jpeg', 'webp'}
+PROFILE_MAX_BYTES     = 5 * 1024 * 1024  # 5MB
+os.makedirs(PROFILE_UPLOAD_FOLDER, exist_ok=True)
+
 # ── Flask-Mail configuration ─────────────────────────────────
 # Set these as real environment variables (don't hardcode credentials here).
 # For Gmail: MAIL_USERNAME is your Gmail address, MAIL_PASSWORD is a 16-char
@@ -334,6 +340,10 @@ class User(db.Model):
     password = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(10), nullable=False, default='member')
     status = db.Column(db.String(15), nullable=False, default='pending')
+    # Web-relative path under /static — e.g. 'uploads/profile_pictures/xxxx.jpg'.
+    # Required at self-registration for members (see /register); nullable here
+    # since existing/seeded accounts predate this field.
+    profile_picture = db.Column(db.String(255), nullable=True)
     reset_token         = db.Column(db.String(64), nullable=True, unique=True, index=True)
     reset_token_expires = db.Column(db.DateTime, nullable=True)
     reset_otp            = db.Column(db.String(255), nullable=True)
@@ -808,6 +818,27 @@ def _save_content_image(file_storage, existing_path=None):
     return f'uploads/content/{safe_name}'
 
 
+def _save_profile_picture(file_storage):
+    """Save a member's self-registration profile picture to
+    PROFILE_UPLOAD_FOLDER and return the web-relative path to store on
+    User.profile_picture. Unlike _save_content_image, a file is REQUIRED
+    here — callers must check for a non-empty file_storage themselves
+    (registration hard-blocks account creation without one) — this
+    function only validates the file itself once it's known to be present.
+    Raises ValueError on invalid file."""
+    ext = file_storage.filename.rsplit('.', 1)[-1].lower() if '.' in file_storage.filename else ''
+    if ext not in PROFILE_ALLOWED_EXT:
+        raise ValueError('Profile picture must be a PNG, JPG, JPEG, or WEBP file.')
+    file_storage.seek(0, os.SEEK_END)
+    size = file_storage.tell()
+    file_storage.seek(0)
+    if size > PROFILE_MAX_BYTES:
+        raise ValueError('Profile picture must be smaller than 5MB.')
+    safe_name = secure_filename(f"{secrets.token_hex(8)}.{ext}")
+    file_storage.save(os.path.join(PROFILE_UPLOAD_FOLDER, safe_name))
+    return f'uploads/profile_pictures/{safe_name}'
+
+
 def _delete_content_image(image_path):
     """Best-effort removal of a previously-uploaded content image from disk."""
     if not image_path:
@@ -922,6 +953,193 @@ def api_list_categories():
             if row[0] and row[0].strip():
                 used.add(row[0].strip())
     return jsonify(success=True, categories=sorted(used, key=str.lower))
+
+
+def _category_base_query(content_type):
+    """Return (model, query) for the GymService/GymEquipment rows that back
+    a given category-manager content_type ('services', 'machines', or
+    'facilities'). Raises ValueError for any other/missing type — the
+    category manager always operates on one specific tab, unlike the
+    plain-list endpoint above which also accepts '' to mean "everything"."""
+    if content_type == 'services':
+        return GymService, GymService.query
+    if content_type == 'machines':
+        return GymEquipment, GymEquipment.query.filter_by(is_facility=False)
+    if content_type == 'facilities':
+        return GymEquipment, GymEquipment.query.filter_by(is_facility=True)
+    raise ValueError("type must be 'services', 'machines', or 'facilities'.")
+
+
+@app.route('/api/content/categories/manage', methods=['GET'])
+def api_list_categories_manage():
+    """Categories for one content type, each with how many items currently
+    use it — powers the "Manage Categories" list (rename/delete) in the
+    admin/staff dashboards. Unlike /api/content/categories (the plain
+    autocomplete list), a specific ?type= is required here since rename/
+    delete always act on one table/tab at a time."""
+    if not _content_role_ok():
+        return jsonify(success=False, error='Unauthorized.'), 403
+    content_type = (request.args.get('type') or '').strip().lower()
+    try:
+        _, query = _category_base_query(content_type)
+    except ValueError as e:
+        return jsonify(success=False, error=str(e)), 400
+    counts = OrderedDict()
+    for row in query.with_entities(GymService.category if content_type == 'services' else GymEquipment.category).all():
+        cat = (row[0] or '').strip()
+        if not cat:
+            continue
+        counts[cat] = counts.get(cat, 0) + 1
+    categories = [{'name': name, 'count': counts[name]} for name in sorted(counts, key=str.lower)]
+    return jsonify(success=True, categories=categories)
+
+
+@app.route('/api/content/categories/rename', methods=['POST'])
+def api_rename_category():
+    """Rename a category across every item of one content type. Renaming to
+    a name that's already in use for that type merges the two groups
+    (they'll simply share the same category string afterward), which is
+    intentional — it's the easiest way to fix a near-duplicate spelling."""
+    if not _content_role_ok():
+        return jsonify(success=False, error='Unauthorized.'), 403
+    data = request.get_json(silent=True) or {}
+    content_type = (data.get('type') or '').strip().lower()
+    old_name = (data.get('old_name') or '').strip()
+    new_name = (data.get('new_name') or '').strip()[:60]
+    try:
+        model, query = _category_base_query(content_type)
+    except ValueError as e:
+        return jsonify(success=False, error=str(e)), 400
+    if not old_name:
+        return jsonify(success=False, error='Missing category to rename.'), 400
+    if not new_name:
+        return jsonify(success=False, error='New category name cannot be empty.'), 400
+    items = query.filter(model.category == old_name).all()
+    if not items:
+        return jsonify(success=False, error='That category is no longer in use.'), 404
+    for item in items:
+        item.category = new_name
+    db.session.commit()
+    return jsonify(success=True, message=f'Renamed "{old_name}" to "{new_name}" for {len(items)} item(s).',
+                   affected=len(items))
+
+
+@app.route('/api/content/categories/delete', methods=['POST'])
+def api_delete_category():
+    """Remove a category from every item of one content type. This does not
+    delete the items themselves — it just clears their category, so they
+    fall back to the default "General" grouping on the member dashboard."""
+    if not _content_role_ok():
+        return jsonify(success=False, error='Unauthorized.'), 403
+    data = request.get_json(silent=True) or {}
+    content_type = (data.get('type') or '').strip().lower()
+    name = (data.get('name') or '').strip()
+    try:
+        model, query = _category_base_query(content_type)
+    except ValueError as e:
+        return jsonify(success=False, error=str(e)), 400
+    if not name:
+        return jsonify(success=False, error='Missing category to delete.'), 400
+    items = query.filter(model.category == name).all()
+    if not items:
+        return jsonify(success=False, error='That category is no longer in use.'), 404
+    for item in items:
+        item.category = None
+    db.session.commit()
+    return jsonify(success=True, message=f'Removed category "{name}" from {len(items)} item(s).',
+                   affected=len(items))
+
+
+# ── Content-management API: Equipment/Facility Name manager ─────────────
+# Mirrors the category manager above, but for the item NAME itself (e.g.
+# "Treadmill", "Locker Room"). Only applies to machines/facilities — both
+# live in GymEquipment, split by is_facility — since Plans and Services
+# don't use the shared "pick a name from the list" dropdown.
+def _name_base_query(content_type):
+    if content_type == 'machines':
+        return GymEquipment.query.filter_by(is_facility=False)
+    if content_type == 'facilities':
+        return GymEquipment.query.filter_by(is_facility=True)
+    raise ValueError("type must be 'machines' or 'facilities'.")
+
+
+@app.route('/api/content/names/manage', methods=['GET'])
+def api_list_names_manage():
+    """Distinct names for one type, each with how many items use it —
+    powers the edit/delete affordances on the Name dropdown."""
+    if not _content_role_ok():
+        return jsonify(success=False, error='Unauthorized.'), 403
+    content_type = (request.args.get('type') or '').strip().lower()
+    try:
+        query = _name_base_query(content_type)
+    except ValueError as e:
+        return jsonify(success=False, error=str(e)), 400
+    counts = OrderedDict()
+    for row in query.with_entities(GymEquipment.name).all():
+        nm = (row[0] or '').strip()
+        if not nm:
+            continue
+        counts[nm] = counts.get(nm, 0) + 1
+    names = [{'name': name, 'count': counts[name]} for name in sorted(counts, key=str.lower)]
+    return jsonify(success=True, names=names)
+
+
+@app.route('/api/content/names/rename', methods=['POST'])
+def api_rename_name():
+    """Rename every item currently sharing a name (e.g. fix "Treadmil" ->
+    "Treadmill" everywhere at once) instead of editing each one by hand."""
+    if not _content_role_ok():
+        return jsonify(success=False, error='Unauthorized.'), 403
+    data = request.get_json(silent=True) or {}
+    content_type = (data.get('type') or '').strip().lower()
+    old_name = (data.get('old_name') or '').strip()
+    new_name = (data.get('new_name') or '').strip()[:80]  # matches GymEquipment.name's column length
+    try:
+        query = _name_base_query(content_type)
+    except ValueError as e:
+        return jsonify(success=False, error=str(e)), 400
+    if not old_name:
+        return jsonify(success=False, error='Missing name to rename.'), 400
+    if not new_name:
+        return jsonify(success=False, error='New name cannot be empty.'), 400
+    items = query.filter(GymEquipment.name == old_name).all()
+    if not items:
+        return jsonify(success=False, error='That name is no longer in use.'), 404
+    for item in items:
+        item.name = new_name
+    db.session.commit()
+    return jsonify(success=True, message=f'Renamed "{old_name}" to "{new_name}" for {len(items)} item(s).',
+                   affected=len(items))
+
+
+@app.route('/api/content/names/delete', methods=['POST'])
+def api_delete_name():
+    """Permanently delete every item sharing a name. Unlike category delete
+    (which just clears a field), a name has no safe default to fall back
+    to, so this removes the underlying item(s) entirely — including their
+    uploaded images and their linkage on any Service that referenced them.
+    The frontend is expected to show a strong, count-aware confirmation
+    before calling this."""
+    if not _content_role_ok():
+        return jsonify(success=False, error='Unauthorized.'), 403
+    data = request.get_json(silent=True) or {}
+    content_type = (data.get('type') or '').strip().lower()
+    name = (data.get('name') or '').strip()
+    try:
+        query = _name_base_query(content_type)
+    except ValueError as e:
+        return jsonify(success=False, error=str(e)), 400
+    if not name:
+        return jsonify(success=False, error='Missing name to delete.'), 400
+    items = query.filter(GymEquipment.name == name).all()
+    if not items:
+        return jsonify(success=False, error='That name is no longer in use.'), 404
+    count = len(items)
+    for item in items:
+        _delete_content_image(item.image_path)
+        db.session.delete(item)
+    db.session.commit()
+    return jsonify(success=True, message=f'Deleted {count} item(s) named "{name}".', affected=count)
 
 
 # ── Content-management API: Membership Plans ────────────────────────────
@@ -1282,9 +1500,12 @@ def api_delete_announcement(item_id):
 
 
 # ── Routes ────────────────────────────────────────────────────
-@app.route('/')
-@app.route('/home')
-def home():
+def _home_context(open_screen=None):
+    """Shared context for the landing page. open_screen ('login' or
+    'register') tells home.html which auth overlay, if any, to pop open
+    automatically on load — used after a redirect from /login, /register
+    links, or a failed sign-in so the visitor lands back on the same
+    page instead of a separate screen."""
     plans     = MembershipPlan.query.filter_by(is_active=True).order_by(MembershipPlan.sort_order, MembershipPlan.id).all()
     services  = GymService.query.filter_by(is_active=True).order_by(GymService.sort_order, GymService.id).all()
     # Public landing page only shows facility-zone photos (Weight Area,
@@ -1293,34 +1514,67 @@ def home():
     equipment = (GymEquipment.query
                  .filter_by(is_active=True, is_facility=True)
                  .order_by(GymEquipment.sort_order, GymEquipment.id).all())
-    return render_template('home.html', plans=plans, services=services, equipment=equipment)
+    return dict(plans=plans, services=services, equipment=equipment,
+                gcash_settings=_get_gym_settings(), open_screen=open_screen)
+
+
+@app.route('/')
+@app.route('/home')
+def home():
+    open_screen = request.args.get('screen') if request.args.get('screen') in ('login', 'register') else None
+    return render_template('home.html', **_home_context(open_screen))
+
 
 @app.route('/trmem')
 @app.route('/trmem.html')
+def trmem_redirect():
+    # The sign-in / register experience now lives directly on the landing
+    # page instead of a separate page — send old links there and let the
+    # page auto-open the right overlay.
+    screen = request.args.get('screen', 'login')
+    return redirect(url_for('home', screen=screen))
+
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    gcash_settings = _get_gym_settings()
-
     if request.method == 'POST':
-        email    = request.form.get('email', '').strip()
-        password = request.form.get('password', '')
+        # The embedded login form on the landing page submits via fetch
+        # (AJAX) so the visitor never leaves the page. We still accept a
+        # classic form POST as a no-JS fallback, redirecting back to the
+        # landing page with a flashed error instead of rendering a
+        # standalone page.
+        payload  = request.get_json(silent=True)
+        is_ajax  = payload is not None
+        data     = payload if is_ajax else request.form
+        email    = (data.get('email') or '').strip()
+        password = data.get('password') or ''
+
+        def _fail(msg):
+            if is_ajax:
+                return jsonify(success=False, error=msg), 400
+            flash(msg, 'error')
+            return redirect(url_for('home', screen='login'))
 
         if not email or not password:
-            flash('Please enter both email and password.', 'error')
-            return render_template('trmem.html', gcash_settings=gcash_settings)
+            return _fail('Please enter both email and password.')
 
         user = User.query.filter_by(email=email).first()
         if user is None or not check_password_hash(user.password, password):
-            flash('Invalid credentials.', 'error')
-            return render_template('trmem.html', gcash_settings=gcash_settings)
+            return _fail('Invalid credentials.')
 
         session['user_id'] = user.id
         session['role']    = user.role
         session['email']   = user.email
         session['name']    = user.full_name
+
+        if is_ajax:
+            return jsonify(success=True, redirect=url_for(user.role))
         return redirect(url_for(user.role))
 
-    return render_template('trmem.html', gcash_settings=gcash_settings)
+    # GET /login — send visitors to the landing page with the login
+    # overlay open, instead of a dedicated login page.
+    screen = request.args.get('screen', 'login')
+    return redirect(url_for('home', screen=screen))
 
 
 # ── Forgot / Reset Password (OTP-based) ──────────────────────
@@ -1665,7 +1919,9 @@ def reset_password(token):
 
 @app.route('/register', methods=['POST'])
 def register():
-    data = request.get_json(silent=True) or request.form
+    # Switched from JSON to multipart/form-data since registration now
+    # requires an uploaded profile picture file alongside the text fields.
+    data = request.form
 
     first_name = (data.get('first_name') or '').strip()
     middle_initial = (data.get('middle_initial') or '').strip()
@@ -1675,10 +1931,14 @@ def register():
     phone      = (data.get('phone')      or '').strip()
     birthday   = (data.get('birthday')   or '').strip()
     password   = data.get('password')    or ''
+    profile_picture_file = request.files.get('profile_picture')
 
     # ── Validation ──
     if not first_name or not last_name or not email or not password:
         return jsonify(success=False, error='Please fill in all required fields.'), 400
+
+    if not profile_picture_file or not profile_picture_file.filename:
+        return jsonify(success=False, error='A profile picture is required to create an account.'), 400
 
     if not _valid_name(first_name, require_capital=True, lowercase_rest=True) or not _valid_name(last_name, require_capital=True, lowercase_rest=True):
         return jsonify(success=False, error='First and last name must start with a capital letter, with the rest in lowercase.'), 400
@@ -1697,6 +1957,11 @@ def register():
 
     if User.query.filter_by(email=email).first() is not None:
         return jsonify(success=False, error='An account with this email already exists.'), 409
+
+    try:
+        profile_picture_path = _save_profile_picture(profile_picture_file)
+    except ValueError as e:
+        return jsonify(success=False, error=str(e)), 400
 
     birthday_date = None
     if birthday:
@@ -1717,6 +1982,7 @@ def register():
         password=generate_password_hash(password),
         role='member',
         status='pending',
+        profile_picture=profile_picture_path,
     )
     db.session.add(new_user)
     db.session.commit()
@@ -1783,6 +2049,12 @@ def _calculate_age(birthday):
         return None
     today = date.today()
     return today.year - birthday.year - ((today.month, today.day) < (birthday.month, birthday.day))
+
+
+# Exposed to templates as `{{ some_date|age }}` — used by the read-only
+# Profile page on each dashboard (admin/staff/member) to show current age
+# derived from the stored birthday, without adding a separate DB column.
+app.jinja_env.filters['age'] = _calculate_age
 
 
 # ── Stage 3 — deterministic fitness calculations ──
@@ -5879,6 +6151,8 @@ def _run_startup_migrations():
         ('exercises', 'instructions',    "ALTER TABLE exercises ADD COLUMN instructions TEXT NULL"),
         ('gym_settings', 'terms_content',      "ALTER TABLE gym_settings ADD COLUMN terms_content TEXT NULL"),
         ('gym_settings', 'terms_read_seconds', "ALTER TABLE gym_settings ADD COLUMN terms_read_seconds INT NOT NULL DEFAULT 30"),
+        # ── Mandatory profile picture at member self-registration ──
+        ('users', 'profile_picture', "ALTER TABLE users ADD COLUMN profile_picture VARCHAR(255) NULL"),
     ]
     with db.engine.connect() as conn:
         for table, column, ddl in migrations:

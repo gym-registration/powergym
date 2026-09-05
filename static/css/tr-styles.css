@@ -64,9 +64,54 @@ body::before {
   opacity: 0.4;
 }
 
-/* ── Screens (used only on trmem.html login/register) ── */
+/* ── Screens (login/register). On trmem.html (kept only for old
+   bookmarks, which now redirect to the landing page) these fill the
+   whole viewport as a standalone page. ── */
 .screen { display: none; min-height: 100vh; }
 .screen.active { display: flex; flex-direction: column; animation: fadeIn 0.35s ease; }
+
+/* Inline variant: used when the login/register screens are embedded
+   directly inside the landing page. The site header stays visible
+   above them at all times — they sit in normal document flow right
+   below it, instead of covering the whole viewport, and the marketing
+   content underneath (#landing-content) is simply hidden while one of
+   these is open. */
+.screen-inline { position: relative; min-height: 0; }
+.screen-inline.active { padding: 48px 20px 96px; min-height: calc(100vh - 72px); }
+/* Match the dark site theme instead of the standalone page's light
+   background, since this now sits directly under the dark nav header. */
+.screen-inline#screen-login,
+.screen-inline#screen-register { background: var(--black) !important; }
+.screen-inline#screen-login::before { display: none; }
+
+.screen-close-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: var(--white);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, border-color 0.2s;
+}
+.screen-close-btn:hover { background: rgba(0, 0, 0, 0.45); border-color: rgba(255, 255, 255, 0.4); }
+.login-subtext {
+  text-align: center;
+  color: var(--muted);
+  font-size: 15px;
+  margin-top: -22px;
+  margin-bottom: 28px;
+  line-height: 1.5;
+}
 
 /* ── Logo badge ── */
 .logo-badge {
@@ -171,8 +216,8 @@ body::before {
   margin-bottom: 18px;
 }
 .flash {
-  padding: 12px 14px;
-  border-radius: 4px;
+  padding: 14px 16px;
+  border-radius: 8px;
   font-size: 15px;
   font-weight: 500;
   line-height: 1.5;
@@ -793,6 +838,99 @@ body::before {
 .notice-panel .panel-header { color: var(--gold); }
 .notice-panel .panel-body { color: var(--white); }
 .notice-panel ul li { margin-bottom: 6px; }
+
+/* ── Profile page (read-only account summary, all 3 dashboards) ── */
+.profile-header {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding-bottom: 24px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+}
+.profile-avatar {
+  width: 72px; height: 72px;
+  border-radius: 50%;
+  background: var(--red);
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 30px;
+  flex-shrink: 0;
+}
+.role-staff  .profile-avatar { background: var(--navy-light); }
+.role-member .profile-avatar { background: var(--gold); color: var(--black); }
+.profile-header-info { flex: 1; min-width: 160px; }
+.profile-name {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 700;
+  letter-spacing: 1px;
+  font-size: 24px;
+  text-transform: uppercase;
+}
+.profile-email { font-size: 14px; color: var(--muted); margin-top: 2px; }
+
+.info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px 32px;
+}
+.info-item { border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+.info-label {
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.info-value { font-size: 16px; font-weight: 600; color: var(--white); }
+@media (max-width: 700px) {
+  .info-grid { grid-template-columns: 1fr; }
+}
+
+/* ── Registration: mandatory profile picture upload ── */
+.pfp-upload-wrap {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.pfp-upload-circle {
+  position: relative;
+  width: 84px; height: 84px;
+  border-radius: 50%;
+  background: var(--card);
+  border: 2px dashed var(--border);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.pfp-upload-circle:hover { border-color: var(--gold); }
+.pfp-upload-circle.has-image { border-style: solid; border-color: var(--green); }
+.pfp-upload-circle img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+}
+.pfp-upload-icon { font-size: 26px; color: var(--muted); }
+.pfp-upload-badge {
+  position: absolute;
+  bottom: -2px; right: -2px;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: var(--red);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+  border: 2px solid var(--dark);
+}
+.pfp-upload-info { flex: 1; min-width: 0; }
+.pfp-upload-label {
+  font-size: 15px; font-weight: 600; color: var(--white);
+}
+.pfp-upload-label .required-mark { color: var(--red); margin-left: 2px; }
+.pfp-upload-hint { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.pfp-upload-filename { font-size: 12px; color: var(--green); margin-top: 3px; word-break: break-all; }
 
 /* Tables */
 .data-table { width: 100%; border-collapse: collapse; }
@@ -1891,6 +2029,48 @@ body.home-page { overflow-x: hidden; }
 .content-empty {
   grid-column: 1 / -1; text-align: center; padding: 40px 20px; color: var(--muted); font-size: 15px;
 }
+
+/* Field Picker — Category (all types) & Name (facilities/machines add-new) */
+.picker-select-wrap { position: relative; }
+.picker-select {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 8px;
+  padding: 11px 14px; font-size: 15px; color: var(--white); cursor: pointer; transition: border-color .15s;
+}
+.picker-select:hover { border-color: var(--muted); }
+.picker-select-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-caret { color: var(--muted); font-size: 12px; flex-shrink: 0; }
+.picker-panel {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 40;
+  background: #12161f; border: 1px solid var(--border); border-radius: 8px;
+  max-height: 260px; overflow-y: auto; box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+}
+.picker-row {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+  font-size: 14.5px; color: var(--white); cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.picker-row:hover { background: rgba(255,255,255,0.04); }
+.picker-row-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-row-count { font-size: 11.5px; color: var(--muted); flex-shrink: 0; }
+.picker-row-btn {
+  width: 26px; height: 26px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 13px; color: var(--muted); background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border); border-radius: 6px; cursor: pointer; transition: all .15s;
+}
+.picker-row-btn:hover { color: var(--white); border-color: var(--muted); }
+.picker-row-btn-danger:hover { color: var(--red); border-color: rgba(230,30,37,0.5); background: rgba(230,30,37,0.08); }
+.picker-row-editing { cursor: default; }
+.picker-row-editing:hover { background: none; }
+.picker-row-editing .form-input { flex: 1; padding: 7px 10px; font-size: 13.5px; }
+.picker-row-warning { flex: 1; font-size: 13px; color: var(--white); line-height: 1.5; }
+.picker-add-row {
+  padding: 11px 14px; font-size: 14.5px; font-weight: 700; letter-spacing: .3px;
+  color: #fff; background: #2f6fed; cursor: pointer; text-align: left;
+  border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; transition: background .15s;
+}
+.picker-add-row:hover { background: #2660d1; }
+.picker-empty { padding: 16px 14px; color: var(--muted); font-size: 13.5px; text-align: center; }
 
 .content-image-picker {
   display: flex; align-items: center; gap: 14px; margin-bottom: 4px;

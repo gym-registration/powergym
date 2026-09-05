@@ -51,11 +51,15 @@
       <div class="nav-item" id="nav-member-attendance"  onclick="memberTab('attendance',this)">
         <span class="nav-icon">📅</span> My Attendance
       </div>
+      <div class="nav-item" id="nav-member-profile"  onclick="memberTab('profile',this)">
+        <span class="nav-icon">👤</span> Profile
+      </div>
     </nav>
 
     <div class="sidebar-footer">
       <div class="user-info">
-        <div class="user-avatar" id="sidebar-user-avatar" style="background:var(--green);color:#000;">{{ (member.first_name[0] ~ member.last_name[0])|upper }}</div>
+        <div class="user-avatar" id="sidebar-user-avatar"
+             style="{% if member.profile_picture %}background-image:url('{{ url_for('static', filename=member.profile_picture) }}');background-size:cover;background-position:center;color:transparent;{% else %}background:var(--green);color:#000;{% endif %}">{{ (member.first_name[0] ~ member.last_name[0])|upper }}</div>
         <div>
           <div class="user-name"  id="sidebar-user-name">{{ member.full_name }}</div>
           <div class="user-email" id="sidebar-user-email">{{ member.email }}</div>
@@ -863,6 +867,40 @@
         </div>
       </div>
     </div><!-- /member-services -->
+
+    <!-- ── Profile ──────────────────────── -->
+    <div id="member-profile" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">MY PROFILE</div><div class="page-subtitle">Your account information</div></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-body">
+          <div class="profile-header">
+            <div class="profile-avatar"
+                 style="{% if member.profile_picture %}background-image:url('{{ url_for('static', filename=member.profile_picture) }}');background-size:cover;background-position:center;color:transparent;{% endif %}">{{ (member.first_name[0] ~ member.last_name[0])|upper }}</div>
+            <div class="profile-header-info">
+              <div class="profile-name">{{ member.full_name }}</div>
+              <div class="profile-email">{{ member.email }}</div>
+            </div>
+            <button class="btn btn-outline" onclick="memberTab('settings', document.getElementById('nav-member-settings'))">✎ EDIT PROFILE</button>
+          </div>
+
+          <div class="info-grid">
+            <div class="info-item"><div class="info-label">First Name</div><div class="info-value">{{ member.first_name }}</div></div>
+            <div class="info-item"><div class="info-label">Middle Name</div><div class="info-value">{{ member.middle_initial if member.middle_initial else '—' }}</div></div>
+            <div class="info-item"><div class="info-label">Last Name</div><div class="info-value">{{ member.last_name }}</div></div>
+            <div class="info-item"><div class="info-label">Suffix</div><div class="info-value">{{ member.extension_name if member.extension_name else '—' }}</div></div>
+            <div class="info-item"><div class="info-label">Phone</div><div class="info-value">{{ member.phone if member.phone else '—' }}</div></div>
+            <div class="info-item"><div class="info-label">Date of Birth</div><div class="info-value">{{ member.birthday.strftime('%B %d, %Y') if member.birthday else '—' }}</div></div>
+            <div class="info-item"><div class="info-label">Age</div><div class="info-value">{{ (member.birthday|age) if member.birthday else '—' }}</div></div>
+            <div class="info-item"><div class="info-label">Member ID</div><div class="info-value">MBR-{{ '%04d'|format(member.id) }}</div></div>
+            <div class="info-item"><div class="info-label">Member Since</div><div class="info-value">{{ member.created_at.strftime('%B %d, %Y') if member.created_at else '—' }}</div></div>
+            <div class="info-item"><div class="info-label">Membership Plan</div><div class="info-value">{{ plan.name if plan else '—' }}</div></div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /member-profile -->
 
     <!-- ── Settings ─────────────────────── -->
     <div id="member-settings" class="sub-panel">

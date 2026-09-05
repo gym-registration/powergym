@@ -607,6 +607,105 @@ function submitProfileUpdate() {
     });
 }
 
+/** Submit the login form (used by the "ACCESS SYSTEM" button on the
+ *  landing page's login overlay) via fetch instead of a normal form
+ *  POST, so a wrong password just shows a toast and the visitor never
+ *  leaves the landing page. Falls back gracefully: if this never runs
+ *  (JS disabled), the form's normal action/method still posts to
+ *  /login and the server redirects back to the landing page. */
+/** Show an error inline inside the login card's flash box — the same
+ *  red bordered message the server-rendered flash uses — instead of
+ *  (or in addition to) a floating toast, so a failed sign-in looks
+ *  exactly like the rest of the form's validation states. */
+function _showLoginError(msg) {
+  const box = document.getElementById('login-flash');
+  if (!box) { showToast(msg, 'error'); return; }
+  const div = document.createElement('div');
+  div.className = 'flash error';
+  div.textContent = msg;
+  box.innerHTML = '';
+  box.appendChild(div);
+}
+function _clearLoginError() {
+  const box = document.getElementById('login-flash');
+  if (box) box.innerHTML = '';
+}
+
+function completeLogin() {
+  const email    = _val('login-email');
+  const password = document.getElementById('login-pass')?.value || '';
+
+  _clearLoginError();
+
+  if (!email || !password) {
+    _showLoginError('Please enter both email and password.');
+    return;
+  }
+
+  const btn = document.querySelector('#screen-login .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'SIGNING IN...'; }
+
+  fetch('/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    body: JSON.stringify({ email, password })
+  })
+    .then(res => res.json().then(data => ({ ok: res.ok, data })))
+    .then(({ ok, data }) => {
+      if (!ok || !data.success) {
+        if (btn) { btn.disabled = false; btn.textContent = 'ACCESS SYSTEM'; }
+        _showLoginError(data.error || 'An error occurred. Please try again.');
+        return;
+      }
+      // Full navigation on success is expected — it's leaving the
+      // landing page for the member/staff/admin dashboard.
+      window.location.href = data.redirect;
+    })
+    .catch(() => {
+      if (btn) { btn.disabled = false; btn.textContent = 'ACCESS SYSTEM'; }
+      _showLoginError('An error occurred. Please try again.');
+    });
+}
+
+/** Close whichever auth overlay (login/register) is open on the landing
+ *  page and return to the marketing content underneath. */
+function closeAuthScreen() {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+}
+
+/** Live preview + client-side validation for the mandatory registration
+ *  profile picture (reg-profile-picture). Swaps the camera icon for the
+ *  chosen image and flags the circle as filled once a valid file is picked. */
+function previewProfilePicture(input) {
+  const file = input.files && input.files[0];
+  const circle   = document.getElementById('pfp-upload-circle');
+  const icon     = document.getElementById('pfp-upload-icon');
+  const preview  = document.getElementById('pfp-upload-preview');
+  const filename = document.getElementById('pfp-upload-filename');
+  if (!file) return;
+
+  const allowedTypes = ['image/png', 'image/jpeg', 'image/webp'];
+  if (!allowedTypes.includes(file.type)) {
+    showToast('Profile picture must be a PNG, JPG, JPEG, or WEBP file.', 'error');
+    input.value = '';
+    return;
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    showToast('Profile picture must be smaller than 5MB.', 'error');
+    input.value = '';
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    if (preview) { preview.src = e.target.result; preview.style.display = 'block'; }
+    if (icon) icon.style.display = 'none';
+    if (circle) circle.classList.add('has-image');
+    if (filename) filename.textContent = file.name;
+  };
+  reader.readAsDataURL(file);
+}
+
 /** Submit the member self-registration form (used by trmem.html's
  *  "SUBMIT REGISTRATION" button) — validates client-side, posts to the
  *  real /register endpoint, then drops the member back on the login
@@ -622,7 +721,13 @@ function completeRegistration() {
   const password       = document.getElementById('reg-pass')?.value || '';
   const confirm        = document.getElementById('reg-confirm')?.value || '';
   const termsChecked   = document.getElementById('reg-terms-check')?.checked;
+  const profilePicInput = document.getElementById('reg-profile-picture');
+  const profilePicFile  = profilePicInput?.files && profilePicInput.files[0];
 
+  if (!profilePicFile) {
+    showToast('Please upload a profile picture to create your account.', 'error');
+    return;
+  }
   if (!first_name || !last_name || !email || !password) {
     showToast('Please fill in all required fields.', 'error');
     return;
@@ -647,10 +752,23 @@ function completeRegistration() {
   const btn = document.getElementById('reg-submit-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'SUBMITTING...'; }
 
+  // multipart/form-data — required since a profile picture file now rides
+  // along with the text fields. Don't set a Content-Type header manually;
+  // the browser fills in the correct multipart boundary itself.
+  const formData = new FormData();
+  formData.append('first_name', first_name);
+  formData.append('middle_initial', middle_initial);
+  formData.append('last_name', last_name);
+  formData.append('extension_name', extension_name);
+  formData.append('email', email);
+  formData.append('phone', phone);
+  formData.append('birthday', birthday);
+  formData.append('password', password);
+  formData.append('profile_picture', profilePicFile);
+
   fetch('/register', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ first_name, middle_initial, last_name, extension_name, email, phone, birthday, password })
+    body: formData
   })
     .then(res => res.json().then(data => ({ ok: res.ok, data })))
     .then(({ ok, data }) => {
@@ -676,6 +794,17 @@ function selectPlan(card, plan) {
   const grid = card.closest('.plan-grid');
   if (grid) grid.querySelectorAll('.plan-card').forEach(c => c.classList.remove('selected'));
   card.classList.add('selected');
+}
+
+/** Live role hint as the visitor types their email on the login overlay.
+ *  Pre-existing feature that trmem.html referenced but never actually
+ *  defined — wired up here against the existing Auth/Navigation helpers
+ *  above so it fails safely (just shows no hint) instead of throwing. */
+function detectRoleHint() {
+  const email = _val('login-email');
+  let role = null;
+  try { role = email ? Auth.detectRole(email) : null; } catch (e) { role = null; }
+  Navigation.showRoleHint(role);
 }
 
 /** Toggle a password input between hidden (••••) and visible (plain text).
@@ -1053,29 +1182,26 @@ const ContentManager = (() => {
   }
 
   // ── Category suggestions + icon quick-pick (services & equipment) ──
-  const CATEGORY_SUGGESTIONS = {
-    machines:  ['Boxing', 'Strengthening', 'Cardio Zone', 'Weight Loss', 'Functional Training', 'General'],
-    services:  ['Boxing', 'Strengthening', 'Cardio Zone', 'Weight Loss', 'Coaching', 'Membership Perks', 'Facilities', 'Classes', 'General'],
-    facilities: ['Weight Area', 'Cardio Zone', 'Reception', 'Locker Room', 'Boxing Area', 'Functional Training', 'General'],
-  };
+  // NOTE: category suggestions are NOT hardcoded — the datalist below is
+  // populated entirely from whatever categories already exist in the
+  // database (fetched per-type from /api/content/categories). Type any
+  // new category name into the field and it becomes a real suggestion for
+  // next time, automatically, with no code change required.
   const ICON_SUGGESTIONS = {
     machines:   ['🏋️', '💪', '🥊', '🏃', '🚴', '🤸', '🪢', '🦵', '🔩', '⬇️', '🔧', '🎯', '🧘', '🔥'],
     services:   ['🥊', '💪', '🔥', '🏃', '🛎️', '🧑‍🏫', '🥤', '🚿', '🅿️', '📅', '🩺'],
     facilities: ['🏢', '🚪', '🏋️', '🧘', '🚿', '🅿️', '🛎️', '🔥'],
   };
-  let realCategoriesCache = null; // categories actually in use, fetched from the server
+  let realCategoriesCache = {}; // per-type ({machines, services, facilities}) categories actually in use, fetched from the server
 
   function _refreshIconPickList(type) {
     const datalist = document.getElementById('cf-category-list');
     if (datalist) {
-      // Show real, already-used categories first (so Services and
-      // Equipment stay spelled identically and keep grouping together on
-      // the member dashboard), then fall back to curated suggestions.
-      const used = realCategoriesCache || [];
-      const suggested = CATEGORY_SUGGESTIONS[type] || [];
-      const merged = [...used];
-      suggested.forEach(c => { if (!merged.some(m => m.toLowerCase() === c.toLowerCase())) merged.push(c); });
-      datalist.innerHTML = merged.map(c => `<option value="${_esc(c)}"></option>`).join('');
+      // Show real, already-used categories only — no curated fallback.
+      // Fetched per-type so a Machines-only category never leaks into the
+      // Services/Facilities pickers, and vice versa.
+      const used = realCategoriesCache[type] || [];
+      datalist.innerHTML = used.map(c => `<option value="${_esc(c)}"></option>`).join('');
     }
     const iconRow = document.getElementById('cf-icon-picks');
     if (iconRow) {
@@ -1084,16 +1210,16 @@ const ContentManager = (() => {
         `<button type="button" class="icon-pick-btn" onclick="ContentManager.pickIcon('${i}')">${i}</button>`
       ).join('');
     }
-    if (realCategoriesCache === null) {
-      fetch('/api/content/categories')
+    if (realCategoriesCache[type] === undefined) {
+      fetch(`/api/content/categories?type=${encodeURIComponent(type)}`)
         .then(res => res.json())
         .then(data => {
           if (data.success) {
-            realCategoriesCache = data.categories;
+            realCategoriesCache[type] = data.categories;
             _refreshIconPickList(type); // re-render datalist now that real categories are in
           }
         })
-        .catch(() => {}); // non-fatal — curated suggestions still work
+        .catch(() => {}); // non-fatal — datalist just stays empty until the fetch succeeds; typing a category still works fine
     }
   }
 
@@ -1308,6 +1434,10 @@ document.addEventListener('DOMContentLoaded', () => {
   window.submitChangePassword = submitChangePassword;
   window.submitProfileUpdate  = submitProfileUpdate;
   window.completeRegistration = completeRegistration;
+  window.previewProfilePicture = previewProfilePicture;
+  window.completeLogin  = completeLogin;
+  window.closeAuthScreen = closeAuthScreen;
+  window.detectRoleHint = detectRoleHint;
   window.filterTable   = filterTable;
   window.togglePasswordVisibility = togglePasswordVisibility;
   window.ContentManager = ContentManager;

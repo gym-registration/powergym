@@ -96,6 +96,22 @@
     <!-- STEP 1: Personal Info -->
     <div id="reg-step-1">
       <div class="panel-title" style="margin-bottom:20px;">Personal Information</div>
+
+      <!-- Profile picture — required before an account can be created -->
+      <div class="pfp-upload-wrap">
+        <div class="pfp-upload-circle" id="pfp-upload-circle" onclick="document.getElementById('reg-profile-picture').click()">
+          <span class="pfp-upload-icon" id="pfp-upload-icon">📷</span>
+          <img id="pfp-upload-preview" style="display:none;" alt="Profile picture preview">
+          <span class="pfp-upload-badge">✎</span>
+        </div>
+        <div class="pfp-upload-info">
+          <div class="pfp-upload-label">Profile Picture<span class="required-mark">*</span></div>
+          <div class="pfp-upload-hint">Required. PNG, JPG, or WEBP — max 5MB. Click the circle to upload.</div>
+          <div class="pfp-upload-filename" id="pfp-upload-filename"></div>
+        </div>
+        <input type="file" id="reg-profile-picture" accept="image/png,image/jpeg,image/webp" style="display:none;" onchange="previewProfilePicture(this)">
+      </div>
+
       <div class="form-row-4">
         <div class="form-group">
           <label class="form-label">First Name</label>

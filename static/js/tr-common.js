@@ -923,32 +923,30 @@ const ContentManager = (() => {
 
     // Name field. Plans/Services, and editing an existing item of any
     // type, keep the classic free-text box. Adding a brand-new facility
-    // or machine instead shows a dropdown of already-used + common names
-    // first, so staff can pick a consistent name with no typing — picking
-    // "+ Add New …" swaps back to the free-text box for a name that isn't
-    // listed yet.
-    const nameLabel  = document.getElementById('cf-name-label');
-    const nameSelect = document.getElementById('cf-name-select');
-    const nameInput  = document.getElementById('cf-name');
-    const nameBack   = document.getElementById('cf-name-toggle');
+    // or machine instead shows a picker of already-used names (with
+    // rename/delete on each) — picking "+ Add New …" swaps to the
+    // free-text box for a name that isn't listed yet.
+    const nameLabel = document.getElementById('cf-name-label');
+    const nameInput = document.getElementById('cf-name');
     if (nameLabel) {
       nameLabel.textContent = type === 'machines'    ? 'Name of Equipment/Machine'
                              : type === 'facilities'  ? 'Name of Facility/Area'
                              : 'Name';
     }
     nameInput.value = item ? item.name : '';
-    const useNameDropdown = !item && (type === 'facilities' || type === 'machines');
-    if (nameSelect) {
-      if (useNameDropdown) {
-        nameSelect.style.display = '';
-        nameInput.style.display  = 'none';
-        if (nameBack) nameBack.style.display = 'none';
-        _ensureEquipmentLoaded(() => _populateNameOptions(type));
-      } else {
-        nameSelect.style.display = 'none';
-        nameInput.style.display  = '';
-        if (nameBack) nameBack.style.display = 'none';
-      }
+    const useNamePicker = !item && (type === 'facilities' || type === 'machines');
+    _closePicker('name');
+    const namePickerWrap = document.getElementById('cf-name-picker-wrap');
+    const nameBack = document.getElementById('cf-name-toggle');
+    if (useNamePicker) {
+      if (namePickerWrap) namePickerWrap.style.display = '';
+      nameInput.style.display = 'none';
+      if (nameBack) nameBack.style.display = 'none';
+      _setPickerTriggerText('name', '');
+    } else {
+      if (namePickerWrap) namePickerWrap.style.display = 'none';
+      nameInput.style.display = '';
+      if (nameBack) nameBack.style.display = 'none';
     }
 
     const isPlan = type === 'plans';
@@ -960,14 +958,28 @@ const ContentManager = (() => {
       document.getElementById('cf-inclusions').value = item ? item.inclusions : '';
     }
 
-    // Category + icon (services & equipment only)
+    // Category + icon (services & equipment only). Category is always the
+    // picker (list of real, already-used categories + rename/delete +
+    // "Add New") whether adding or editing — there's no reason to hide it
+    // behind an extra click the way the Name picker is (Name only offers
+    // it when adding new, to avoid implying you're renaming the CURRENT
+    // item by picking a different existing name from the list).
     const catEqWrap = document.getElementById('cf-category-icon-wrap');
     if (catEqWrap) catEqWrap.style.display = isPlan ? 'none' : 'grid';
     const catInput  = document.getElementById('cf-category');
     const iconInput = document.getElementById('cf-icon');
-    if (catInput)  catInput.value  = item ? (item.category || '') : '';
+    const catPickerWrap = document.getElementById('cf-category-picker-wrap');
+    const catBack = document.getElementById('cf-category-toggle');
+    if (!isPlan) {
+      _closePicker('category');
+      if (catInput) catInput.value = item ? (item.category || '') : '';
+      if (catPickerWrap) catPickerWrap.style.display = '';
+      if (catInput) catInput.style.display = 'none';
+      if (catBack) catBack.style.display = 'none';
+      _setPickerTriggerText('category', item ? (item.category || '') : '');
+    }
     if (iconInput) iconInput.value = item ? (item.icon || '') : '';
-    _refreshIconPickList(type);
+    _refreshIconPicks(type);
 
     // Equipment/machines checklist — services only ("what to use for this
     // service", shown to members via the eye icon on their service card).
@@ -1010,128 +1022,258 @@ const ContentManager = (() => {
     reader.readAsDataURL(file);
   }
 
-  // ── Name dropdown for new facilities/machines (see openForm) ──
-  // Curated starting suggestions; already-used names (fetched from the
-  // server) are merged in ahead of these so real gym items show up too.
-  const NAME_SUGGESTIONS = {
-    machines: [
-      'Treadmill', 'Elliptical Trainer', 'Stationary Bike', 'Rowing Machine',
-      'Stair Climber', 'Bench Press', 'Squat Rack', 'Smith Machine',
-      'Lat Pulldown Machine', 'Leg Press Machine', 'Leg Extension Machine',
-      'Leg Curl Machine', 'Cable Crossover Machine', 'Chest Press Machine',
-      'Shoulder Press Machine', 'Multi-Gym Station', 'Dumbbells',
-      'Barbells', 'Kettlebells', 'Pull-Up Bar', 'Punching Bag',
-      'Battle Ropes', 'Medicine Balls',
-    ],
-    facilities: [
-      'Weight Area', 'Cardio Zone', 'Free Weights Area', 'Boxing Area',
-      'Functional Training Zone', 'Locker Room', 'Reception',
-      'Stretching Area', 'Group Class Studio',
-    ],
+  // ══════════════════════════════════════════════
+  // Field Picker — shared by the Category field (all types) and the Name
+  // field (facilities/machines, add-new only). A dropdown of real,
+  // already-used values pulled live from the server, with inline
+  // rename/delete on every row and an "Add New" row that swaps to a
+  // free-text box for a value that isn't listed yet. Nothing here is
+  // hardcoded — the list is always whatever's actually in the database.
+  // ══════════════════════════════════════════════
+  const PICKER_CONFIG = {
+    category: {
+      manageUrl: type => `/api/content/categories/manage?type=${encodeURIComponent(type)}`,
+      renameUrl: '/api/content/categories/rename',
+      deleteUrl: '/api/content/categories/delete',
+      addLabel: () => '+ Add New Category…',
+      placeholder: () => 'Select or add a category…',
+      freeformPlaceholder: () => 'e.g. Boxing, Strengthening',
+      deleteWarning: (name, count) => `Remove "${name}" from ${count} item${count === 1 ? '' : 's'}? They'll fall back to "General".`,
+    },
+    name: {
+      manageUrl: type => `/api/content/names/manage?type=${encodeURIComponent(type)}`,
+      renameUrl: '/api/content/names/rename',
+      deleteUrl: '/api/content/names/delete',
+      addLabel: type => type === 'facilities' ? '+ Add New Facility/Area…' : '+ Add New Equipment/Machine…',
+      placeholder: type => type === 'facilities' ? 'Select a facility/area…' : 'Select equipment or a machine…',
+      freeformPlaceholder: () => '',
+      deleteWarning: (name, count) => `Delete "${name}"? This permanently deletes ${count} item${count === 1 ? '' : 's'} named this — it cannot be undone.`,
+    },
   };
+  let pickerOpenField = null;              // 'category' | 'name' | null — which picker panel is currently open
+  const pickerItems = { category: [], name: [] }; // last-fetched [{name,count}] for whichever field is open
+  const pickerMode = { category: 'idle', name: 'idle' };       // 'idle' | 'rename' | 'delete'
+  const pickerModeTarget = { category: null, name: null };     // the row name currently being renamed/deleted
 
-  /** Make sure cache.equipment (the raw list backing both the facilities
-   *  and machines tabs) is loaded, then run cb — used so the name dropdown
-   *  can be populated even if the modal is opened before the grid fetch. */
-  function _ensureEquipmentLoaded(cb) {
-    if (cache.equipment !== null) { cb(); return; }
-    fetch(ENDPOINTS.equipment.list)
+  function _pickerEls(field) {
+    return {
+      wrap:        document.getElementById(`cf-${field}-picker-wrap`),
+      triggerText: document.getElementById(`cf-${field}-trigger-text`),
+      panel:       document.getElementById(`cf-${field}-panel`),
+      input:       document.getElementById(`cf-${field}`),
+      backWrap:    document.getElementById(`cf-${field}-toggle`),
+    };
+  }
+
+  function _setPickerTriggerText(field, value) {
+    const els = _pickerEls(field);
+    if (els.triggerText) els.triggerText.textContent = value || PICKER_CONFIG[field].placeholder(currentType);
+  }
+
+  function togglePicker(field, ev) {
+    if (ev) ev.stopPropagation();
+    if (pickerOpenField === field) { _closePicker(field); return; }
+    if (pickerOpenField) _closePicker(pickerOpenField);
+    pickerOpenField = field;
+    pickerMode[field] = 'idle';
+    pickerModeTarget[field] = null;
+    pickerItems[field] = [];
+    const els = _pickerEls(field);
+    if (els.panel) {
+      // The content-form-modal scrolls internally (overflow-y:auto), which
+      // would otherwise clip a plain absolutely-positioned dropdown once
+      // the field scrolls near the bottom. Fixed positioning computed from
+      // the trigger's live screen position escapes that clipping.
+      const trigger = els.wrap ? els.wrap.querySelector('.picker-select') : null;
+      if (trigger) {
+        const rect = trigger.getBoundingClientRect();
+        els.panel.style.position = 'fixed';
+        els.panel.style.top = `${rect.bottom + 6}px`;
+        els.panel.style.left = `${rect.left}px`;
+        els.panel.style.width = `${rect.width}px`;
+      }
+      els.panel.style.display = 'block';
+      els.panel.innerHTML = '<div class="picker-empty">Loading…</div>';
+    }
+    _fetchPickerItems(field);
+  }
+
+  function _closePicker(field) {
+    const els = _pickerEls(field);
+    if (els.panel) { els.panel.style.display = 'none'; els.panel.innerHTML = ''; }
+    if (pickerOpenField === field) pickerOpenField = null;
+  }
+
+  // Fixed-position panels don't move with the modal's internal scroll or a
+  // window resize, so just close them rather than let them drift.
+  document.addEventListener('scroll', () => { if (pickerOpenField) _closePicker(pickerOpenField); }, true);
+  window.addEventListener('resize', () => { if (pickerOpenField) _closePicker(pickerOpenField); });
+
+  function _fetchPickerItems(field) {
+    const type = currentType;
+    const cfg = PICKER_CONFIG[field];
+    fetch(cfg.manageUrl(type))
       .then(res => res.json())
-      .then(data => { if (data.success) cache.equipment = data.items; cb(); })
-      .catch(() => cb());
+      .then(data => {
+        if (!data.success) { showToast(data.error || 'Could not load list.', 'error'); return; }
+        pickerItems[field] = field === 'category' ? data.categories : data.names;
+        if (pickerOpenField === field) _renderPickerPanel(field);
+      })
+      .catch(() => {
+        if (pickerOpenField === field) {
+          const els = _pickerEls(field);
+          if (els.panel) els.panel.innerHTML = '<div class="picker-empty">Could not reach the server.</div>';
+        }
+      });
   }
 
-  function _populateNameOptions(type) {
-    const select = document.getElementById('cf-name-select');
-    if (!select) return;
-    const wantFacility = type === 'facilities';
-    const used = (cache.equipment || [])
-      .filter(e => !!e.is_facility === wantFacility)
-      .map(e => e.name);
-    const curated = NAME_SUGGESTIONS[type] || [];
-    const merged = [...used];
-    curated.forEach(n => { if (!merged.some(m => m.toLowerCase() === n.toLowerCase())) merged.push(n); });
-    merged.sort((a, b) => a.localeCompare(b));
-
-    const placeholder = wantFacility ? 'Select a facility/area…' : 'Select equipment or a machine…';
-    const addLabel     = wantFacility ? '+ Add New Facility/Area…' : '+ Add New Equipment/Machine…';
-    select.innerHTML =
-      `<option value="" disabled selected>${_esc(placeholder)}</option>` +
-      merged.map(n => `<option value="${_esc(n)}">${_esc(n)}</option>`).join('') +
-      `<option value="__custom__">${_esc(addLabel)}</option>`;
+  function _renderPickerPanel(field) {
+    const els = _pickerEls(field);
+    if (!els.panel) return;
+    const cfg = PICKER_CONFIG[field];
+    const items = pickerItems[field] || [];
+    const mode = pickerMode[field];
+    const target = pickerModeTarget[field];
+    let rowsHtml = items.length ? '' : '<div class="picker-empty">Nothing yet — add one below.</div>';
+    rowsHtml += items.map(it => {
+      if (mode === 'rename' && target === it.name) {
+        return `
+          <div class="picker-row picker-row-editing">
+            <input class="form-input" id="picker-inline-input" value="${_esc(it.name)}">
+            <button type="button" class="picker-row-btn" onclick="event.stopPropagation();ContentManager.submitPickerRename('${field}','${_jsStr(it.name)}')" title="Save">✓</button>
+            <button type="button" class="picker-row-btn" onclick="event.stopPropagation();ContentManager.cancelPickerAction('${field}')" title="Cancel">✕</button>
+          </div>`;
+      }
+      if (mode === 'delete' && target === it.name) {
+        return `
+          <div class="picker-row picker-row-editing">
+            <div class="picker-row-warning">${_esc(cfg.deleteWarning(it.name, it.count))}</div>
+            <button type="button" class="picker-row-btn picker-row-btn-danger" onclick="event.stopPropagation();ContentManager.submitPickerDelete('${field}','${_jsStr(it.name)}')" title="Confirm">✓</button>
+            <button type="button" class="picker-row-btn" onclick="event.stopPropagation();ContentManager.cancelPickerAction('${field}')" title="Cancel">✕</button>
+          </div>`;
+      }
+      return `
+        <div class="picker-row" onclick="ContentManager.selectPickerValue('${field}','${_jsStr(it.name)}')">
+          <span class="picker-row-label">${_esc(it.name)}</span>
+          <span class="picker-row-count">${it.count}</span>
+          <button type="button" class="picker-row-btn" onclick="event.stopPropagation();ContentManager.startPickerRename('${field}','${_jsStr(it.name)}')" title="Rename">✎</button>
+          <button type="button" class="picker-row-btn picker-row-btn-danger" onclick="event.stopPropagation();ContentManager.startPickerDelete('${field}','${_jsStr(it.name)}')" title="Delete">🗑</button>
+        </div>`;
+    }).join('');
+    rowsHtml += `<div class="picker-add-row" onclick="ContentManager.pickerAddNew('${field}')">${_esc(cfg.addLabel(currentType))}</div>`;
+    els.panel.innerHTML = rowsHtml;
+    if (mode === 'rename') {
+      const inp = document.getElementById('picker-inline-input');
+      if (inp) { inp.focus(); inp.select(); }
+    }
   }
 
-  /** Called from the name <select>'s onchange — picking "+ Add New …"
-   *  swaps to the free-text box so staff can type a name not on the list. */
-  function onNameSelectChange() {
-    const select = document.getElementById('cf-name-select');
-    if (!select || select.value !== '__custom__') return;
-    const input = document.getElementById('cf-name');
-    const back  = document.getElementById('cf-name-toggle');
-    select.style.display = 'none';
-    input.style.display  = '';
-    input.value = '';
-    input.focus();
-    if (back) back.style.display = 'block';
+  function selectPickerValue(field, name) {
+    const els = _pickerEls(field);
+    if (els.input) els.input.value = name;
+    _setPickerTriggerText(field, name);
+    _closePicker(field);
+  }
+
+  function startPickerRename(field, name) { pickerMode[field] = 'rename'; pickerModeTarget[field] = name; _renderPickerPanel(field); }
+  function startPickerDelete(field, name) { pickerMode[field] = 'delete'; pickerModeTarget[field] = name; _renderPickerPanel(field); }
+  function cancelPickerAction(field) { pickerMode[field] = 'idle'; pickerModeTarget[field] = null; _renderPickerPanel(field); }
+
+  function submitPickerRename(field, oldName) {
+    const inp = document.getElementById('picker-inline-input');
+    const newName = inp ? inp.value.trim() : '';
+    if (!newName) { showToast('Name cannot be empty.', 'error'); return; }
+    const type = currentType;
+    fetch(PICKER_CONFIG[field].renameUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, old_name: oldName, new_name: newName })
+    })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok || !data.success) { showToast((data && data.error) || 'Could not rename.', 'error'); return; }
+        showToast(data.message || 'Renamed.', 'success');
+        pickerMode[field] = 'idle'; pickerModeTarget[field] = null;
+        const els = _pickerEls(field);
+        if (els.input && els.input.value === oldName) { els.input.value = newName; _setPickerTriggerText(field, newName); }
+        _fetchPickerItems(field);
+        refresh(type); // reload the grid/filter chips behind the modal so they reflect the rename immediately
+      })
+      .catch(() => showToast('Could not reach the server.', 'error'));
+  }
+
+  function submitPickerDelete(field, name) {
+    const type = currentType;
+    fetch(PICKER_CONFIG[field].deleteUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, name })
+    })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok || !data.success) { showToast((data && data.error) || 'Could not delete.', 'error'); return; }
+        showToast(data.message || 'Deleted.', 'success');
+        pickerMode[field] = 'idle'; pickerModeTarget[field] = null;
+        const els = _pickerEls(field);
+        if (els.input && els.input.value === name) { els.input.value = ''; _setPickerTriggerText(field, ''); }
+        _fetchPickerItems(field);
+        refresh(type);
+      })
+      .catch(() => showToast('Could not reach the server.', 'error'));
+  }
+
+  /** "+ Add New …" row — swaps the picker for a free-text box so staff can
+   *  type a value that isn't on the list yet. */
+  function pickerAddNew(field) {
+    _closePicker(field);
+    const els = _pickerEls(field);
+    if (els.wrap) els.wrap.style.display = 'none';
+    if (els.input) {
+      els.input.style.display = '';
+      els.input.value = '';
+      els.input.placeholder = PICKER_CONFIG[field].freeformPlaceholder(currentType);
+      els.input.focus();
+    }
+    if (els.backWrap) els.backWrap.style.display = 'block';
   }
 
   /** "← Choose from list instead" link — swaps back from the free-text
-   *  box to the dropdown. */
-  function backToNameList() {
-    const select = document.getElementById('cf-name-select');
-    const input  = document.getElementById('cf-name');
-    const back   = document.getElementById('cf-name-toggle');
-    if (!select) return;
-    select.value = '';
-    select.style.display = '';
-    input.style.display  = 'none';
-    if (back) back.style.display = 'none';
+   *  box to the picker. */
+  function pickerBackToList(field) {
+    const els = _pickerEls(field);
+    if (els.input) els.input.style.display = 'none';
+    if (els.wrap) els.wrap.style.display = '';
+    if (els.backWrap) els.backWrap.style.display = 'none';
+    _setPickerTriggerText(field, els.input ? els.input.value : '');
   }
 
-  // ── Category suggestions + icon quick-pick (services & equipment) ──
-  const CATEGORY_SUGGESTIONS = {
-    machines:  ['Cardio Equipment', 'Strength Machine', 'Free Weights', 'Strength Equipment', 'Body Weight Equipments', 'Functional Training', 'Fitness Accessories', 'Recovery Equipment'],
-    services:  ['Boxing', 'Strengthening', 'Cardio Zone', 'Weight Loss', 'Coaching', 'Membership Perks', 'Facilities', 'Classes', 'General'],
-    facilities: ['Weight Area', 'Cardio Zone', 'Reception', 'Locker Room', 'Boxing Area', 'Functional Training', 'General'],
-  };
+  // Escapes a string for safe embedding inside a single-quoted JS string
+  // literal within inline onclick="" HTML attributes above.
+  function _jsStr(s) {
+    return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  }
+
+  // Close any open picker panel when clicking anywhere outside it.
+  document.addEventListener('click', e => {
+    if (!pickerOpenField) return;
+    const wrap = document.getElementById(`cf-${pickerOpenField}-picker-wrap`);
+    if (wrap && !wrap.contains(e.target)) _closePicker(pickerOpenField);
+  });
+
+  // ── Icon quick-pick (services & equipment) ──
   const ICON_SUGGESTIONS = {
     machines:   ['🏋️', '💪', '🥊', '🏃', '🚴', '🤸', '🪢', '🦵', '🔩', '⬇️', '🔧', '🎯', '🧘', '🔥'],
     services:   ['🥊', '💪', '🔥', '🏃', '🛎️', '🧑‍🏫', '🥤', '🚿', '🅿️', '📅', '🩺'],
     facilities: ['🏢', '🚪', '🏋️', '🧘', '🚿', '🅿️', '🛎️', '🔥'],
   };
-  let realCategoriesCache = {}; // per-type ({machines, services, facilities}) categories actually in use, fetched from the server
 
-  function _refreshIconPickList(type) {
-    const datalist = document.getElementById('cf-category-list');
-    if (datalist) {
-      // Show real, already-used categories first (so Services and
-      // Equipment stay spelled identically and keep grouping together on
-      // the member dashboard), then fall back to curated suggestions.
-      // Fetched per-type so a Machines-only category never leaks into the
-      // Services/Facilities pickers, and vice versa.
-      const used = realCategoriesCache[type] || [];
-      const suggested = CATEGORY_SUGGESTIONS[type] || [];
-      const merged = [...used];
-      suggested.forEach(c => { if (!merged.some(m => m.toLowerCase() === c.toLowerCase())) merged.push(c); });
-      datalist.innerHTML = merged.map(c => `<option value="${_esc(c)}"></option>`).join('');
-    }
+  function _refreshIconPicks(type) {
     const iconRow = document.getElementById('cf-icon-picks');
     if (iconRow) {
       const icons = ICON_SUGGESTIONS[type] || [];
       iconRow.innerHTML = icons.map(i =>
         `<button type="button" class="icon-pick-btn" onclick="ContentManager.pickIcon('${i}')">${i}</button>`
       ).join('');
-    }
-    if (realCategoriesCache[type] === undefined) {
-      fetch(`/api/content/categories?type=${encodeURIComponent(type)}`)
-        .then(res => res.json())
-        .then(data => {
-          if (data.success) {
-            realCategoriesCache[type] = data.categories;
-            _refreshIconPickList(type); // re-render datalist now that real categories are in
-          }
-        })
-        .catch(() => {}); // non-fatal — curated suggestions still work
     }
   }
 
@@ -1178,16 +1320,10 @@ const ContentManager = (() => {
     const type = document.getElementById('cf-type').value;
     const id = document.getElementById('cf-id').value;
 
-    // Name comes from the dropdown when it's the visible control (adding a
-    // new facility/machine), otherwise from the classic free-text box.
-    const nameSelect = document.getElementById('cf-name-select');
-    let name;
-    if (nameSelect && nameSelect.style.display !== 'none') {
-      name = (nameSelect.value || '').trim();
-      if (!name || name === '__custom__') { showToast('Please choose an item from the list, or add a new one.', 'error'); return; }
-    } else {
-      name = _val('cf-name');
-    }
+    // cf-name is the single source of truth whether it was filled by
+    // typing (classic free-text box) or by picking from the Name picker
+    // (facilities/machines add-new) — the picker writes into it directly.
+    const name = _val('cf-name');
     if (!name) { showToast('Name is required.', 'error'); return; }
 
     const fd = new FormData();
@@ -1231,7 +1367,6 @@ const ContentManager = (() => {
         if (!ok || !data.success) { showToast(data.error || 'Could not save.', 'error'); return; }
         showToast(data.message || 'Saved.', 'success');
         closeModal('content-form-modal');
-        if (type !== 'plans') delete realCategoriesCache[type]; // pick up any newly-typed category next time this type's form opens
         refresh(type);
       })
       .catch(() => showToast('Could not reach the server.', 'error'));
@@ -1263,7 +1398,12 @@ const ContentManager = (() => {
       .finally(() => { pendingDelete = null; closeModal('content-delete-modal'); });
   }
 
-  return { ensureLoaded, showType, openForm, previewImage, pickIcon, submit, confirmDelete, cancelDelete, performDelete, refresh, onNameSelectChange, backToNameList, filterByCategory };
+  return {
+    ensureLoaded, showType, openForm, previewImage, pickIcon, submit, confirmDelete, cancelDelete, performDelete,
+    refresh, filterByCategory,
+    togglePicker, selectPickerValue, startPickerRename, startPickerDelete, cancelPickerAction,
+    submitPickerRename, submitPickerDelete, pickerAddNew, pickerBackToList,
+  };
 })();
 
 
