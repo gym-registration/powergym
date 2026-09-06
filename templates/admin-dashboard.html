@@ -102,7 +102,11 @@
           <div id="admin-uploaded-proofs" class="panel-body" style="padding:16px;">
             {% for p in pending_payments[:5] %}
             <div class="verify-card" data-payment-id="{{ p.id }}" data-member-name="{{ p.member_name }}" data-plan="{{ p.plan }}" data-amount="{{ p.amount }}">
-              <div>
+              <div style="display:flex;align-items:flex-start;gap:12px;">
+                <div class="verify-card-avatar"
+                     style="{% if p.member_profile_picture %}background-image:url('{{ p.member_profile_picture }}');{% endif %}"
+                     {% if p.member_profile_picture %}onclick="viewPaymentProof('{{ p.member_profile_picture }}', 'Profile Picture — {{ p.member_name }}')" title="View profile picture"{% endif %}>{% if not p.member_profile_picture %}👤{% endif %}</div>
+                <div>
                 <div style="font-weight:600;margin-bottom:4px;">{{ p.member_name }} — {{ p.plan }}</div>
                 <div style="font-size:13px;color:var(--muted);">
                   {% if p.stage == 'approval' %}New plan request{% else %}{{ p.method }} · Ref: {{ p.reference }}{% endif %} · Txn: #{{ p.txn }} · ₱{{ p.amount }}
@@ -123,6 +127,7 @@
                   {% endif %}
                   {% if p.is_student %}<span class="badge badge-gold">🎓 Student</span>{% endif %}
                   {% if p.wants_coach %}<span class="badge badge-green">🏋 Coach: {{ p.coach_name }}</span>{% endif %}
+                </div>
                 </div>
               </div>
               <div style="display:flex;gap:8px;">
@@ -226,7 +231,11 @@
         <div class="panel-body">
           {% for p in pending_payments %}
           <div class="verify-card" data-payment-id="{{ p.id }}" data-member-name="{{ p.member_name }}" data-plan="{{ p.plan }}" data-amount="{{ p.amount }}" style="margin-bottom:12px;">
-            <div>
+            <div style="display:flex;align-items:flex-start;gap:12px;">
+              <div class="verify-card-avatar"
+                   style="{% if p.member_profile_picture %}background-image:url('{{ p.member_profile_picture }}');{% endif %}"
+                   {% if p.member_profile_picture %}onclick="viewPaymentProof('{{ p.member_profile_picture }}', 'Profile Picture — {{ p.member_name }}')" title="View profile picture"{% endif %}>{% if not p.member_profile_picture %}👤{% endif %}</div>
+              <div>
               <div style="font-weight:600;margin-bottom:4px;">{{ p.member_name }} — {{ p.plan }}</div>
               <div style="font-size:13px;color:var(--muted);">
                 {% if p.stage == 'approval' %}New plan request{% else %}{{ p.method }} · Ref: {{ p.reference }}{% endif %} · Txn: #{{ p.txn }} · ₱{{ p.amount }}
@@ -247,6 +256,7 @@
                 {% endif %}
                 {% if p.is_student %}<span class="badge badge-gold">🎓 Student</span>{% endif %}
                 {% if p.wants_coach %}<span class="badge badge-green">🏋 Coach: {{ p.coach_name }}</span>{% endif %}
+              </div>
               </div>
             </div>
             <div style="display:flex;gap:8px;">

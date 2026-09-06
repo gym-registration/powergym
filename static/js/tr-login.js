@@ -104,6 +104,17 @@ let termsSecondsLeftAtOpen = null; // snapshot of secondsLeft when this open beg
 let termsOpenedAtMs       = null; // performance.now() when this open began
 let termsHasScrolledToBottom = false;
 let termsAutoScrollRAF    = null;
+let termsPaused           = false; // true while the member has tapped to pause reading
+
+/** Eases the scroll so it isn't a constant mechanical creep — slower at
+ *  the start and the end (where the member is most likely reading
+ *  closely), a little quicker through the middle. Still reaches ratio 1
+ *  at t=1 exactly like a linear ramp would, so the total read time and
+ *  the "reaches bottom exactly when the timer ends" guarantee are
+ *  unaffected — only the pacing along the way changes. */
+function _termsEase(t) {
+  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+}
 
 /** True once the countdown has fully elapsed AND the auto-scroll has
  *  actually reached the bottom — the same condition the "I agree"
@@ -135,7 +146,9 @@ function _termsUpdateTimerDisplay() {
   const timerEl = document.getElementById('terms-timer');
   if (!timerEl) return;
   if (termsSecondsLeft > 0) {
-    timerEl.textContent = `Reading automatically — please wait ${_termsFormatTime(termsSecondsLeft)} before you can close this and agree.`;
+    timerEl.textContent = termsPaused
+      ? `Paused — ${_termsFormatTime(termsSecondsLeft)} left. Tap anywhere to resume.`
+      : `Reading automatically — please wait ${_termsFormatTime(termsSecondsLeft)} before you can close this and agree. (Tap anywhere to pause.)`;
   } else {
     timerEl.textContent = "You've reached the end of the Terms & Policy — you may close this and check \u201cI agree.\u201d";
   }
@@ -158,7 +171,8 @@ function _termsAutoScrollTick(bodyEl) {
   }
 
   const total = termsTotalSeconds || 1;
-  const ratio = Math.min(1, Math.max(0, 1 - effectiveSecondsLeft / total));
+  const linearRatio = Math.min(1, Math.max(0, 1 - effectiveSecondsLeft / total));
+  const ratio = _termsEase(linearRatio);
   const maxScrollable = Math.max(0, bodyEl.scrollHeight - bodyEl.clientHeight);
   bodyEl.scrollTop = ratio * maxScrollable;
 
@@ -171,6 +185,36 @@ function _termsAutoScrollTick(bodyEl) {
   }
 
   termsAutoScrollRAF = requestAnimationFrame(() => _termsAutoScrollTick(bodyEl));
+}
+
+/** Freeze the auto-scroll and countdown exactly where they are — used
+ *  when the member taps anywhere on screen to pause their reading. */
+function _termsPauseAutoScroll() {
+  if (termsAutoScrollRAF) { cancelAnimationFrame(termsAutoScrollRAF); termsAutoScrollRAF = null; }
+  termsPaused = true;
+  _termsUpdateTimerDisplay();
+}
+
+/** Pick the auto-scroll back up from wherever it was paused. Reuses the
+ *  same "snapshot secondsLeft, restart the clock from now" trick used
+ *  when reopening the modal after a previous close. */
+function _termsResumeAutoScroll() {
+  if (!termsPaused || termsSecondsLeft <= 0) return;
+  const body = document.getElementById('terms-modal-body');
+  if (!body) return;
+  termsPaused = false;
+  termsSecondsLeftAtOpen = termsSecondsLeft;
+  termsOpenedAtMs = performance.now();
+  _termsAutoScrollTick(body);
+}
+
+/** Tap-anywhere-on-screen handler — toggles pause/resume while the
+ *  countdown is still running. No-op once the read gate is already
+ *  satisfied, since there's nothing left to pause. */
+function _termsToggleAutoScrollPause() {
+  if (termsSecondsLeft === null || termsSecondsLeft <= 0) return;
+  if (termsPaused) _termsResumeAutoScroll();
+  else _termsPauseAutoScroll();
 }
 
 /** Open the Terms & Policy modal from registration. The content
@@ -212,9 +256,21 @@ function openTermsModal() {
     body.style.overflowY = 'auto';
   }
 
+  // Let the member tap/click anywhere on screen — the overlay spans the
+  // full viewport while open — to pause and resume their reading, bound
+  // once and reused across every open of this same modal instance.
+  if (!modal.dataset.pauseBound) {
+    modal.dataset.pauseBound = '1';
+    modal.addEventListener('click', e => {
+      if (e.target.closest('#terms-modal-close')) return;
+      _termsToggleAutoScrollPause();
+    });
+  }
+
   const observer = new MutationObserver(() => {
     if (!modal.classList.contains('open')) {
       if (termsAutoScrollRAF) { cancelAnimationFrame(termsAutoScrollRAF); termsAutoScrollRAF = null; }
+      termsPaused = false;
       if (body) body.style.overflowY = 'auto';
       if (termsSecondsLeft <= 0 && termsHasScrolledToBottom) {
         if (checkbox) checkbox.disabled = false;
@@ -516,9 +572,16 @@ function closeAuthScreen() {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
 }
 
+/** The cropped profile-picture Blob awaiting submission, set by
+ *  previewProfilePicture() below once the member confirms their crop.
+ *  completeRegistration() sends this in place of the raw file. */
+let _regProfilePictureBlob = null;
+let _regProfilePictureName = null;
+
 /** Live preview + client-side validation for the mandatory registration
- *  profile picture (reg-profile-picture). Swaps the camera icon for the
- *  chosen image and flags the circle as filled once a valid file is picked. */
+ *  profile picture (reg-profile-picture). Opens the crop step so the
+ *  member can reposition/zoom before it's saved, then swaps the camera
+ *  icon for the cropped result and flags the circle as filled. */
 function previewProfilePicture(input) {
   const file = input.files && input.files[0];
   const circle   = document.getElementById('pfp-upload-circle');
@@ -539,14 +602,18 @@ function previewProfilePicture(input) {
     return;
   }
 
-  const reader = new FileReader();
-  reader.onload = e => {
-    if (preview) { preview.src = e.target.result; preview.style.display = 'block'; }
+  openImageCropper(file, (blob, blobName) => {
+    _regProfilePictureBlob = blob;
+    _regProfilePictureName = blobName;
+    const previewUrl = URL.createObjectURL(blob);
+    if (preview) { preview.src = previewUrl; preview.style.display = 'block'; }
     if (icon) icon.style.display = 'none';
     if (circle) circle.classList.add('has-image');
     if (filename) filename.textContent = file.name;
-  };
-  reader.readAsDataURL(file);
+  }, () => {
+    // Cancelled the crop — treat it as if nothing was ever picked.
+    input.value = '';
+  });
 }
 
 /** Submit the member self-registration form (used by trmem.html's
@@ -564,10 +631,8 @@ function completeRegistration() {
   const password       = document.getElementById('reg-pass')?.value || '';
   const confirm        = document.getElementById('reg-confirm')?.value || '';
   const termsChecked   = document.getElementById('reg-terms-check')?.checked;
-  const profilePicInput = document.getElementById('reg-profile-picture');
-  const profilePicFile  = profilePicInput?.files && profilePicInput.files[0];
 
-  if (!profilePicFile) {
+  if (!_regProfilePictureBlob) {
     showToast('Please upload a profile picture to create your account.', 'error');
     return;
   }
@@ -607,7 +672,7 @@ function completeRegistration() {
   formData.append('phone', phone);
   formData.append('birthday', birthday);
   formData.append('password', password);
-  formData.append('profile_picture', profilePicFile);
+  formData.append('profile_picture', _regProfilePictureBlob, _regProfilePictureName);
 
   fetch('/register', {
     method: 'POST',
@@ -621,6 +686,8 @@ function completeRegistration() {
         return;
       }
       showToast(data.message || 'Account created! Sign in to continue.', 'success');
+      _regProfilePictureBlob = null;
+      _regProfilePictureName = null;
       const loginEmail = document.getElementById('login-email');
       if (loginEmail) loginEmail.value = email;
       goTo('login');

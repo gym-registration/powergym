@@ -371,16 +371,31 @@ const MemberModule = (() => {
     if (isStudent && studentIdFile) formData.append('student_id', studentIdFile);
     _pendingPlanRequest = { formData };
 
-    // Populate the invoice confirmation modal
+    // Populate the invoice confirmation modal — mirrors the server's
+    // _payment_total()/STUDENT_PLAN_PRICES logic so the preview the member
+    // sees here matches what staff/admin will actually charge. Every plan
+    // gets this treatment automatically, since plan.student_price comes
+    // straight from the same table the server uses (falls back to the
+    // regular price for any plan with no student rate configured).
+    const regularPrice = plan.price;
+    const studentPrice = (plan.student_price != null) ? plan.student_price : plan.price;
+    const discountAmount = isStudent ? Math.max(0, regularPrice - studentPrice) : 0;
+    const total = isStudent ? studentPrice : regularPrice;
+
     document.getElementById('confirm-plan-name').textContent = plan.name.toUpperCase();
-    document.getElementById('confirm-plan-regular-price').textContent = _peso(plan.price);
-    document.getElementById('confirm-plan-discount-row').style.display = 'none';
+    document.getElementById('confirm-plan-regular-price').textContent = _peso(regularPrice);
+    if (discountAmount > 0) {
+      document.getElementById('confirm-plan-discount-row').style.display = 'flex';
+      document.getElementById('confirm-plan-discount-amount').textContent = '−' + _peso(discountAmount);
+    } else {
+      document.getElementById('confirm-plan-discount-row').style.display = 'none';
+    }
     document.getElementById('confirm-plan-coach-row').style.display = 'none';
     document.getElementById('confirm-plan-coach-fee-row').style.display = 'none';
     document.getElementById('confirm-plan-date').textContent =
       new Date(startDate + 'T00:00:00').toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
     document.getElementById('confirm-plan-end-date').textContent = _previewExpiry(plan, startDate);
-    document.getElementById('confirm-plan-total').textContent = _peso(plan.price);
+    document.getElementById('confirm-plan-total').textContent = _peso(total);
 
     openModal('confirm-plan-modal');
   }
@@ -520,8 +535,18 @@ const MemberModule = (() => {
       return;
     }
 
+    // Let the member reposition/zoom before it's uploaded, rather than
+    // saving whatever framing the raw file happened to have.
+    openImageCropper(file, (blob, blobName) => {
+      _uploadProfilePicture(blob, blobName, input);
+    }, () => {
+      input.value = '';
+    });
+  }
+
+  function _uploadProfilePicture(blob, blobName, input) {
     const formData = new FormData();
-    formData.append('profile_picture', file);
+    formData.append('profile_picture', blob, blobName);
 
     showLoadingOverlay('Uploading your new photo...');
     _apiForm('/update-profile-picture', formData)

@@ -1474,7 +1474,198 @@ function closeAnnouncementNoticeModal() {
 
 
 /* ════════════════════════════════════════════════
-   6. COMMON INIT — always-available globals
+   6. IMAGE CROPPER MODULE
+   Shared "reposition + zoom" crop step used anywhere
+   a member uploads a profile picture (registration's
+   Personal Information step, and the Profile tab's
+   "change picture" button). Built once, on demand,
+   rather than duplicated in every template, since
+   every page that needs it already loads this file.
+════════════════════════════════════════════════ */
+const CROP_VIEWPORT_SIZE = 260;  // on-screen crop circle, in px
+const CROP_OUTPUT_SIZE   = 500;  // exported image resolution, in px
+const CROP_MAX_ZOOM      = 300;  // slider max, % of the "fill" size
+
+let _crop = null; // { file, natW, natH, baseScale, zoom, left, top, dragging, onConfirm, onCancel }
+
+/** Lazily build the crop modal the first time it's needed. */
+function _ensureCropModal() {
+  if (document.getElementById('image-crop-modal')) return;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-overlay';
+  wrap.id = 'image-crop-modal';
+  wrap.innerHTML = `
+    <div class="modal crop-modal">
+      <button class="modal-close" type="button" onclick="cancelImageCrop()">✕</button>
+      <div class="modal-title" style="text-align:center;">ADJUST YOUR PHOTO</div>
+      <div class="crop-viewport" id="crop-viewport">
+        <img id="crop-image" alt="" draggable="false">
+      </div>
+      <div class="crop-hint">Drag to reposition</div>
+      <div class="crop-zoom-row">
+        <span class="crop-zoom-icon">−</span>
+        <input type="range" id="crop-zoom-slider" min="100" max="${CROP_MAX_ZOOM}" value="100">
+        <span class="crop-zoom-icon">+</span>
+      </div>
+      <div class="crop-actions">
+        <button type="button" class="btn-primary btn-secondary-action" onclick="cancelImageCrop()">CANCEL</button>
+        <button type="button" class="btn-primary" onclick="confirmImageCrop()">SUBMIT</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+
+  const viewport = document.getElementById('crop-viewport');
+  const slider   = document.getElementById('crop-zoom-slider');
+  const getPoint = e => (e.touches && e.touches[0]) ? e.touches[0] : e;
+
+  function onDragStart(e) {
+    if (!_crop) return;
+    _crop.dragging = true;
+    const p = getPoint(e);
+    _crop.startX = p.clientX;
+    _crop.startY = p.clientY;
+    _crop.startLeft = _crop.left;
+    _crop.startTop  = _crop.top;
+  }
+  function onDragMove(e) {
+    if (!_crop || !_crop.dragging) return;
+    const p = getPoint(e);
+    _crop.left = _crop.startLeft + (p.clientX - _crop.startX);
+    _crop.top  = _crop.startTop  + (p.clientY - _crop.startY);
+    _cropClamp();
+    _cropRender();
+    if (e.cancelable) e.preventDefault();
+  }
+  function onDragEnd() { if (_crop) _crop.dragging = false; }
+
+  viewport.addEventListener('mousedown', onDragStart);
+  window.addEventListener('mousemove', onDragMove);
+  window.addEventListener('mouseup', onDragEnd);
+  viewport.addEventListener('touchstart', onDragStart, { passive: true });
+  window.addEventListener('touchmove', onDragMove, { passive: false });
+  window.addEventListener('touchend', onDragEnd);
+
+  slider.addEventListener('input', () => _cropSetZoom(Number(slider.value)));
+}
+
+/** Keep the image covering the circular viewport with no gaps, however
+ *  it's been dragged or zoomed. */
+function _cropClamp() {
+  const V = CROP_VIEWPORT_SIZE;
+  const w = _crop.natW * _crop.baseScale * (_crop.zoom / 100);
+  const h = _crop.natH * _crop.baseScale * (_crop.zoom / 100);
+  _crop.left = Math.min(0, Math.max(_crop.left, V - w));
+  _crop.top  = Math.min(0, Math.max(_crop.top,  V - h));
+}
+
+/** Re-zoom while keeping whatever was centered in the frame centered. */
+function _cropSetZoom(zoomPct) {
+  if (!_crop) return;
+  const V = CROP_VIEWPORT_SIZE;
+  const oldW = _crop.natW * _crop.baseScale * (_crop.zoom / 100);
+  const oldH = _crop.natH * _crop.baseScale * (_crop.zoom / 100);
+  const centerXRatio = (V / 2 - _crop.left) / oldW;
+  const centerYRatio = (V / 2 - _crop.top)  / oldH;
+
+  _crop.zoom = zoomPct;
+  const newW = _crop.natW * _crop.baseScale * (_crop.zoom / 100);
+  const newH = _crop.natH * _crop.baseScale * (_crop.zoom / 100);
+  _crop.left = V / 2 - centerXRatio * newW;
+  _crop.top  = V / 2 - centerYRatio * newH;
+
+  _cropClamp();
+  _cropRender();
+}
+
+function _cropRender() {
+  const img = document.getElementById('crop-image');
+  if (!img || !_crop) return;
+  const w = _crop.natW * _crop.baseScale * (_crop.zoom / 100);
+  const h = _crop.natH * _crop.baseScale * (_crop.zoom / 100);
+  img.style.width  = `${w}px`;
+  img.style.height = `${h}px`;
+  img.style.left   = `${_crop.left}px`;
+  img.style.top    = `${_crop.top}px`;
+}
+
+/** Open the crop step for a freshly-picked file. onConfirm(blob, filename)
+ *  receives the cropped square image as a Blob once the member hits
+ *  SUBMIT; onCancel() runs instead if they back out — the caller should
+ *  reset its file input in that case so nothing is silently uploaded. */
+function openImageCropper(file, onConfirm, onCancel) {
+  _ensureCropModal();
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    const probe = new Image();
+    probe.onload = () => {
+      const V = CROP_VIEWPORT_SIZE;
+      const baseScale = Math.max(V / probe.naturalWidth, V / probe.naturalHeight);
+      _crop = {
+        file,
+        natW: probe.naturalWidth,
+        natH: probe.naturalHeight,
+        baseScale,
+        zoom: 100,
+        left: (V - probe.naturalWidth * baseScale) / 2,
+        top:  (V - probe.naturalHeight * baseScale) / 2,
+        dragging: false,
+        onConfirm,
+        onCancel,
+      };
+      const cropImg = document.getElementById('crop-image');
+      cropImg.src = e.target.result;
+      const slider = document.getElementById('crop-zoom-slider');
+      if (slider) slider.value = 100;
+      _cropRender();
+      openModal('image-crop-modal');
+    };
+    probe.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+/** "✕" or CANCEL on the crop step — discard the selection entirely. */
+function cancelImageCrop() {
+  const cb = _crop && _crop.onCancel;
+  _crop = null;
+  closeModal('image-crop-modal');
+  if (cb) cb();
+}
+
+/** SUBMIT on the crop step — render the visible circle out to a fixed-size
+ *  canvas and hand the result back as a Blob. */
+function confirmImageCrop() {
+  if (!_crop) return;
+  const V = CROP_VIEWPORT_SIZE;
+  const outScale = CROP_OUTPUT_SIZE / V;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = CROP_OUTPUT_SIZE;
+  canvas.height = CROP_OUTPUT_SIZE;
+  const ctx = canvas.getContext('2d');
+
+  const img = document.getElementById('crop-image');
+  const w = _crop.natW * _crop.baseScale * (_crop.zoom / 100) * outScale;
+  const h = _crop.natH * _crop.baseScale * (_crop.zoom / 100) * outScale;
+  const left = _crop.left * outScale;
+  const top  = _crop.top  * outScale;
+  ctx.drawImage(img, left, top, w, h);
+
+  const isPng = _crop.file.type === 'image/png';
+  const mime = isPng ? 'image/png' : 'image/jpeg';
+  const ext  = isPng ? 'png' : 'jpg';
+  canvas.toBlob(blob => {
+    const cb = _crop.onConfirm;
+    _crop = null;
+    closeModal('image-crop-modal');
+    if (cb) cb(blob, `profile-picture.${ext}`);
+  }, mime, 0.92);
+}
+
+/* ════════════════════════════════════════════════
+   7. COMMON INIT — always-available globals
    Page-specific scripts (tr-login.js / tr-admin.js /
    tr-staff.js / tr-member.js) add their own
    DOMContentLoaded listeners on top of this one.
@@ -1496,6 +1687,9 @@ document.addEventListener('DOMContentLoaded', () => {
   window.completeRegistration = completeRegistration;
   window.filterTable   = filterTable;
   window.togglePasswordVisibility = togglePasswordVisibility;
+  window.openImageCropper = openImageCropper;
+  window.cancelImageCrop  = cancelImageCrop;
+  window.confirmImageCrop = confirmImageCrop;
   window.ContentManager = ContentManager;
   window.goTo          = (screen) => Navigation.goToScreen(screen);
   // selectPlan is re-assigned per page (login/member) where relevant; keep a fallback

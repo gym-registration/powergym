@@ -834,9 +834,9 @@
           </button>
           <div class="panel-body" style="text-align:center;" onclick="openServiceModal({{ s.id }})">
             {% if s.image_path %}
-            <div style="width:56px;height:56px;margin:0 auto 10px;border-radius:8px;background-size:cover;background-position:center;background-image:url('{{ url_for('static', filename=s.image_path) }}');"></div>
+            <div style="width:100%;aspect-ratio:1/1;margin:0 auto 10px;border-radius:10px;background-size:cover;background-position:center;background-image:url('{{ url_for('static', filename=s.image_path) }}');"></div>
             {% else %}
-            <div style="font-size:40px;margin-bottom:10px;">{{ s.icon or '🛎️' }}</div>
+            <div style="font-size:64px;margin-bottom:10px;">{{ s.icon or '🛎️' }}</div>
             {% endif %}
             <div class="panel-title">{{ s.name }}</div>
             {% if s.description %}<div style="font-size:13px;color:var(--muted);margin-top:6px;">{{ s.description }}</div>{% endif %}
@@ -1019,6 +1019,7 @@
 <div class="modal-overlay" id="service-modal">
   <div class="modal">
     <button class="modal-close" onclick="closeModal('service-modal')">✕</button>
+    <div id="service-modal-image" style="display:none;width:100%;aspect-ratio:16/9;margin-bottom:14px;border-radius:10px;background-size:cover;background-position:center;"></div>
     <div style="font-size:45px;text-align:center;margin-bottom:6px;" id="service-modal-icon">🛎️</div>
     <div class="modal-title" style="text-align:center;" id="service-modal-title">SERVICE</div>
     <div style="font-size:15px;color:var(--muted);text-align:center;margin-bottom:18px;" id="service-modal-subtitle"></div>

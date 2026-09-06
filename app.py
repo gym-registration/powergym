@@ -20,6 +20,136 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from datetime import datetime, timezone, date, timedelta
 
+# ── School ID sanity checks (opencv-python-headless + pytesseract) ──
+# Runs fully offline (no external API calls) — flags an uploaded "school ID"
+# photo as invalid if it doesn't look like an ID at all, catching obvious
+# non-ID uploads (blank images, screenshots, random selfies/photos).
+# Three independent, lightweight heuristics, combined below:
+#   1. Face check       — a human face is visible.
+#   2. Card-shape check — a single large, roughly rectangular, four-cornered
+#                         region fills a good chunk of the frame (how an ID
+#                         card looks when photographed close-up, vs. a normal
+#                         candid photo with open background around the person).
+#   3. Text check        — OCR finds printed text on it (name/school/ID no.),
+#                          which a random photo won't have.
+# None of these are real document verification — they can't confirm the
+# card is genuine or matches the person (that would need proper OCR/ID
+# classification tooling this app doesn't have) — so staff still does the
+# real visual review via "View School ID" before approving. Each check is
+# independently optional: if its library isn't installed, or the file isn't
+# a readable image (e.g. a PDF), that check is silently skipped (returns
+# None) rather than blocking the upload or crashing the app.
+#   pip install opencv-python-headless   (face + card-shape checks)
+#   pip install pytesseract              (text check — also needs the
+#                                          system 'tesseract-ocr' package,
+#                                          e.g. apt install tesseract-ocr)
+try:
+    import cv2
+    _FACE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    _EYE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
+    print(f"[school-id-check] opencv {cv2.__version__} loaded OK — face/card-shape checks ENABLED")
+except Exception as e:
+    # Broad except on purpose: a missing OS shared library (e.g. libGL.so.1),
+    # which is a very common issue for opencv-python-headless on minimal
+    # hosting images, surfaces as an ImportError too — and if that's caught
+    # silently, this whole safeguard goes quiet with nobody noticing. Print
+    # loudly instead so a broken install shows up in the server logs.
+    cv2 = None
+    _FACE_CASCADE = None
+    _EYE_CASCADE = None
+    print(f"[school-id-check] opencv NOT available ({type(e).__name__}: {e}) — face/card-shape "
+          f"checks DISABLED, uploads will only reach staff's manual review")
+
+try:
+    import pytesseract
+    pytesseract.get_tesseract_version()  # raises if the pip package is installed but the
+                                          # system 'tesseract-ocr' binary itself is missing
+    print("[school-id-check] pytesseract + tesseract binary found — text check ENABLED")
+except ImportError as e:
+    pytesseract = None
+    print(f"[school-id-check] pytesseract NOT installed ({e}) — text check DISABLED")
+except Exception as e:
+    pytesseract = None
+    print(f"[school-id-check] pytesseract installed but the 'tesseract-ocr' system binary "
+          f"wasn't found/working ({type(e).__name__}: {e}) — text check DISABLED. "
+          f"Install it with: apt install tesseract-ocr")
+
+
+def _image_has_face(file_path):
+    """Returns True/False, or None if the face check can't be run at all
+    (opencv missing, or the file isn't a readable image — e.g. a PDF).
+    Cross-checks each candidate face against an eye detector: cluttered,
+    high-contrast non-face images (screenshots, code editors, icon grids)
+    occasionally trigger a false-positive box from the face cascade alone,
+    and a real face reliably has two detectable eye regions inside it."""
+    if _FACE_CASCADE is None:
+        return None
+    img = cv2.imread(file_path)
+    if img is None:
+        return None
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.equalizeHist(gray)
+    faces = _FACE_CASCADE.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6, minSize=(60, 60))
+    if len(faces) == 0:
+        return False
+    if _EYE_CASCADE is None or _EYE_CASCADE.empty():
+        return True  # can't cross-check; fall back to the raw cascade result
+    for (x, y, w, h) in faces:
+        roi = gray[y:y + h, x:x + w]
+        eyes = _EYE_CASCADE.detectMultiScale(roi, scaleFactor=1.1, minNeighbors=5, minSize=(15, 15))
+        if len(eyes) >= 1:
+            return True
+    return False
+
+
+def _image_looks_like_a_card(file_path):
+    """Returns True/False, or None if the check can't be run (opencv missing,
+    or the file isn't a readable image). Looks for a single large, roughly
+    rectangular (4-6 corner) contour covering at least a quarter of the
+    frame — the visual signature of someone photographing an ID card close
+    up. A normal candid/selfie photo usually has no such dominant shape."""
+    if cv2 is None:
+        return None
+    img = cv2.imread(file_path)
+    if img is None:
+        return None
+    h, w = img.shape[:2]
+    frame_area = h * w
+    if frame_area == 0:
+        return None
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.dilate(cv2.Canny(blurred, 50, 150), None, iterations=2)
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:5]:
+        if cv2.contourArea(contour) < frame_area * 0.25:
+            break  # sorted descending, so nothing further is big enough either
+        perimeter = cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
+        if 4 <= len(approx) <= 6:
+            return True
+    return False
+
+
+def _image_has_readable_text(file_path, min_chars=8):
+    """Returns True/False, or None if the check can't be run (pytesseract/
+    tesseract not installed, opencv missing, or the file isn't a readable
+    image). A genuine ID card has printed text on it; a random selfie or
+    candid photo generally doesn't. `min_chars` is intentionally low — this
+    only needs to catch photos with *no* text, not judge OCR quality."""
+    if pytesseract is None or cv2 is None:
+        return None
+    img = cv2.imread(file_path)
+    if img is None:
+        return None
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    try:
+        extracted = pytesseract.image_to_string(gray)
+    except Exception:
+        return None
+    alnum_only = ''.join(ch for ch in extracted if ch.isalnum())
+    return len(alnum_only) >= min_chars
+
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev_secret_key')
@@ -101,8 +231,9 @@ def _plan_expiry(plan, start_date):
 # discounted (it's not listed in the promo), so it's left out on purpose —
 # any plan not in this table just falls back to its normal price.
 STUDENT_PLAN_PRICES = {
-    'Monthly': 800.0,
-    'Yearly':  6000.0,
+    'Half Month': 400.0,
+    'Monthly':    800.0,
+    'Yearly':     6000.0,
 }
 
 
@@ -2908,6 +3039,7 @@ def member_submit_payment():
 
     plan_name_map = {
         'daily': 'Daily',
+        'half month': 'Half Month',
         'monthly': 'Monthly',
         'yearly': 'Yearly',
     }
@@ -2948,7 +3080,41 @@ def member_submit_payment():
             return jsonify(success=False, error='School ID file is too large (max 10MB).'), 400
 
         safe_name = secure_filename(f"{secrets.token_hex(8)}_{student_id_file.filename}")
-        student_id_file.save(os.path.join(PROOF_UPLOAD_FOLDER, safe_name))
+        student_id_full_path = os.path.join(PROOF_UPLOAD_FOLDER, safe_name)
+        student_id_file.save(student_id_full_path)
+
+        # ── Reject obvious non-ID uploads. Three offline checks, applied in
+        #    order — each is skipped (returns None) for PDFs, or if its
+        #    library isn't installed, and those cases still go through to
+        #    staff's manual review rather than being blocked here. ──
+        if ext != 'pdf':
+            # 1) Must have a visible face at all (blank images, scenery, a
+            #    plain screenshot of a form, etc. get caught here).
+            has_face = _image_has_face(student_id_full_path)
+            if has_face is False:
+                os.remove(student_id_full_path)
+                return jsonify(
+                    success=False,
+                    error='We couldn\'t detect a face in that photo. Please upload a clear photo of your '
+                          'school ID with your photo visible on it.'
+                ), 400
+
+            # 2) A face alone isn't enough — a random selfie has one too.
+            #    Only reject here if BOTH the card-shape and text checks
+            #    come back definitively negative; if either is unavailable
+            #    (None) or positive, give the upload the benefit of the
+            #    doubt and let staff's manual review make the final call.
+            looks_like_card = _image_looks_like_a_card(student_id_full_path)
+            has_text = _image_has_readable_text(student_id_full_path)
+            if looks_like_card is False and has_text is False:
+                os.remove(student_id_full_path)
+                return jsonify(
+                    success=False,
+                    error='That doesn\'t look like a school ID card. Please upload a clear, well-lit photo '
+                          'of the ID itself — not a selfie — with your photo and printed details (name, '
+                          'school, ID number) visible.'
+                ), 400
+
         student_id_relative_path = f"uploads/payment_proofs/{safe_name}"
 
     # ── Record the plan request as pending — no payment details are collected
@@ -4366,6 +4532,7 @@ def member():
         'key':            p.name.lower(),
         'name':           p.name,
         'price':          p.price,
+        'student_price':  STUDENT_PLAN_PRICES.get(p.name, p.price),
         'duration_days':  p.duration_days,
         'description':    p.description or '',
         'inclusions':     p.inclusions_list,
@@ -4630,6 +4797,7 @@ def staff():
         'id': p.id,
         'txn': f'TXN-{9000 + p.id}',
         'member_name': p.member.full_name,
+        'member_profile_picture': url_for('static', filename=p.member.profile_picture) if p.member.profile_picture else None,
         'plan': p.plan.name if p.plan else '—',
         'method': p.method,
         'reference': p.reference_number or '—',
@@ -5456,6 +5624,7 @@ def admin():
         'id': p.id,
         'txn': f'TXN-{9000 + p.id}',
         'member_name': p.member.full_name,
+        'member_profile_picture': url_for('static', filename=p.member.profile_picture) if p.member.profile_picture else None,
         'plan': p.plan.name if p.plan else '—',
         'method': p.method,
         'reference': p.reference_number or '—',
