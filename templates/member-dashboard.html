@@ -877,11 +877,24 @@
       <div class="panel">
         <div class="panel-body">
           <div class="profile-header">
-            <div class="profile-avatar"
-                 style="{% if member.profile_picture %}background-image:url('{{ url_for('static', filename=member.profile_picture) }}');background-size:cover;background-position:center;color:transparent;{% endif %}">{{ (member.first_name[0] ~ member.last_name[0])|upper }}</div>
+            <div class="profile-avatar-wrap">
+              <div class="profile-avatar" id="profile-picture-avatar"
+                   style="{% if member.profile_picture %}background-image:url('{{ url_for('static', filename=member.profile_picture) }}');background-size:cover;background-position:center;color:transparent;{% endif %}">{{ (member.first_name[0] ~ member.last_name[0])|upper }}</div>
+              <button type="button" class="profile-avatar-edit-btn" id="profile-picture-btn"
+                      onclick="document.getElementById('profile-picture-input').click()"
+                      {% if not picture_can_change %}disabled title="You can change your photo again on {{ picture_available_at }}."{% else %}title="Change profile picture"{% endif %}>✎</button>
+              <input type="file" id="profile-picture-input" accept="image/png,image/jpeg,image/webp" style="display:none;" onchange="changeProfilePicture(this)">
+            </div>
             <div class="profile-header-info">
               <div class="profile-name">{{ member.full_name }}</div>
               <div class="profile-email">{{ member.email }}</div>
+              <div class="profile-picture-hint" id="profile-picture-hint">
+                {% if picture_can_change %}
+                You can update your profile picture. It can then be changed again after 7 days.
+                {% else %}
+                You can change your profile picture again on <strong>{{ picture_available_at }}</strong>.
+                {% endif %}
+              </div>
             </div>
             <button class="btn btn-outline" onclick="memberTab('settings', document.getElementById('nav-member-settings'))">✎ EDIT PROFILE</button>
           </div>

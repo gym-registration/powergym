@@ -499,6 +499,71 @@ const MemberModule = (() => {
     if (removeBtn) removeBtn.style.display = 'none';
   }
 
+  /* ════════════════════════════════════════════════
+     PROFILE — change profile picture (7-day cooldown,
+     enforced server-side; the button here is also
+     disabled client-side while ineligible)
+  ════════════════════════════════════════════════ */
+  function changeProfilePicture(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      showToast('Profile picture must be a PNG, JPG, JPEG, or WEBP file.', 'error');
+      input.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('Profile picture must be smaller than 5MB.', 'error');
+      input.value = '';
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('profile_picture', file);
+
+    showLoadingOverlay('Uploading your new photo...');
+    _apiForm('/update-profile-picture', formData)
+      .then(({ ok, data }) => {
+        hideLoadingOverlay();
+        input.value = '';
+        if (!ok || !data.success) {
+          showToast(data.error || 'Failed to update profile picture.', 'error');
+          return;
+        }
+
+        // Swap every avatar on the page that shows the current picture —
+        // the Profile tab's big avatar and the sidebar's small one.
+        [document.getElementById('profile-picture-avatar'), document.getElementById('sidebar-user-avatar')]
+          .forEach(el => {
+            if (!el) return;
+            el.style.backgroundImage = `url('${data.profile_picture_url}')`;
+            el.style.backgroundSize = 'cover';
+            el.style.backgroundPosition = 'center';
+            el.style.color = 'transparent';
+          });
+
+        // Lock the edit button back down until the next cooldown ends.
+        const btn = document.getElementById('profile-picture-btn');
+        if (btn && data.available_at) {
+          btn.disabled = true;
+          btn.title = `You can change your photo again on ${data.available_at}.`;
+        }
+        const hint = document.getElementById('profile-picture-hint');
+        if (hint && data.available_at) {
+          hint.innerHTML = `You can change your profile picture again on <strong>${data.available_at}</strong>.`;
+        }
+
+        showToast(data.message || 'Profile picture updated successfully.', 'success');
+      })
+      .catch(() => {
+        hideLoadingOverlay();
+        input.value = '';
+        showToast('Could not reach the server. Please try again.', 'error');
+      });
+  }
+
   function submitPaymentMethod() {
     const method = document.getElementById('payment-method-select')?.value || 'cash';
     const formData = new FormData();
@@ -1043,6 +1108,7 @@ const MemberModule = (() => {
     closePlanDeclinedModal, withdrawPlanRequest, cancelWithdrawRequest, confirmWithdrawRequest,
     togglePaymentProofField, previewGcashProof, removeGcashProof, submitPaymentMethod,
     cancelSubmitPayment, confirmSubmitPayment, closePaymentSubmitSuccessModal,
+    changeProfilePicture,
     changeAttendanceMonth, openServiceModal, openEquipmentModal, openExerciseInstructionsModal,
     submitFitnessStep1, selectFitnessGoal, fitnessWizardBack, submitFitnessStep2,
     retryFitnessCalculation, fitnessWizardEditGoal, switchFitnessPlanTab,
@@ -1089,6 +1155,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.cancelSubmitPayment     = () => MemberModule.cancelSubmitPayment();
   window.confirmSubmitPayment    = () => MemberModule.confirmSubmitPayment();
   window.closePaymentSubmitSuccessModal = () => MemberModule.closePaymentSubmitSuccessModal();
+  window.changeProfilePicture   = (input) => MemberModule.changeProfilePicture(input);
   window.changeAttendanceMonth   = (delta) => MemberModule.changeAttendanceMonth(delta);
   window.openServiceModal        = (id) => MemberModule.openServiceModal(id);
   window.openEquipmentModal      = (id) => MemberModule.openEquipmentModal(id);

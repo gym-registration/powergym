@@ -291,6 +291,11 @@ os.makedirs(CONTENT_UPLOAD_FOLDER, exist_ok=True)
 PROFILE_UPLOAD_FOLDER = os.path.join(app.root_path, 'static', 'uploads', 'profile_pictures')
 PROFILE_ALLOWED_EXT   = {'png', 'jpg', 'jpeg', 'webp'}
 PROFILE_MAX_BYTES     = 5 * 1024 * 1024  # 5MB
+# Members can change their profile picture, but only once every N days —
+# stops someone from swapping it back and forth right after a staff member
+# reviews it. Counted from profile_picture_updated_at, which is also set
+# at self-registration so the very first upload starts the same cooldown.
+PROFILE_PICTURE_COOLDOWN_DAYS = 7
 os.makedirs(PROFILE_UPLOAD_FOLDER, exist_ok=True)
 
 # ── Flask-Mail configuration ─────────────────────────────────
@@ -343,6 +348,11 @@ class User(db.Model):
     # Required at self-registration for members (see /register); nullable here
     # since existing/seeded accounts predate this field.
     profile_picture = db.Column(db.String(255), nullable=True)
+    # When the profile picture was last changed — set at self-registration
+    # too (the initial upload counts as the first change), so
+    # PROFILE_PICTURE_COOLDOWN_DAYS can be enforced from day one instead of
+    # treating a brand-new account as eligible for an immediate re-upload.
+    profile_picture_updated_at = db.Column(db.DateTime, nullable=True)
     reset_token         = db.Column(db.String(64), nullable=True, unique=True, index=True)
     reset_token_expires = db.Column(db.DateTime, nullable=True)
     reset_otp            = db.Column(db.String(255), nullable=True)
@@ -1982,6 +1992,8 @@ def register():
         role='member',
         status='pending',
         profile_picture=profile_picture_path,
+        # Starts the change-cooldown from day one (see PROFILE_PICTURE_COOLDOWN_DAYS).
+        profile_picture_updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     db.session.add(new_user)
     db.session.commit()
@@ -3605,6 +3617,68 @@ def update_profile():
     })
 
 
+def _profile_picture_cooldown(user):
+    """Returns (can_change: bool, available_at: datetime | None) for the
+    7-day (PROFILE_PICTURE_COOLDOWN_DAYS) profile-picture change cooldown.
+    Falls back to created_at when profile_picture_updated_at hasn't been
+    backfilled yet, so older accounts are still gated correctly instead of
+    being treated as eligible-immediately."""
+    reference = user.profile_picture_updated_at or user.created_at
+    if reference is None:
+        return True, None
+    available_at = reference + timedelta(days=PROFILE_PICTURE_COOLDOWN_DAYS)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    return now >= available_at, available_at
+
+
+@app.route('/update-profile-picture', methods=['POST'])
+def update_profile_picture():
+    if 'user_id' not in session:
+        return jsonify(success=False, error='Not logged in.'), 401
+
+    user = User.query.get(session['user_id'])
+    if user is None:
+        session.clear()
+        return jsonify(success=False, error='User not found.'), 404
+
+    can_change, available_at = _profile_picture_cooldown(user)
+    if not can_change:
+        return jsonify(
+            success=False,
+            error=f"You can only change your profile picture once every "
+                  f"{PROFILE_PICTURE_COOLDOWN_DAYS} days. You'll be able to "
+                  f"change it again on {available_at.strftime('%B %d, %Y')}.",
+        ), 400
+
+    new_file = request.files.get('profile_picture')
+    if not new_file or not new_file.filename:
+        return jsonify(success=False, error='Please choose a picture to upload.'), 400
+
+    try:
+        new_path = _save_profile_picture(new_file)
+    except ValueError as e:
+        return jsonify(success=False, error=str(e)), 400
+
+    old_path = user.profile_picture
+    user.profile_picture = new_path
+    user.profile_picture_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.session.commit()
+
+    # Best-effort cleanup of the old file now that the new one is saved and
+    # committed — a failure here shouldn't undo the successful change.
+    if old_path and old_path != new_path:
+        _delete_content_image(old_path)
+
+    _, next_available_at = _profile_picture_cooldown(user)
+
+    return jsonify(
+        success=True,
+        message='Profile picture updated successfully.',
+        profile_picture_url=url_for('static', filename=new_path),
+        available_at=next_available_at.strftime('%B %d, %Y') if next_available_at else None,
+    )
+
+
 @app.route('/admin/update-gcash-settings', methods=['POST'])
 def admin_update_gcash_settings():
     """Admin-only: update the GCash account number/name members are shown
@@ -3963,6 +4037,8 @@ def member():
     if user is None:
         session.clear()
         return redirect(url_for('login'))
+
+    picture_can_change, picture_available_at = _profile_picture_cooldown(user)
 
     today = _today_manila()
 
@@ -4356,6 +4432,8 @@ def member():
         announcements=announcements,
         new_announcements=new_announcements,
         gcash_settings=_get_gym_settings(),
+        picture_can_change=picture_can_change,
+        picture_available_at=picture_available_at.strftime('%B %d, %Y') if picture_available_at else None,
     )
 
 
@@ -6152,6 +6230,8 @@ def _run_startup_migrations():
         ('gym_settings', 'terms_read_seconds', "ALTER TABLE gym_settings ADD COLUMN terms_read_seconds INT NOT NULL DEFAULT 30"),
         # ── Mandatory profile picture at member self-registration ──
         ('users', 'profile_picture', "ALTER TABLE users ADD COLUMN profile_picture VARCHAR(255) NULL"),
+        # ── 7-day cooldown on changing the profile picture ──
+        ('users', 'profile_picture_updated_at', "ALTER TABLE users ADD COLUMN profile_picture_updated_at DATETIME NULL"),
     ]
     with db.engine.connect() as conn:
         for table, column, ddl in migrations:

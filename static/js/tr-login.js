@@ -1,215 +1,26 @@
 /* ═══════════════════════════════════════════════════════════════
-   POWER GYM — Common JavaScript
-   tr-common.js  |  Shared across ALL pages
+   POWER GYM — Login/Register Page JavaScript
+   tr-login.js  |  Runs on trmem.html / home.html only
 
-   Load this file FIRST, before any page-specific script
-   (tr-login.js / tr-admin.js / tr-staff.js / tr-member.js).
-
-   MODULE MAP:
-   ─────────────────────────────────────────────────────────────
-   1.  Auth      — login, logout, session, registration (localStorage)
-   2.  Session   — guard on dashboards
-   3.  Navigation — screen/tab switching, sidebar active state, role hint
-   4.  Shared    — attendance grid, filter table, modals, logout
-   5.  Toast     — toast notification system
+   Requires tr-common.js to be loaded FIRST — it provides Auth,
+   Session, Navigation, ContentManager, the toast system, and the
+   other shared helpers used below. This file previously duplicated
+   ALL of that (re-declaring `const Auth`, `const Session`,
+   `const Navigation`, `const ContentManager`, plus a few `let`s),
+   which threw a "has already been declared" SyntaxError the moment
+   this script loaded after tr-common.js — classic <script> tags
+   share one global scope, so redeclaring a top-level const/let is a
+   hard error, and it silently killed this ENTIRE file. That's why
+   the profile-picture preview (previewProfilePicture) and the real
+   multipart completeRegistration() further below never ran, and
+   registration silently fell back to tr-common.js's older JSON-only
+   completeRegistration(), which doesn't send a picture at all — the
+   backend then rejects the request for missing the required file.
+   Keep this file limited to code that's genuinely unique to the
+   login/register screen; everything shared belongs in tr-common.js.
    ═══════════════════════════════════════════════════════════════ */
 
 'use strict';
-
-/* ════════════════════════════════════════════════
-   1. AUTH MODULE
-   Handles login, logout, registration.
-   Uses localStorage so session persists across pages.
-════════════════════════════════════════════════ */
-const Auth = (() => {
-
-  const ADMIN_ACCOUNTS = {
-    'admin@powergym.com': { password: 'admin123', role: 'admin', name: 'Administrator', initials: 'AD' }
-  };
-
-  const STAFF_ACCOUNTS = {
-    'staff@powergym.com': { password: 'staff123', role: 'staff', name: 'Staff Member', initials: 'SF' }
-  };
-
-  // Member accounts also stored in localStorage for persistence
-  let _memberAccounts = {};
-
-  function _loadMembers() {
-    try { _memberAccounts = JSON.parse(localStorage.getItem('trmem_members') || '{}'); }
-    catch (e) { _memberAccounts = {}; }
-    // Seed default demo member
-    if (!_memberAccounts['maria@email.com']) {
-      _memberAccounts['maria@email.com'] = { password: 'member123', role: 'member', name: 'Maria Santos', initials: 'MS' };
-      _saveMembers();
-    }
-  }
-
-  function _saveMembers() {
-    try { localStorage.setItem('trmem_members', JSON.stringify(_memberAccounts)); }
-    catch (e) { /* Storage unavailable */ }
-  }
-
-  function getAccount(email) {
-    const e = email.toLowerCase().trim();
-    return ADMIN_ACCOUNTS[e] || STAFF_ACCOUNTS[e] || _memberAccounts[e] || null;
-  }
-
-  function login(email, password) {
-    _loadMembers();
-    const account = getAccount(email);
-    if (!account) return { success: false, error: 'Account not found. Please register first.' };
-    if (account.password !== password) return { success: false, error: 'Incorrect password. Please try again.' };
-    const session = {
-      email: email.toLowerCase().trim(),
-      role: account.role,
-      name: account.name,
-      initials: account.initials
-    };
-    try { localStorage.setItem('trmem_session', JSON.stringify(session)); }
-    catch (e) { /* fallback: session only lives in memory */ }
-    return { success: true, session };
-  }
-
-  function logout() {
-    try { localStorage.removeItem('trmem_session'); }
-    catch (e) { /* ignore */ }
-  }
-
-  function getSession() {
-    try {
-      const raw = localStorage.getItem('trmem_session');
-      return raw ? JSON.parse(raw) : null;
-    } catch (e) { return null; }
-  }
-
-  function getRole() {
-    const s = getSession();
-    return s ? s.role : null;
-  }
-
-  function detectRole(email) {
-    _loadMembers();
-    const e = email.toLowerCase().trim();
-    if (ADMIN_ACCOUNTS[e]) return 'admin';
-    if (STAFF_ACCOUNTS[e]) return 'staff';
-    if (e.length > 3 && e.includes('@')) return 'member';
-    return null;
-  }
-
-  function registerMember(email, password, name) {
-    _loadMembers();
-    const e = email.toLowerCase().trim();
-    if (ADMIN_ACCOUNTS[e] || STAFF_ACCOUNTS[e]) return false;
-    const initials = name ? name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'MB';
-    _memberAccounts[e] = { password, role: 'member', name: name || 'New Member', initials };
-    _saveMembers();
-    return true;
-  }
-
-  // Initialize member store
-  _loadMembers();
-
-  return { login, logout, getSession, getRole, detectRole, registerMember, getAccount };
-})();
-
-
-/* ════════════════════════════════════════════════
-   2. SESSION MODULE
-   Guards dashboard pages; redirects if role doesn't match.
-   Called on each dashboard's DOMContentLoaded.
-════════════════════════════════════════════════ */
-const Session = (() => {
-
-  const DASHBOARD_ROLES = {
-    'admin-dashboard.html':  'admin',
-    'staff-dashboard.html':  'staff',
-    'member-dashboard.html': 'member'
-  };
-
-  /**
-   * Called on a dashboard page.
-   * If session is invalid or role doesn't match, redirect to login.
-   * Returns the session if valid, null otherwise.
-   */
-  function guardDashboard() {
-    // Flask handles authentication server-side.
-    // Just read sidebar elements already rendered by Jinja and return a session-like object.
-    const name     = document.getElementById('sidebar-user-name')?.textContent  || '';
-    const email    = document.getElementById('sidebar-user-email')?.textContent || '';
-    const initials = document.getElementById('sidebar-user-avatar')?.textContent || '';
-    return { name, email, initials };
-  }
-
-  function redirectToLogin() {
-    window.location.href = '/login';
-  }
-
-  function redirectToRole(role) {
-    const map = { admin: '/admin', staff: '/staff', member: '/member' };
-    window.location.href = map[role] || '/login';
-  }
-
-  return { guardDashboard, redirectToLogin, redirectToRole };
-})();
-
-
-/* ════════════════════════════════════════════════
-   3. NAVIGATION MODULE
-   Handles screen switching (login page) and
-   sidebar tab activation (dashboard pages).
-════════════════════════════════════════════════ */
-const Navigation = (() => {
-
-  /** Switch screens on trmem.html (login/register) */
-  function goToScreen(screenId) {
-    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-    const el = document.getElementById('screen-' + screenId);
-    if (el) el.classList.add('active');
-  }
-
-  /** Activate a sub-panel and highlight nav item */
-  function activateTab(prefix, tab, navEl) {
-    // Hide all sub-panels
-    document.querySelectorAll('.sub-panel').forEach(p => p.classList.remove('active'));
-    // Deactivate all nav items
-    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-    // Show target panel
-    const panel = document.getElementById(prefix + '-' + tab);
-    if (panel) panel.classList.add('active');
-    // Highlight nav item
-    if (navEl) navEl.classList.add('active');
-    else {
-      const autoNav = document.getElementById('nav-' + prefix + '-' + tab);
-      if (autoNav) autoNav.classList.add('active');
-    }
-  }
-
-  /** Show role hint bar on the login form */
-  function showRoleHint(role) {
-    const bar = document.getElementById('role-hint-bar');
-    const tag = document.getElementById('login-role-tag');
-    if (!bar || !tag) return;
-
-    const configs = {
-      admin:  { text: '🛡️ Admin Account Detected',  bg: 'rgba(230,30,37,0.12)',   color: 'var(--red)',   border: 'var(--red)',   tagText: 'ADMIN ACCESS' },
-      staff:  { text: '👥 Staff Account Detected',  bg: 'rgba(26,71,138,0.2)',    color: '#8eb8ff',      border: '#8eb8ff',      tagText: 'STAFF ACCESS' },
-      member: { text: '⚡ Member Login',             bg: 'rgba(255,171,64,0.1)',   color: 'var(--gold)',  border: 'rgba(255,171,64,0.3)', tagText: 'MEMBER ACCESS' }
-    };
-
-    if (role && configs[role]) {
-      const cfg = configs[role];
-      bar.style.cssText = `display:block;background:${cfg.bg};color:${cfg.color};border:1px solid ${cfg.border};margin-bottom:16px;padding:10px 14px;border-radius:4px;font-size:13px;font-weight:600;letter-spacing:1px;text-transform:uppercase;`;
-      bar.textContent = cfg.text;
-      tag.textContent = cfg.tagText;
-    } else {
-      bar.style.display = 'none';
-      tag.textContent = '\u00a0';
-    }
-  }
-
-  return { goToScreen, activateTab, showRoleHint };
-})();
-
 
 /* ════════════════════════════════════════════════
    4. SHARED UTILITIES
@@ -258,7 +69,21 @@ function openModal(id) {
 /** Close a modal overlay */
 function closeModal(id) {
   const el = document.getElementById(id);
-  if (el) el.classList.remove('open');
+  if (!el) return;
+  // The Terms & Policy modal can't be dismissed while it's still auto-
+  // scrolling through the admin-configured read time — closing early
+  // was the one way around the "must finish reading" gate, since the
+  // checkbox unlock check only ran *after* the modal was allowed to
+  // close. Block the close itself instead, and nudge the member with
+  // the same countdown they're already looking at.
+  if (id === 'terms-modal' && !_termsGateSatisfied()) {
+    _termsUpdateTimerDisplay();
+    if (typeof showToast === 'function') {
+      showToast(`Please finish reading — ${_termsFormatTime(Math.max(0, termsSecondsLeft || 0))} left.`, 'info');
+    }
+    return;
+  }
+  el.classList.remove('open');
 }
 
 /** Terms & Policy read-time + auto-scroll gate state. The content
@@ -280,6 +105,23 @@ let termsOpenedAtMs       = null; // performance.now() when this open began
 let termsHasScrolledToBottom = false;
 let termsAutoScrollRAF    = null;
 
+/** True once the countdown has fully elapsed AND the auto-scroll has
+ *  actually reached the bottom — the same condition the "I agree"
+ *  checkbox already waits for, reused here to gate closing the modal
+ *  itself. */
+function _termsGateSatisfied() {
+  return termsSecondsLeft !== null && termsSecondsLeft <= 0 && termsHasScrolledToBottom;
+}
+
+/** Show/hide the modal's ✕ button to match the gate state — hidden
+ *  while still reading, so there's no visible way to dismiss the
+ *  modal early, and restored once the read time is up. */
+function _termsUpdateCloseButton() {
+  const btn = document.getElementById('terms-modal-close');
+  if (!btn) return;
+  btn.style.visibility = _termsGateSatisfied() ? 'visible' : 'hidden';
+}
+
 function _termsFormatTime(s) {
   if (s >= 60) {
     const m = Math.floor(s / 60), r = s % 60;
@@ -289,10 +131,11 @@ function _termsFormatTime(s) {
 }
 
 function _termsUpdateTimerDisplay() {
+  _termsUpdateCloseButton();
   const timerEl = document.getElementById('terms-timer');
   if (!timerEl) return;
   if (termsSecondsLeft > 0) {
-    timerEl.textContent = `Reading automatically — you can agree in ${_termsFormatTime(termsSecondsLeft)}.`;
+    timerEl.textContent = `Reading automatically — please wait ${_termsFormatTime(termsSecondsLeft)} before you can close this and agree.`;
   } else {
     timerEl.textContent = "You've reached the end of the Terms & Policy — you may close this and check \u201cI agree.\u201d";
   }
@@ -851,532 +694,23 @@ function _val(id) {
 
 /* ════════════════════════════════════════════════
    4b. CONTENT MANAGER — Manage Gym Content
-   Shared by staff-dashboard.html and admin-dashboard.html.
-   Lets staff/admin add/edit/delete membership plans, services,
-   and equipment (name, price, description, inclusions, picture).
+   NOTE: This is dashboard-only functionality (staff/admin manage
+   plans, services, equipment) and isn't used on the login/register
+   screen at all. The real ContentManager already lives in
+   tr-common.js — it used to be duplicated here too, which is what
+   caused the "Identifier 'ContentManager' has already been declared"
+   SyntaxError that broke this whole file. Removed.
 ════════════════════════════════════════════════ */
-const ContentManager = (() => {
-
-  // "facilities" (home page Our Facilities photos) and "machines"
-  // (Equipments and Machines) are two admin-facing views over the SAME
-  // GymEquipment table/endpoint, split client-side by the is_facility flag —
-  // this lets the dashboard offer two focused tabs without a second backend
-  // model. TYPES lists every tab the UI can show; ENDPOINTS/LABELS below
-  // map each one to the request it should make and its display name.
-  const TYPES = ['plans', 'services', 'facilities', 'machines'];
-  const ENDPOINTS = {
-    plans:     { list: '/api/content/plans',     save: '/api/content/plans/save',     del: id => `/api/content/plans/${id}/delete` },
-    services:  { list: '/api/content/services',  save: '/api/content/services/save',  del: id => `/api/content/services/${id}/delete` },
-    equipment: { list: '/api/content/equipment', save: '/api/content/equipment/save', del: id => `/api/content/equipment/${id}/delete` },
-  };
-  ENDPOINTS.facilities = ENDPOINTS.equipment;
-  ENDPOINTS.machines   = ENDPOINTS.equipment;
-  const LABELS = { plans: 'Membership Plan', services: 'Service', facilities: 'Facility Photo', machines: 'Equipment' };
-  // Which value of is_facility each tab represents, and therefore which
-  // value gets saved automatically when adding/editing from that tab.
-  const IS_FACILITY_TYPE = { facilities: true, machines: false };
-
-  let currentType = 'plans';
-  // cache.equipment holds the single raw list backing both the
-  // "facilities" and "machines" tabs (and the Services equipment checklist);
-  // it's filtered client-side per tab in _filterEquipment().
-  let cache = { plans: null, services: null, equipment: null };
-  let pendingDelete = null; // { type, id }
-  let loaded = false;
-
-  function ensureLoaded() {
-    if (loaded) return;
-    loaded = true;
-    showType('plans');
-  }
-
-  function showType(type) {
-    currentType = type;
-    document.querySelectorAll('.content-subtab').forEach(el => {
-      el.classList.toggle('active', el.dataset.contentType === type);
-    });
-    TYPES.forEach(t => {
-      const grid = document.getElementById('content-grid-' + t);
-      if (grid) grid.style.display = (t === type) ? 'grid' : 'none';
-    });
-    if (type === 'facilities' || type === 'machines') {
-      if (cache.equipment === null) _fetchEquipment();
-      else _renderGrid(type, _filterEquipment(type));
-    } else if (cache[type] === null) {
-      _fetchType(type);
-    } else {
-      _renderGrid(type, cache[type]);
-    }
-  }
-
-  function _filterEquipment(type) {
-    return (cache.equipment || []).filter(it => !!it.is_facility === IS_FACILITY_TYPE[type]);
-  }
-
-  function _fetchType(type) {
-    const grid = document.getElementById('content-grid-' + type);
-    if (grid) grid.innerHTML = '<div class="content-empty">Loading…</div>';
-    fetch(ENDPOINTS[type].list)
-      .then(res => res.json())
-      .then(data => {
-        if (!data.success) { showToast(data.error || 'Could not load content.', 'error'); return; }
-        cache[type] = data.items;
-        if (currentType === type) _renderGrid(type, data.items);
-      })
-      .catch(() => showToast('Could not reach the server.', 'error'));
-  }
-
-  function _fetchEquipment() {
-    const grid = document.getElementById('content-grid-' + currentType);
-    if (grid) grid.innerHTML = '<div class="content-empty">Loading…</div>';
-    fetch(ENDPOINTS.equipment.list)
-      .then(res => res.json())
-      .then(data => {
-        if (!data.success) { showToast(data.error || 'Could not load content.', 'error'); return; }
-        cache.equipment = data.items;
-        if (currentType === 'facilities' || currentType === 'machines') {
-          _renderGrid(currentType, _filterEquipment(currentType));
-        }
-      })
-      .catch(() => showToast('Could not reach the server.', 'error'));
-  }
-
-  function refresh(type) {
-    if (type === 'facilities' || type === 'machines') {
-      cache.equipment = null;
-      if (currentType === 'facilities' || currentType === 'machines') _fetchEquipment();
-    } else {
-      cache[type] = null;
-      if (currentType === type) _fetchType(type);
-    }
-  }
-
-  function _renderGrid(type, items) {
-    const grid = document.getElementById('content-grid-' + type);
-    if (!grid) return;
-    if (!items.length) {
-      grid.innerHTML = `<div class="content-empty">No ${LABELS[type].toLowerCase()}s yet. Click "+ Add New" to create one.</div>`;
-      return;
-    }
-    grid.innerHTML = items.map(item => _cardHtml(type, item)).join('');
-  }
-
-  function _esc(s) {
-    return (s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  }
-
-  function _cardHtml(type, item) {
-    const isPlan = type === 'plans';
-    const img = item.image_path
-      ? `background-image:url('/static/${item.image_path}')`
-      : '';
-    const fallbackIcon = isPlan ? '💳' : type === 'services' ? '🛎️' : type === 'facilities' ? '🏢' : '🏋️';
-    const icon = item.image_path ? '' : (item.icon || fallbackIcon);
-    const priceLine = isPlan
-      ? `<div class="content-card-price">₱${Number(item.price).toLocaleString()} / ${item.duration_days} day${item.duration_days == 1 ? '' : 's'}</div>`
-      : '';
-    const categoryBadge = (!isPlan && item.category)
-      ? `<div style="font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);">${_esc(item.category)}</div>`
-      : '';
-    let inclusionsHtml = '';
-    if (isPlan && item.inclusions) {
-      const lines = item.inclusions.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 4);
-      if (lines.length) inclusionsHtml = `<ul class="content-card-inclusions">${lines.map(l => `<li>${_esc(l)}</li>`).join('')}</ul>`;
-    }
-    const statusBadge = item.is_active
-      ? '<span class="badge badge-green">ACTIVE</span>'
-      : '<span class="badge badge-muted">HIDDEN</span>';
-    return `
-      <div class="content-card" data-id="${item.id}">
-        <div class="content-card-img" style="${img}">${img ? '' : icon}${statusBadge}</div>
-        <div class="content-card-body">
-          <div class="content-card-name">${_esc(item.name)}</div>
-          ${categoryBadge}
-          ${priceLine}
-          ${item.description ? `<div class="content-card-desc">${_esc(item.description)}</div>` : ''}
-          ${inclusionsHtml}
-          <div class="content-card-actions">
-            <button class="btn btn-outline" onclick='ContentManager.openForm("${type}", ${JSON.stringify(item).replace(/'/g, "&#39;")})'>EDIT</button>
-            <button class="btn btn-outline" style="color:var(--red);border-color:rgba(230,30,37,0.4);" onclick="ContentManager.confirmDelete('${type}', ${item.id}, '${_esc(item.name).replace(/'/g, "\\'")}')">DELETE</button>
-          </div>
-        </div>
-      </div>`;
-  }
-
-  function openForm(type, item) {
-    currentType = type;
-    document.getElementById('cf-type').value = type;
-    document.getElementById('cf-id').value = item ? item.id : '';
-    document.getElementById('content-form-title').textContent = item ? `EDIT ${LABELS[type].toUpperCase()}` : `ADD ${LABELS[type].toUpperCase()}`;
-    document.getElementById('cf-description').value = item ? item.description : '';
-    document.getElementById('cf-sort-order').value = item ? item.sort_order : 0;
-    document.getElementById('cf-active').checked = item ? !!item.is_active : true;
-    document.getElementById('cf-image-input').value = '';
-    document.getElementById('cf-remove-image').checked = false;
-
-    // Name field. Plans/Services, and editing an existing item of any
-    // type, keep the classic free-text box. Adding a brand-new facility
-    // or machine instead shows a dropdown of already-used + common names
-    // first, so staff can pick a consistent name with no typing — picking
-    // "+ Add New …" swaps back to the free-text box for a name that isn't
-    // listed yet.
-    const nameLabel  = document.getElementById('cf-name-label');
-    const nameSelect = document.getElementById('cf-name-select');
-    const nameInput  = document.getElementById('cf-name');
-    const nameBack   = document.getElementById('cf-name-toggle');
-    if (nameLabel) {
-      nameLabel.textContent = type === 'machines'    ? 'Name of Equipment/Machine'
-                             : type === 'facilities'  ? 'Name of Facility/Area'
-                             : 'Name';
-    }
-    nameInput.value = item ? item.name : '';
-    const useNameDropdown = !item && (type === 'facilities' || type === 'machines');
-    if (nameSelect) {
-      if (useNameDropdown) {
-        nameSelect.style.display = '';
-        nameInput.style.display  = 'none';
-        if (nameBack) nameBack.style.display = 'none';
-        _ensureEquipmentLoaded(() => _populateNameOptions(type));
-      } else {
-        nameSelect.style.display = 'none';
-        nameInput.style.display  = '';
-        if (nameBack) nameBack.style.display = 'none';
-      }
-    }
-
-    const isPlan = type === 'plans';
-    document.getElementById('cf-plan-fields').style.display = isPlan ? 'grid' : 'none';
-    document.getElementById('cf-inclusions-wrap').style.display = isPlan ? 'block' : 'none';
-    if (isPlan) {
-      document.getElementById('cf-price').value = item ? item.price : '';
-      document.getElementById('cf-duration').value = item ? item.duration_days : '';
-      document.getElementById('cf-inclusions').value = item ? item.inclusions : '';
-    }
-
-    // Category + icon (services & equipment only)
-    const catEqWrap = document.getElementById('cf-category-icon-wrap');
-    if (catEqWrap) catEqWrap.style.display = isPlan ? 'none' : 'grid';
-    const catInput  = document.getElementById('cf-category');
-    const iconInput = document.getElementById('cf-icon');
-    if (catInput)  catInput.value  = item ? (item.category || '') : '';
-    if (iconInput) iconInput.value = item ? (item.icon || '') : '';
-    _refreshIconPickList(type);
-
-    // Equipment/machines checklist — services only ("what to use for this
-    // service", shown to members via the eye icon on their service card).
-    const isService = type === 'services';
-    const eqWrap = document.getElementById('cf-equipment-wrap');
-    if (eqWrap) eqWrap.style.display = isService ? 'block' : 'none';
-    if (isService) _renderEquipmentChecklist(item ? (item.equipment_ids || []) : []);
-
-    // is_facility is no longer a manual checkbox — it's implied by which
-    // tab (Our Facilities vs Equipments and Machines) the form was opened
-    // from, and is set automatically on submit(). Kept here only in case
-    // an older page still has the legacy checkbox markup.
-    const facilityWrap = document.getElementById('cf-is-facility-wrap');
-    if (facilityWrap) facilityWrap.style.display = 'none';
-
-    const preview = document.getElementById('cf-image-preview');
-    const removeWrap = document.getElementById('cf-remove-image-wrap');
-    if (item && item.image_path) {
-      preview.style.backgroundImage = `url('/static/${item.image_path}')`;
-      preview.textContent = '';
-      removeWrap.style.display = 'block';
-    } else {
-      preview.style.backgroundImage = '';
-      preview.textContent = '🖼️';
-      removeWrap.style.display = 'none';
-    }
-
-    openModal('content-form-modal');
-  }
-
-  function previewImage(input) {
-    const preview = document.getElementById('cf-image-preview');
-    const file = input.files && input.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = e => {
-      preview.style.backgroundImage = `url('${e.target.result}')`;
-      preview.textContent = '';
-    };
-    reader.readAsDataURL(file);
-  }
-
-  // ── Name dropdown for new facilities/machines (see openForm) ──
-  // Curated starting suggestions; already-used names (fetched from the
-  // server) are merged in ahead of these so real gym items show up too.
-  const NAME_SUGGESTIONS = {
-    machines: [
-      'Treadmill', 'Elliptical Trainer', 'Stationary Bike', 'Rowing Machine',
-      'Stair Climber', 'Bench Press', 'Squat Rack', 'Smith Machine',
-      'Lat Pulldown Machine', 'Leg Press Machine', 'Leg Extension Machine',
-      'Leg Curl Machine', 'Cable Crossover Machine', 'Chest Press Machine',
-      'Shoulder Press Machine', 'Multi-Gym Station', 'Dumbbells',
-      'Barbells', 'Kettlebells', 'Pull-Up Bar', 'Punching Bag',
-      'Battle Ropes', 'Medicine Balls',
-    ],
-    facilities: [
-      'Weight Area', 'Cardio Zone', 'Free Weights Area', 'Boxing Area',
-      'Functional Training Zone', 'Locker Room', 'Reception',
-      'Stretching Area', 'Group Class Studio',
-    ],
-  };
-
-  /** Make sure cache.equipment (the raw list backing both the facilities
-   *  and machines tabs) is loaded, then run cb — used so the name dropdown
-   *  can be populated even if the modal is opened before the grid fetch. */
-  function _ensureEquipmentLoaded(cb) {
-    if (cache.equipment !== null) { cb(); return; }
-    fetch(ENDPOINTS.equipment.list)
-      .then(res => res.json())
-      .then(data => { if (data.success) cache.equipment = data.items; cb(); })
-      .catch(() => cb());
-  }
-
-  function _populateNameOptions(type) {
-    const select = document.getElementById('cf-name-select');
-    if (!select) return;
-    const wantFacility = type === 'facilities';
-    const used = (cache.equipment || [])
-      .filter(e => !!e.is_facility === wantFacility)
-      .map(e => e.name);
-    const curated = NAME_SUGGESTIONS[type] || [];
-    const merged = [...used];
-    curated.forEach(n => { if (!merged.some(m => m.toLowerCase() === n.toLowerCase())) merged.push(n); });
-    merged.sort((a, b) => a.localeCompare(b));
-
-    const placeholder = wantFacility ? 'Select a facility/area…' : 'Select equipment or a machine…';
-    const addLabel     = wantFacility ? '+ Add New Facility/Area…' : '+ Add New Equipment/Machine…';
-    select.innerHTML =
-      `<option value="" disabled selected>${_esc(placeholder)}</option>` +
-      merged.map(n => `<option value="${_esc(n)}">${_esc(n)}</option>`).join('') +
-      `<option value="__custom__">${_esc(addLabel)}</option>`;
-  }
-
-  /** Called from the name <select>'s onchange — picking "+ Add New …"
-   *  swaps to the free-text box so staff can type a name not on the list. */
-  function onNameSelectChange() {
-    const select = document.getElementById('cf-name-select');
-    if (!select || select.value !== '__custom__') return;
-    const input = document.getElementById('cf-name');
-    const back  = document.getElementById('cf-name-toggle');
-    select.style.display = 'none';
-    input.style.display  = '';
-    input.value = '';
-    input.focus();
-    if (back) back.style.display = 'block';
-  }
-
-  /** "← Choose from list instead" link — swaps back from the free-text
-   *  box to the dropdown. */
-  function backToNameList() {
-    const select = document.getElementById('cf-name-select');
-    const input  = document.getElementById('cf-name');
-    const back   = document.getElementById('cf-name-toggle');
-    if (!select) return;
-    select.value = '';
-    select.style.display = '';
-    input.style.display  = 'none';
-    if (back) back.style.display = 'none';
-  }
-
-  // ── Category suggestions + icon quick-pick (services & equipment) ──
-  // NOTE: category suggestions are NOT hardcoded — the datalist below is
-  // populated entirely from whatever categories already exist in the
-  // database (fetched per-type from /api/content/categories). Type any
-  // new category name into the field and it becomes a real suggestion for
-  // next time, automatically, with no code change required.
-  const ICON_SUGGESTIONS = {
-    machines:   ['🏋️', '💪', '🥊', '🏃', '🚴', '🤸', '🪢', '🦵', '🔩', '⬇️', '🔧', '🎯', '🧘', '🔥'],
-    services:   ['🥊', '💪', '🔥', '🏃', '🛎️', '🧑‍🏫', '🥤', '🚿', '🅿️', '📅', '🩺'],
-    facilities: ['🏢', '🚪', '🏋️', '🧘', '🚿', '🅿️', '🛎️', '🔥'],
-  };
-  let realCategoriesCache = {}; // per-type ({machines, services, facilities}) categories actually in use, fetched from the server
-
-  function _refreshIconPickList(type) {
-    const datalist = document.getElementById('cf-category-list');
-    if (datalist) {
-      // Show real, already-used categories only — no curated fallback.
-      // Fetched per-type so a Machines-only category never leaks into the
-      // Services/Facilities pickers, and vice versa.
-      const used = realCategoriesCache[type] || [];
-      datalist.innerHTML = used.map(c => `<option value="${_esc(c)}"></option>`).join('');
-    }
-    const iconRow = document.getElementById('cf-icon-picks');
-    if (iconRow) {
-      const icons = ICON_SUGGESTIONS[type] || [];
-      iconRow.innerHTML = icons.map(i =>
-        `<button type="button" class="icon-pick-btn" onclick="ContentManager.pickIcon('${i}')">${i}</button>`
-      ).join('');
-    }
-    if (realCategoriesCache[type] === undefined) {
-      fetch(`/api/content/categories?type=${encodeURIComponent(type)}`)
-        .then(res => res.json())
-        .then(data => {
-          if (data.success) {
-            realCategoriesCache[type] = data.categories;
-            _refreshIconPickList(type); // re-render datalist now that real categories are in
-          }
-        })
-        .catch(() => {}); // non-fatal — datalist just stays empty until the fetch succeeds; typing a category still works fine
-    }
-  }
-
-  function pickIcon(emoji) {
-    const iconInput = document.getElementById('cf-icon');
-    if (iconInput) iconInput.value = emoji;
-  }
-
-  // ── Equipment checklist (Services form only) ──
-  function _renderEquipmentChecklist(checkedIds) {
-    const list = document.getElementById('cf-equipment-list');
-    if (!list) return;
-    const checked = new Set((checkedIds || []).map(String));
-    const render = (allItems) => {
-      // Facility-zone photos (Weight Area, Reception, etc.) aren't real
-      // machines, so they don't belong in a service's equipment list.
-      const items = allItems.filter(eq => !eq.is_facility);
-      if (!items.length) {
-        list.innerHTML = '<div style="font-size:13px;color:var(--muted);">No equipment set up yet — add some under the Equipment tab first.</div>';
-        return;
-      }
-      list.innerHTML = items.map(eq => `
-        <label style="display:flex;align-items:center;gap:6px;font-size:15px;color:var(--white);cursor:pointer;background:rgba(255,255,255,0.04);padding:6px 10px;border-radius:6px;">
-          <input type="checkbox" class="cf-equipment-check" value="${eq.id}" ${checked.has(String(eq.id)) ? 'checked' : ''}>
-          <span>${eq.icon || '🏋️'} ${_esc(eq.name)}</span>
-        </label>`).join('');
-    };
-    if (cache.equipment !== null) {
-      render(cache.equipment);
-    } else {
-      list.innerHTML = '<div style="font-size:13px;color:var(--muted);">Loading equipment…</div>';
-      fetch(ENDPOINTS.equipment.list)
-        .then(res => res.json())
-        .then(data => {
-          if (!data.success) { list.innerHTML = '<div style="font-size:13px;color:var(--muted);">Could not load equipment.</div>'; return; }
-          cache.equipment = data.items;
-          render(data.items);
-        })
-        .catch(() => { list.innerHTML = '<div style="font-size:13px;color:var(--muted);">Could not reach the server.</div>'; });
-    }
-  }
-
-  function submit() {
-    const type = document.getElementById('cf-type').value;
-    const id = document.getElementById('cf-id').value;
-
-    // Name comes from the dropdown when it's the visible control (adding a
-    // new facility/machine), otherwise from the classic free-text box.
-    const nameSelect = document.getElementById('cf-name-select');
-    let name;
-    if (nameSelect && nameSelect.style.display !== 'none') {
-      name = (nameSelect.value || '').trim();
-      if (!name || name === '__custom__') { showToast('Please choose an item from the list, or add a new one.', 'error'); return; }
-    } else {
-      name = _val('cf-name');
-    }
-    if (!name) { showToast('Name is required.', 'error'); return; }
-
-    const fd = new FormData();
-    if (id) fd.append('id', id);
-    fd.append('name', name);
-    fd.append('description', document.getElementById('cf-description').value.trim());
-    fd.append('sort_order', document.getElementById('cf-sort-order').value || '0');
-    fd.append('is_active', document.getElementById('cf-active').checked ? 'true' : 'false');
-    fd.append('remove_image', document.getElementById('cf-remove-image').checked ? 'true' : 'false');
-    const file = document.getElementById('cf-image-input').files[0];
-    if (file) fd.append('image', file);
-
-    if (type !== 'plans') {
-      const catInput  = document.getElementById('cf-category');
-      const iconInput = document.getElementById('cf-icon');
-      fd.append('category', catInput ? catInput.value.trim() : '');
-      fd.append('icon', iconInput ? iconInput.value.trim() : '');
-    }
-
-    if (type === 'services') {
-      document.querySelectorAll('.cf-equipment-check:checked').forEach(cb => fd.append('equipment_ids', cb.value));
-    }
-    if (type === 'facilities' || type === 'machines') {
-      // Determined by which tab the form was opened from, not a manual checkbox.
-      fd.append('is_facility', IS_FACILITY_TYPE[type] ? 'true' : 'false');
-    }
-
-    if (type === 'plans') {
-      const price = document.getElementById('cf-price').value;
-      const duration = document.getElementById('cf-duration').value;
-      if (!price || Number(price) < 0) { showToast('Enter a valid price.', 'error'); return; }
-      if (!duration || Number(duration) <= 0) { showToast('Enter a valid duration in days.', 'error'); return; }
-      fd.append('price', price);
-      fd.append('duration_days', duration);
-      fd.append('inclusions', document.getElementById('cf-inclusions').value);
-    }
-
-    fetch(ENDPOINTS[type].save, { method: 'POST', body: fd })
-      .then(res => res.json().then(data => ({ ok: res.ok, data })))
-      .then(({ ok, data }) => {
-        if (!ok || !data.success) { showToast(data.error || 'Could not save.', 'error'); return; }
-        showToast(data.message || 'Saved.', 'success');
-        closeModal('content-form-modal');
-        if (type !== 'plans') realCategoriesCache = null; // pick up any newly-typed category next time the form opens
-        refresh(type);
-      })
-      .catch(() => showToast('Could not reach the server.', 'error'));
-  }
-
-  function confirmDelete(type, id, name) {
-    pendingDelete = { type, id };
-    const msgEl = document.getElementById('content-delete-message');
-    if (msgEl) msgEl.textContent = `Are you sure you want to delete "${name}"? This cannot be undone.`;
-    openModal('content-delete-modal');
-  }
-
-  function cancelDelete() {
-    pendingDelete = null;
-    closeModal('content-delete-modal');
-  }
-
-  function performDelete() {
-    if (!pendingDelete) return;
-    const { type, id } = pendingDelete;
-    fetch(ENDPOINTS[type].del(id), { method: 'POST' })
-      .then(res => res.json().then(data => ({ ok: res.ok, data })))
-      .then(({ ok, data }) => {
-        if (!ok || !data.success) { showToast((data && data.error) || 'Could not delete.', 'error'); return; }
-        showToast(data.message || 'Deleted.', 'success');
-        refresh(type);
-      })
-      .catch(() => showToast('Could not reach the server.', 'error'))
-      .finally(() => { pendingDelete = null; closeModal('content-delete-modal'); });
-  }
-
-  return { ensureLoaded, showType, openForm, previewImage, pickIcon, submit, confirmDelete, cancelDelete, performDelete, refresh, onNameSelectChange, backToNameList };
-})();
 
 
 /* ════════════════════════════════════════════════
    5. TOAST SYSTEM
+   showToast() and the announcement-notice functions below reuse the
+   `_announcementNoticeQueue` / `_announcementNoticeTotal` state that
+   tr-common.js already declares with `let` — deliberately NOT
+   redeclared here, since that's exactly what caused this file to
+   fail to load in the first place (see header comment).
 ════════════════════════════════════════════════ */
-function showToast(msg, type = 'success') {
-  const container = document.getElementById('toast-container');
-  if (!container) return;
-  const toast       = document.createElement('div');
-  toast.className   = 'toast' + (type === 'error' ? ' error' : type === 'info' ? ' info' : '');
-  toast.innerHTML   = (type === 'success' ? '✓ ' : type === 'info' ? 'ℹ ' : '✗ ') + msg;
-  container.appendChild(toast);
-  setTimeout(() => toast.remove(), 3100);
-}
-
-/** Toast the receiver about announcement(s) posted since their last visit.
- *  Shared by the member and staff dashboards — `items` comes from the
- *  server's new_announcements list (already scoped to their target
- *  audience and de-duped against what they've already seen). Shows one
- *  "Notice from the Admin" message box at a time; if there's more than
- *  one, the button reads "NEXT" and cycles through the rest. */
-let _announcementNoticeQueue = [];
-let _announcementNoticeTotal = 0;
-
 function showNewAnnouncementNotices(items) {
   if (!items || !items.length) return;
   _announcementNoticeQueue = items.slice();
