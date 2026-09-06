@@ -101,7 +101,6 @@ def _plan_expiry(plan, start_date):
 # discounted (it's not listed in the promo), so it's left out on purpose —
 # any plan not in this table just falls back to its normal price.
 STUDENT_PLAN_PRICES = {
-    'Weekly':  400.0,
     'Monthly': 800.0,
     'Yearly':  6000.0,
 }
@@ -2897,7 +2896,6 @@ def member_submit_payment():
 
     plan_name_map = {
         'daily': 'Daily',
-        'weekly': 'Weekly',
         'monthly': 'Monthly',
         'yearly': 'Yearly',
     }
@@ -4259,14 +4257,13 @@ def member():
     # Sourced from the same admin/staff-editable tables that drive the home
     # page, so anything they change in Settings → Manage Content shows up
     # here too instead of being hardcoded per-page.
-    # "Daily" and "Weekly" are excluded from the member's own plan picker —
-    # Daily is a walk-in-only day pass (recorded by staff from the Walk In
-    # tab, never a member's own membership) and Weekly isn't offered as a
-    # selectable membership here. Only Half Month, Monthly, and Yearly are
-    # meant to be chosen as a member's plan.
+    # "Daily" is excluded from the member's own plan picker — it's a
+    # walk-in-only day pass (recorded by staff from the Walk In tab, never
+    # a member's own membership). Half Month, Monthly, and Yearly are meant
+    # to be chosen as a member's plan.
     content_plans = [
         p for p in MembershipPlan.query.filter_by(is_active=True).order_by(MembershipPlan.sort_order, MembershipPlan.id).all()
-        if p.name not in ('Daily', 'Weekly')
+        if p.name != 'Daily'
     ]
     content_services  = GymService.query.filter_by(is_active=True).order_by(GymService.sort_order, GymService.id).all()
     content_equipment = GymEquipment.query.filter_by(is_active=True).order_by(GymEquipment.sort_order, GymEquipment.id).all()
@@ -5462,13 +5459,15 @@ def seed_default_users():
 
 
 def seed_default_plans():
+    # "Weekly" used to be a default plan here — it's been retired. It's
+    # deliberately left out of this list (not just deleted from the
+    # database) so it never gets silently re-created the next time the app
+    # starts, the way seeding used to keep it alive even after deleting it
+    # from the dashboard.
     defaults = [
         {'name': 'Daily',   'duration_days': 1,   'price': 100.0,
          'description': 'Perfect for a casual visit — walk in, train, and go, no commitment required.',
          'inclusions': 'Gym Equipment Access\nGym Services', 'sort_order': 1},
-        {'name': 'Weekly',  'duration_days': 14,  'price': 450.0,
-         'description': 'A short-term option for building a routine — full access for a full week.',
-         'inclusions': 'Gym Equipment Access\nGym Services', 'sort_order': 2},
         {'name': 'Monthly', 'duration_days': 30,  'price': 900.0,
          'description': 'Our most popular plan — unlimited visits with trainer support to keep you on track.',
          'inclusions': 'Gym Equipment Access\nGym Services', 'sort_order': 3},
@@ -5489,9 +5488,9 @@ def seed_default_plans():
             ))
         else:
             # Keep an already-seeded row in sync if the defaults above change
-            # (e.g. Weekly's duration moving from 7 to 14 days). Content
-            # fields (description/inclusions/image) are left alone once set,
-            # so staff/admin edits made from the dashboard aren't overwritten.
+            # (e.g. a price adjustment). Content fields (description/
+            # inclusions/image) are left alone once set, so staff/admin
+            # edits made from the dashboard aren't overwritten.
             existing.duration_days = p['duration_days']
             existing.price         = p['price']
             if existing.description is None:

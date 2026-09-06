@@ -1105,8 +1105,15 @@ const ContentManager = (() => {
   }
 
   // Fixed-position panels don't move with the modal's internal scroll or a
-  // window resize, so just close them rather than let them drift.
-  document.addEventListener('scroll', () => { if (pickerOpenField) _closePicker(pickerOpenField); }, true);
+  // window resize, so close them on any scroll elsewhere — but not on a
+  // scroll that's the panel's own internal list (long category/name lists
+  // scroll within the panel itself; that must keep working normally).
+  document.addEventListener('scroll', e => {
+    if (!pickerOpenField) return;
+    const els = _pickerEls(pickerOpenField);
+    if (els.panel && els.panel.contains(e.target)) return;
+    _closePicker(pickerOpenField);
+  }, true);
   window.addEventListener('resize', () => { if (pickerOpenField) _closePicker(pickerOpenField); });
 
   function _fetchPickerItems(field) {
