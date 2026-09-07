@@ -112,6 +112,7 @@
                   {% if p.stage == 'approval' %}New plan request{% else %}{{ p.method }} · Ref: {{ p.reference }}{% endif %} · Txn: #{{ p.txn }} · ₱{{ p.amount }}
                 </div>
                 <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+                  {% if p.is_promo %}<span class="badge badge-gold">🎁 Promo</span>{% endif %}
                   {% if p.stage == 'approval' %}
                   {% if p.staff_viewed %}
                   <span class="badge badge-gold">Processing</span>
@@ -241,6 +242,7 @@
                 {% if p.stage == 'approval' %}New plan request{% else %}{{ p.method }} · Ref: {{ p.reference }}{% endif %} · Txn: #{{ p.txn }} · ₱{{ p.amount }}
               </div>
               <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+                {% if p.is_promo %}<span class="badge badge-gold">🎁 Promo</span>{% endif %}
                 {% if p.stage == 'approval' %}
                 {% if p.staff_viewed %}
                 <span class="badge badge-gold">Processing</span>
@@ -677,6 +679,30 @@
                      oninput="this.value=this.value.toUpperCase()">
             </div>
           </div>
+
+          <div class="form-group">
+            <label class="form-label">QR Code (optional)</label>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">
+              Upload a "scan to pay" QR (GCash or InstaPay). Members will see this next to
+              the number so they can scan instead of typing it in.
+            </div>
+            <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+              <div id="gcash-qr-current-wrap" style="{{ '' if (gcash_settings and gcash_settings.gcash_qr_path) else 'display:none;' }}">
+                <img id="gcash-qr-current-preview"
+                     src="{{ url_for('static', filename=gcash_settings.gcash_qr_path) if gcash_settings and gcash_settings.gcash_qr_path else '' }}"
+                     alt="Current GCash QR" style="width:100px;height:100px;object-fit:contain;background:#fff;border-radius:8px;padding:6px;">
+              </div>
+              <div style="flex:1;min-width:200px;">
+                <input class="form-input" type="file" id="gcash-qr-input" accept="image/png,image/jpeg,image/webp"
+                       onchange="previewGcashQr(this)">
+                <label id="gcash-qr-remove-row" style="display:{{ 'flex' if (gcash_settings and gcash_settings.gcash_qr_path) else 'none' }};align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-top:8px;cursor:pointer;">
+                  <input type="checkbox" id="gcash-qr-remove" onchange="toggleGcashQrRemove(this)">
+                  <span>Remove current QR code</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
           <button class="btn btn-red" id="gcash-settings-submit-btn" style="width:100%;margin-top:8px;" onclick="submitGcashSettings()">SAVE GCASH DETAILS</button>
         </div>
       </div>
@@ -716,6 +742,7 @@
         <div class="panel-body">
           <div class="content-subtabs">
             <button class="content-subtab active" data-content-type="plans" onclick="ContentManager.showType('plans')">Membership Plans</button>
+            <button class="content-subtab" data-content-type="promos" onclick="ContentManager.showType('promos')">Promos</button>
             <button class="content-subtab" data-content-type="services" onclick="ContentManager.showType('services')">Services</button>
             <button class="content-subtab" data-content-type="facilities" onclick="ContentManager.showType('facilities')">Our Facilities</button>
             <button class="content-subtab" data-content-type="machines" onclick="ContentManager.showType('machines')">Equipments and Machines</button>
@@ -730,6 +757,7 @@
           <div class="content-category-filters" id="content-category-filters" style="display:none;"></div>
 
           <div class="content-grid" id="content-grid-plans"></div>
+          <div class="content-grid" id="content-grid-promos" style="display:none;"></div>
           <div class="content-grid" id="content-grid-services" style="display:none;"></div>
           <div class="content-grid" id="content-grid-facilities" style="display:none;"></div>
           <div class="content-grid" id="content-grid-machines" style="display:none;"></div>
@@ -817,6 +845,22 @@
         <label class="form-label">Duration (days)</label>
         <input class="form-input" type="number" min="1" id="cf-duration" placeholder="30">
       </div>
+    </div>
+
+    <div class="form-row" id="cf-promo-fields" style="display:none;">
+      <div class="form-group">
+        <label class="form-label">Price (₱)</label>
+        <input class="form-input" type="number" min="0" step="0.01" id="cf-promo-price" placeholder="3500">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Period Label</label>
+        <input class="form-input" id="cf-period" placeholder="Limited-time offer">
+      </div>
+    </div>
+    <div class="form-group" id="cf-valid-until-wrap" style="display:none;">
+      <label class="form-label">Valid Until (optional)</label>
+      <input class="form-input" type="date" id="cf-valid-until">
+      <div style="font-size:12px;color:var(--muted);margin-top:4px;">Leave blank for an ongoing promo with no set end date.</div>
     </div>
 
     <div class="form-group">

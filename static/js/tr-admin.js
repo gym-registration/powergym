@@ -812,8 +812,45 @@ const AdminModule = (() => {
       .catch(() => showToast('Could not reach the server. Please try again.', 'error'));
   }
 
-  /** Save the GCash account number/name shown to members on the Payment tab.
-   *  Lets admin swap accounts any time without touching code. */
+  /** Preview a newly-picked QR file before saving, and clear the "remove"
+   *  checkbox since picking a new file supersedes removing the old one. */
+  function previewGcashQr(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const removeCheck = document.getElementById('gcash-qr-remove');
+    if (removeCheck) removeCheck.checked = false;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      let img = document.getElementById('gcash-qr-current-preview');
+      const wrap = document.getElementById('gcash-qr-current-wrap');
+      if (!img) {
+        img = document.createElement('img');
+        img.id = 'gcash-qr-current-preview';
+        img.style.cssText = 'width:100px;height:100px;object-fit:contain;background:#fff;border-radius:8px;padding:6px;';
+        wrap.appendChild(img);
+      }
+      img.src = e.target.result;
+      if (wrap) wrap.style.display = '';
+    };
+    reader.readAsDataURL(file);
+  }
+
+  /** Toggling "remove current QR" clears any newly-picked file and hides
+   *  the preview, since the two actions are mutually exclusive. */
+  function toggleGcashQrRemove(checkbox) {
+    const wrap  = document.getElementById('gcash-qr-current-wrap');
+    const input = document.getElementById('gcash-qr-input');
+    if (checkbox.checked) {
+      if (input) input.value = '';
+      if (wrap) wrap.style.display = 'none';
+    } else if (wrap && wrap.querySelector('img') && wrap.querySelector('img').src) {
+      wrap.style.display = '';
+    }
+  }
+
+  /** Save the GCash account number/name (and optional QR code) shown to
+   *  members on the Payment tab. Lets admin swap accounts any time
+   *  without touching code. */
   function submitGcashSettings() {
     const gcash_number       = _val('gcash-number');
     const gcash_account_name = _val('gcash-account-name');
@@ -843,11 +880,15 @@ const AdminModule = (() => {
     const modalBtn = document.getElementById('confirm-gcash-settings-btn');
     if (modalBtn) { modalBtn.disabled = true; modalBtn.textContent = 'SAVING...'; }
 
-    fetch('/admin/update-gcash-settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gcash_number, gcash_account_name })
-    })
+    const fd = new FormData();
+    fd.append('gcash_number', gcash_number);
+    fd.append('gcash_account_name', gcash_account_name);
+    const qrInput = document.getElementById('gcash-qr-input');
+    if (qrInput && qrInput.files[0]) fd.append('gcash_qr', qrInput.files[0]);
+    const removeCheck = document.getElementById('gcash-qr-remove');
+    if (removeCheck && removeCheck.checked) fd.append('remove_qr', 'true');
+
+    fetch('/admin/update-gcash-settings', { method: 'POST', body: fd })
       .then(res => res.json().then(data => ({ ok: res.ok, data })))
       .then(({ ok, data }) => {
         if (!ok || !data.success) {
@@ -858,6 +899,22 @@ const AdminModule = (() => {
         const nameEl = document.getElementById('gcash-account-name');
         if (numEl)  numEl.value  = data.settings.gcash_number;
         if (nameEl) nameEl.value = data.settings.gcash_account_name;
+
+        // Reset the file/remove controls and reflect the saved QR state.
+        if (qrInput) qrInput.value = '';
+        if (removeCheck) removeCheck.checked = false;
+        const wrap = document.getElementById('gcash-qr-current-wrap');
+        const removeRow = document.getElementById('gcash-qr-remove-row');
+        const img = document.getElementById('gcash-qr-current-preview');
+        if (data.settings.gcash_qr_url) {
+          if (img) img.src = data.settings.gcash_qr_url;
+          if (wrap) wrap.style.display = '';
+          if (removeRow) removeRow.style.display = 'flex';
+        } else {
+          if (wrap) wrap.style.display = 'none';
+          if (removeRow) removeRow.style.display = 'none';
+        }
+
         closeModal('confirm-gcash-settings-modal');
         showToast(data.message || 'GCash payment details updated.', 'success');
       })
@@ -1063,7 +1120,8 @@ const AdminModule = (() => {
     generateAnalyticsReport, refreshCurrentReport, exportReportPDF, clearReportDateRange,
     viewPaymentProof, filterMembersByStatus, filterMembersTable,
     publishAnnouncement, confirmPublishAnnouncement, openEditAnnouncementModal, saveEditAnnouncement,
-    toggleAnnouncement, deleteAnnouncement, submitGcashSettings, confirmGcashSettings, submitTermsSettings,
+    toggleAnnouncement, deleteAnnouncement, submitGcashSettings, confirmGcashSettings,
+    previewGcashQr, toggleGcashQrRemove, submitTermsSettings,
     submitCoachUpdate, confirmCoachUpdate, closeCoachSaveSuccessModal,
     toggleCoachEdit, addCoach, promptDeleteCoach, confirmDeleteCoach
   };
@@ -1098,6 +1156,8 @@ document.addEventListener('DOMContentLoaded', () => {
   window.deleteAnnouncement      = AdminModule.deleteAnnouncement;
   window.submitGcashSettings     = AdminModule.submitGcashSettings;
   window.confirmGcashSettings    = AdminModule.confirmGcashSettings;
+  window.previewGcashQr          = (input) => AdminModule.previewGcashQr(input);
+  window.toggleGcashQrRemove     = (checkbox) => AdminModule.toggleGcashQrRemove(checkbox);
   window.submitTermsSettings     = AdminModule.submitTermsSettings;
   window.submitCoachUpdate       = AdminModule.submitCoachUpdate;
   window.confirmCoachUpdate      = AdminModule.confirmCoachUpdate;

@@ -217,6 +217,29 @@ def _add_calendar_month(d, months=1):
     return date(year, month, day)
 
 
+def _is_promo_payment(p):
+    """True if a Payment record represents a promo request rather than a
+    regular membership plan request — see _payment_display_plan above."""
+    return bool(p and p.notes and p.notes.startswith('Promo request:'))
+
+
+def _payment_display_plan(p, fallback='—'):
+    """Display label for a payment's plan. Promo requests are recorded
+    against an anchor MembershipPlan behind the scenes (see
+    /member/submit-payment) purely for expiry-date scheduling, but staff,
+    admin, and the member should see the promo they actually asked for —
+    not the anchor plan's name. Promo requests are tagged in `notes` as
+    'Promo request: <title> — <price>', so pull the title back out of
+    there when present; otherwise fall back to the real plan name."""
+    if p and p.notes and p.notes.startswith('Promo request:'):
+        label = p.notes[len('Promo request:'):].split('—')[0].strip()
+        if label:
+            return label
+    if p and p.plan:
+        return p.plan.name
+    return fallback
+
+
 def _plan_expiry(plan, start_date):
     """Compute a plan's expiry date from its start date. Monthly plans track
     real calendar months (28-31 days) instead of a flat 30 days, so 'Feb 1 to
@@ -539,6 +562,37 @@ class MembershipPlan(db.Model):
         return f"<MembershipPlan {self.name} ₱{self.price}>"
 
 
+class GymPromo(db.Model):
+    """A limited-time promo (e.g. '16 Sessions', 'Boxing') — editable by
+    staff/admin from Manage Content and shown to members on the My
+    Membership tab, right below the regular membership plans. A brand-new
+    table like this is created automatically by db.create_all() on next
+    startup — no ALTER TABLE / manual migration needed."""
+    __tablename__ = 'gym_promos'
+    id           = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    title        = db.Column(db.String(100), nullable=False)
+    price        = db.Column(db.Float, nullable=False)
+    period       = db.Column(db.String(100), nullable=True)   # e.g. "Limited-time offer"
+    description  = db.Column(db.Text, nullable=True)
+    inclusions   = db.Column(db.Text, nullable=True)          # one inclusion per line
+    valid_until  = db.Column(db.Date, nullable=True)
+    image_path   = db.Column(db.String(255), nullable=True)
+    is_active    = db.Column(db.Boolean, nullable=False, default=True)
+    sort_order   = db.Column(db.Integer, nullable=False, default=0)
+    created_at   = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at   = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
+                             onupdate=lambda: datetime.now(timezone.utc))
+
+    @property
+    def inclusions_list(self):
+        if not self.inclusions:
+            return []
+        return [line.strip() for line in self.inclusions.splitlines() if line.strip()]
+
+    def __repr__(self):
+        return f"<GymPromo {self.title} ₱{self.price}>"
+
+
 class Membership(db.Model):
     __tablename__ = 'memberships'
     id          = db.Column(db.Integer, primary_key=True, autoincrement=True)
@@ -841,6 +895,11 @@ class GymSettings(db.Model):
     id                 = db.Column(db.Integer, primary_key=True, autoincrement=True)
     gcash_number       = db.Column(db.String(20),  nullable=True)
     gcash_account_name = db.Column(db.String(120), nullable=True)
+    # Optional QR code image (e.g. InstaPay/GCash "scan to pay" QR) shown to
+    # members alongside the number, so they can scan instead of typing it in
+    # manually. Nullable — the number/name still work fine on their own if
+    # no QR has been uploaded.
+    gcash_qr_path      = db.Column(db.String(255), nullable=True)
     # Plain text shown inside the Terms & Policy modal on registration.
     # Admin-editable via Settings → Terms & Policy. Blank lines separate
     # paragraphs; it is escaped and converted to safe HTML at render time
@@ -924,6 +983,7 @@ def _get_gym_settings():
     settings = GymSettings.query.get(1)
     if settings is None:
         settings = GymSettings(id=1, gcash_number='0945 397 0594', gcash_account_name='LYDIA M. EMATA',
+                                gcash_qr_path='images/gcash-qr.jpg',
                                 terms_content=DEFAULT_TERMS_TEXT, terms_read_seconds=60)
         db.session.add(settings)
         db.session.commit()
@@ -997,6 +1057,20 @@ def _plan_to_dict(p):
         'price': p.price, 'is_active': p.is_active,
         'description': p.description or '', 'image_path': p.image_path or '',
         'inclusions': p.inclusions or '', 'sort_order': p.sort_order,
+    }
+
+
+def _promo_to_dict(p):
+    # Uses the generic 'name' key (mapped from title) so the shared
+    # Manage Content admin UI (ContentManager in tr-common.js) can treat
+    # promos the same as every other content type without special-casing
+    # the field name.
+    return {
+        'id': p.id, 'name': p.title, 'price': p.price, 'period': p.period or '',
+        'is_active': p.is_active, 'description': p.description or '',
+        'image_path': p.image_path or '', 'inclusions': p.inclusions or '',
+        'valid_until': p.valid_until.isoformat() if p.valid_until else '',
+        'sort_order': p.sort_order,
     }
 
 
@@ -1373,6 +1447,102 @@ def api_delete_plan(plan_id):
     db.session.delete(plan)
     db.session.commit()
     return jsonify(success=True, message='Plan deleted.')
+
+
+# ── Content-management API: Promos ──────────────────────────────────────
+@app.route('/api/content/promos', methods=['GET'])
+def api_list_promos():
+    if not _content_role_ok():
+        return jsonify(success=False, error='Unauthorized.'), 403
+    promos = GymPromo.query.order_by(GymPromo.sort_order, GymPromo.id).all()
+    return jsonify(success=True, items=[_promo_to_dict(p) for p in promos])
+
+
+@app.route('/api/content/promos/save', methods=['POST'])
+def api_save_promo():
+    if not _content_role_ok():
+        return jsonify(success=False, error='Unauthorized.'), 403
+
+    promo_id     = request.form.get('id', '').strip()
+    # 'name' is what the shared Manage Content form actually submits (see
+    # _promo_to_dict) — it maps onto this model's 'title' column.
+    title        = (request.form.get('name') or '').strip()
+    price        = request.form.get('price', '').strip()
+    period       = (request.form.get('period') or '').strip()
+    description  = (request.form.get('description') or '').strip()
+    inclusions   = (request.form.get('inclusions') or '').strip()
+    valid_until_raw = (request.form.get('valid_until') or '').strip()
+    sort_order   = request.form.get('sort_order', '0').strip()
+    is_active    = request.form.get('is_active', 'true').strip().lower() != 'false'
+    remove_image = request.form.get('remove_image', 'false').strip().lower() == 'true'
+
+    if not title:
+        return jsonify(success=False, error='Promo title is required.'), 400
+    try:
+        price = float(price)
+        sort_order = int(sort_order or 0)
+        if price < 0:
+            raise ValueError()
+    except ValueError:
+        return jsonify(success=False, error='Price must be a valid positive number.'), 400
+
+    valid_until = None
+    if valid_until_raw:
+        try:
+            valid_until = datetime.strptime(valid_until_raw, '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify(success=False, error='Valid Until must be a valid date.'), 400
+
+    if promo_id:
+        promo = GymPromo.query.get(promo_id)
+        if not promo:
+            return jsonify(success=False, error='Promo not found.'), 404
+    else:
+        promo = GymPromo()
+
+    try:
+        image_path = promo.image_path if promo_id else None
+        if remove_image:
+            _delete_content_image(image_path)
+            image_path = None
+        else:
+            new_path = _save_content_image(request.files.get('image'), image_path)
+            if new_path != image_path:
+                _delete_content_image(image_path)
+            image_path = new_path
+    except ValueError as e:
+        return jsonify(success=False, error=str(e)), 400
+
+    promo.title       = title
+    promo.price       = price
+    promo.period      = period or None
+    promo.description = description or None
+    promo.inclusions  = inclusions or None
+    promo.valid_until = valid_until
+    promo.image_path  = image_path
+    promo.sort_order  = sort_order
+    promo.is_active   = is_active
+
+    if not promo_id:
+        db.session.add(promo)
+    db.session.commit()
+    return jsonify(success=True, message='Promo saved.', item=_promo_to_dict(promo))
+
+
+@app.route('/api/content/promos/<int:promo_id>/delete', methods=['POST'])
+def api_delete_promo(promo_id):
+    if not _content_role_ok():
+        return jsonify(success=False, error='Unauthorized.'), 403
+    promo = GymPromo.query.get(promo_id)
+    if not promo:
+        return jsonify(success=False, error='Promo not found.'), 404
+    # Unlike plans, promos aren't referenced by any Membership/Payment
+    # record, so there's nothing that would be left dangling — always a
+    # real delete, no "in use, deactivate instead" fallback needed.
+    _delete_content_image(promo.image_path)
+    db.session.delete(promo)
+    db.session.commit()
+    return jsonify(success=True, message='Promo deleted.')
 
 
 # ── Content-management API: Services ─────────────────────────────────────
@@ -3022,6 +3192,7 @@ def member_submit_payment():
         return jsonify(success=False, error='Your plan has already been approved — head to the Payment tab to complete payment.'), 409
 
     data = request.form
+    is_promo    = (data.get('is_promo')    or '').strip().lower() in ('1', 'true', 'yes')
     plan_key    = (data.get('plan')        or '').strip().lower()
     is_student  = (data.get('is_student')  or '').strip().lower() in ('1', 'true', 'yes')
     wants_coach = (data.get('wants_coach') or '').strip().lower() in ('1', 'true', 'yes')
@@ -3036,6 +3207,83 @@ def member_submit_payment():
         return jsonify(success=False, error='Invalid start date.'), 400
     if requested_start < today:
         return jsonify(success=False, error='Start date cannot be in the past.'), 400
+
+    # ── Promo request: a member picking a promo card sends is_promo=1 +
+    #    promo_id instead of a regular plan key. Promos don't carry a
+    #    structured duration of their own (they're freeform — "16
+    #    sessions", "30 days", etc.) — so the request rides on the Monthly
+    #    plan behind the scenes purely for expiry-date scheduling. The
+    #    promo's real name/price is tagged in `notes` (and surfaced back
+    #    to staff/admin/the member via _payment_display_plan) so nothing
+    #    about the promo itself is lost. Student discounts never apply
+    #    here, matching the member-side UI which hides that question once
+    #    a promo is selected. Unlike the regular-plan path below, a coach
+    #    is mandatory (not optional) with every promo. ──
+    if is_promo:
+        promo_id_raw = (data.get('promo_id') or '').strip()
+        try:
+            promo_id = int(promo_id_raw)
+        except ValueError:
+            return jsonify(success=False, error='Please select a promo.'), 400
+        promo = GymPromo.query.get(promo_id)
+        if promo is None or not promo.is_active:
+            return jsonify(success=False, error='Selected promo is no longer available.'), 400
+
+        coach = Coach.query.filter_by(name=coach_name, is_active=True).first()
+        if coach is None:
+            return jsonify(success=False, error='Please choose a coach.'), 400
+        occupancy = _get_coach_occupancy().get(coach.name, 0)
+        if occupancy >= coach.max_members:
+            return jsonify(success=False, error=f'{coach.name} is currently at full capacity. Please choose another coach.'), 409
+        wants_coach = True
+
+        anchor_plan = MembershipPlan.query.filter_by(name='Monthly').first()
+        expiry = _plan_expiry(anchor_plan, requested_start) if anchor_plan else requested_start + timedelta(days=30)
+        promo_price_text = f'{promo.price:,.0f}' if promo.price == int(promo.price) else f'{promo.price:,.2f}'
+        # The coach is bundled into the promo price itself — no separate
+        # fee is added on top (unlike the regular-plan path below, where
+        # _coach_fee() does get charged).
+        promo_total = promo.price
+        promo_notes = f'Promo request: {promo.title} — ₱{promo_price_text} + Coach ({coach_name})'
+
+        new_payment = Payment(
+            member_id=user.id,
+            plan_id=anchor_plan.id if anchor_plan else None,
+            amount=promo_total,
+            method='Pending — awaiting staff approval',
+            reference_number=None,
+            proof_image_path=None,
+            is_student=False,
+            student_id_image_path=None,
+            wants_coach=wants_coach,
+            coach_name=coach_name,
+            requested_start_date=requested_start,
+            status='pending',
+            notes=promo_notes,
+        )
+        db.session.add(new_payment)
+
+        membership = Membership.query.filter_by(member_id=user.id).first()
+        if membership is None:
+            membership = Membership(
+                member_id=user.id,
+                plan_id=anchor_plan.id if anchor_plan else None,
+                start_date=requested_start,
+                expiry_date=expiry,
+                status='pending',
+            )
+            db.session.add(membership)
+        elif membership.status != 'active':
+            membership.plan_id     = anchor_plan.id if anchor_plan else None
+            membership.start_date  = requested_start
+            membership.expiry_date = expiry
+            membership.status      = 'pending'
+
+        db.session.commit()
+
+        return jsonify(success=True, message=f'{promo.title} promo requested to start '
+                                              f'{requested_start.strftime("%b %d, %Y")}. '
+                                              f'Please wait for staff approval before proceeding to payment.')
 
     plan_name_map = {
         'daily': 'Daily',
@@ -3847,15 +4095,26 @@ def update_profile_picture():
 
 @app.route('/admin/update-gcash-settings', methods=['POST'])
 def admin_update_gcash_settings():
-    """Admin-only: update the GCash account number/name members are shown
-    when submitting a payment. Takes effect immediately for every member,
-    since the member dashboard reads this same row on each page load."""
+    """Admin-only: update the GCash account number/name (and optional QR
+    code image) members are shown when submitting a payment. Takes effect
+    immediately for every member, since the member dashboard reads this
+    same row on each page load.
+
+    Sent as multipart/form-data (not JSON) so the optional QR image file
+    can travel alongside the number/name in one request:
+      - gcash_number, gcash_account_name: required text fields
+      - gcash_qr: optional file (PNG/JPG/JPEG/WEBP, max 8MB) — a new QR
+        replaces any existing one
+      - remove_qr: optional 'true' to delete the existing QR without
+        uploading a replacement
+    """
     if session.get('role') != 'admin':
         return jsonify(success=False, error='Unauthorized.'), 403
 
-    data = request.get_json(silent=True) or {}
-    gcash_number       = (data.get('gcash_number') or '').strip()
-    gcash_account_name = (data.get('gcash_account_name') or '').strip()
+    gcash_number       = (request.form.get('gcash_number') or '').strip()
+    gcash_account_name = (request.form.get('gcash_account_name') or '').strip()
+    remove_qr          = (request.form.get('remove_qr') or '').strip().lower() == 'true'
+    qr_file             = request.files.get('gcash_qr')
 
     if not gcash_number or not gcash_account_name:
         return jsonify(success=False, error='GCash number and account name are both required.'), 400
@@ -3864,14 +4123,31 @@ def admin_update_gcash_settings():
         return jsonify(success=False, error='Enter a valid GCash number, e.g. 0917 123 4567.'), 400
 
     settings = _get_gym_settings()
+    old_qr_path = settings.gcash_qr_path
+
+    try:
+        if qr_file and qr_file.filename:
+            settings.gcash_qr_path = _save_content_image(qr_file, existing_path=old_qr_path)
+        elif remove_qr:
+            settings.gcash_qr_path = None
+    except ValueError as e:
+        return jsonify(success=False, error=str(e)), 400
+
     # Store in the same spaced format shown to members: 0917 123 4567
     settings.gcash_number       = f"{digits_only[0:4]} {digits_only[4:7]} {digits_only[7:11]}"
     settings.gcash_account_name = gcash_account_name.upper()
     db.session.commit()
 
+    # Best-effort cleanup of the old QR file now that the change is saved.
+    # Only ever deletes admin-uploaded files (under uploads/content) —
+    # never the bundled default QR asset shipped with the app.
+    if old_qr_path and old_qr_path != settings.gcash_qr_path and old_qr_path.startswith('uploads/content/'):
+        _delete_content_image(old_qr_path)
+
     return jsonify(success=True, message='GCash payment details updated.', settings={
         'gcash_number':       settings.gcash_number,
         'gcash_account_name': settings.gcash_account_name,
+        'gcash_qr_url':       url_for('static', filename=settings.gcash_qr_path) if settings.gcash_qr_path else None,
     })
 
 
@@ -4223,7 +4499,21 @@ def member():
             # name so the Upgrade/Renew panel can still show its "request
             # was declined" banner; the Current Plan panel itself falls back
             # to its normal "NO ACTIVE PLAN" state.
-            declined_plan_info = {'name': plan_obj.name}
+            #
+            # The membership itself only ever tracks the anchor plan a promo
+            # request rode on (see /member/submit-payment), not the promo
+            # name — so pull the actual declined request's Payment row to
+            # show the promo's real name here instead of "Monthly".
+            declined_payment_row = (
+                Payment.query
+                .filter_by(member_id=user.id, status='rejected')
+                .order_by(Payment.paid_at.desc())
+                .first()
+            )
+            declined_plan_info = {
+                'name': _payment_display_plan(declined_payment_row, plan_obj.name),
+                'is_promo': _is_promo_payment(declined_payment_row),
+            }
         else:
             # Count down from whichever is later: today, or the membership's
             # own start date. Without this, a membership that hasn't started
@@ -4278,11 +4568,14 @@ def member():
 
             # Coach info (if any) comes from this member's most recent payment
             # record — the same source used for payment_status above — so the
-            # member sees the exact coach + fee that staff/admin set and that
-            # was actually charged, not a stale/default value.
+            # member sees the exact coach that staff/admin set. For a promo
+            # plan the coach is bundled into the promo price at no extra
+            # charge, so no separate fee is shown; regular plans still show
+            # whatever the coach's fee actually was.
             plan_wants_coach = bool(latest_payment_row and latest_payment_row.wants_coach and latest_payment_row.coach_name)
             plan_coach_name  = latest_payment_row.coach_name if plan_wants_coach else None
-            plan_coach_fee   = _coach_fee(latest_payment_row.coach_name) if plan_wants_coach else 0.0
+            plan_is_promo    = bool(latest_payment_row and _is_promo_payment(latest_payment_row))
+            plan_coach_fee   = (0.0 if plan_is_promo else _coach_fee(latest_payment_row.coach_name)) if plan_wants_coach else 0.0
 
             current_plan = {
                 'name': plan_obj.name,
@@ -4355,7 +4648,7 @@ def member():
     )
     payment_history = [{
         'date':      _to_manila(p.paid_at).strftime('%b %d, %Y'),
-        'plan':      p.plan.name if p.plan else '—',
+        'plan':      _payment_display_plan(p),
         'amount':    f'{float(p.amount):,.2f}',
         'method':    p.method,
         'reference': p.reference_number or '—',
@@ -4377,7 +4670,8 @@ def member():
     if awaiting_approval_row is not None:
         awaiting_approval = {
             'id':          awaiting_approval_row.id,
-            'plan_name':  awaiting_approval_row.plan.name if awaiting_approval_row.plan else '—',
+            'plan_name':  _payment_display_plan(awaiting_approval_row),
+            'is_promo':   _is_promo_payment(awaiting_approval_row),
             'amount':     f'{float(awaiting_approval_row.amount):,.2f}',
             'start_date': awaiting_approval_row.requested_start_date.strftime('%b %d, %Y') if awaiting_approval_row.requested_start_date else '—',
             'is_student': awaiting_approval_row.is_student,
@@ -4397,7 +4691,8 @@ def member():
     pending_payment = None
     if pending_payment_row is not None:
         pending_payment = {
-            'plan_name':   pending_payment_row.plan.name if pending_payment_row.plan else '—',
+            'plan_name':   _payment_display_plan(pending_payment_row),
+            'is_promo':    _is_promo_payment(pending_payment_row),
             'amount':      f'{float(pending_payment_row.amount):,.2f}',
             'start_date':  pending_payment_row.requested_start_date.strftime('%b %d, %Y') if pending_payment_row.requested_start_date else '—',
             'needs_method': pending_payment_row.method.startswith('Pending'),
@@ -4419,7 +4714,8 @@ def member():
     plan_approved_notice = None
     if just_approved_row is not None:
         plan_approved_notice = {
-            'plan_name': just_approved_row.plan.name if just_approved_row.plan else 'membership',
+            'plan_name': _payment_display_plan(just_approved_row, 'membership'),
+            'is_promo': _is_promo_payment(just_approved_row),
         }
         just_approved_row.notified = True
         db.session.commit()
@@ -4444,7 +4740,8 @@ def member():
                   if just_verified_row.requested_start_date else today.strftime('%B %d, %Y'))
         )
         payment_verified_notice = {
-            'plan_name':  just_verified_row.plan.name if just_verified_row.plan else 'membership',
+            'plan_name':  _payment_display_plan(just_verified_row, 'membership'),
+            'is_promo':   _is_promo_payment(just_verified_row),
             'start_date': start_date_text,
         }
         just_verified_row.notified = True
@@ -4462,7 +4759,8 @@ def member():
     plan_declined_notice = None
     if just_declined_row is not None:
         plan_declined_notice = {
-            'plan_name': just_declined_row.plan.name if just_declined_row.plan else 'membership',
+            'plan_name': _payment_display_plan(just_declined_row, 'membership'),
+            'is_promo': _is_promo_payment(just_declined_row),
         }
         just_declined_row.notified = True
         db.session.commit()
@@ -4509,6 +4807,7 @@ def member():
     ]
     content_services  = GymService.query.filter_by(is_active=True).order_by(GymService.sort_order, GymService.id).all()
     content_equipment = GymEquipment.query.filter_by(is_active=True).order_by(GymEquipment.sort_order, GymEquipment.id).all()
+    content_promos    = GymPromo.query.filter_by(is_active=True).order_by(GymPromo.sort_order, GymPromo.id).all()
 
     # Equipment grouped by category for the "Gym Machines and Equipment"
     # display — each group is (category_name, category_icon, [items]),
@@ -4525,8 +4824,15 @@ def member():
 
     # ── Coaches (for the "Choose a Coach" field on the plan request form) —
     #    shows each coach's available days and remaining slots so members
-    #    can pick one that's actually open. ──
+    #    can pick one that's actually open. The one with the most open
+    #    slots is flagged as "recommended" so a member who doesn't have a
+    #    preference isn't stuck staring at an empty dropdown. ──
     coaches_data = [c for c in _get_coaches_data() if c['is_active']]
+    _available_coaches = [c for c in coaches_data if not c['is_full']]
+    recommended_coach_name = (
+        max(_available_coaches, key=lambda c: c['slots_left'])['name']
+        if _available_coaches else None
+    )
 
     plans_data = [{
         'key':            p.name.lower(),
@@ -4538,6 +4844,21 @@ def member():
         'inclusions':     p.inclusions_list,
         'image_path':     url_for('static', filename=p.image_path) if p.image_path else '',
     } for p in content_plans]
+
+    # Real, admin/staff-managed promos (Manage Content → Promos) — replaces
+    # what used to be a hardcoded pair of promo cards baked into the
+    # template. Empty list here just means "no active promos right now",
+    # which the template already renders as a normal empty state.
+    promos_data = [{
+        'id':          p.id,
+        'title':       p.title,
+        'price':       p.price,
+        'period':      p.period or 'Limited-time offer',
+        'description': p.description or '',
+        'inclusions':  p.inclusions_list,
+        'valid_until': p.valid_until.strftime('%B %d, %Y') if p.valid_until else '',
+        'image_path':  url_for('static', filename=p.image_path) if p.image_path else '',
+    } for p in content_promos]
 
     services_data = [{
         'id':          s.id,
@@ -4575,9 +4896,11 @@ def member():
         equipment_by_category=equipment_by_category,
         services_by_category=services_by_category,
         plans_data=plans_data,
+        promos=promos_data,
         services_data=services_data,
         equipment_data=equipment_data,
         coaches=coaches_data,
+        recommended_coach_name=recommended_coach_name,
         present_days=present_days,
         no_plan_days=no_plan_days,
         days_in_month=days_in_month,
@@ -4798,7 +5121,8 @@ def staff():
         'txn': f'TXN-{9000 + p.id}',
         'member_name': p.member.full_name,
         'member_profile_picture': url_for('static', filename=p.member.profile_picture) if p.member.profile_picture else None,
-        'plan': p.plan.name if p.plan else '—',
+        'plan': _payment_display_plan(p),
+        'is_promo': bool(p.notes and p.notes.startswith('Promo request:')),
         'method': p.method,
         'reference': p.reference_number or '—',
         'amount': f'{float(p.amount):,.2f}',
@@ -4827,7 +5151,7 @@ def staff():
     processed_requests = [{
         'txn': f'TXN-{9000 + p.id}',
         'member_name': p.member.full_name,
-        'plan': p.plan.name if p.plan else '—',
+        'plan': _payment_display_plan(p),
         'method': p.method,
         'amount': f'{float(p.amount):,.2f}',
         'date': p.paid_at.strftime('%b %d, %Y'),
@@ -4846,7 +5170,7 @@ def staff():
     coach_assignments = [{
         'member_name': p.member.full_name,
         'coach_name': p.coach_name or '—',
-        'plan': p.plan.name if p.plan else '—',
+        'plan': _payment_display_plan(p),
         'status': p.status,
         'date': p.paid_at.strftime('%b %d, %Y'),
     } for p in coach_rows]
@@ -5084,7 +5408,7 @@ def _revenue_report(start_date, end_date, method=None):
 
     by_plan = {}
     for r in rows:
-        plan_name = r.plan.name if r.plan else 'Unknown'
+        plan_name = _payment_display_plan(r, 'Unknown')
         by_plan[plan_name] = by_plan.get(plan_name, 0) + float(r.amount)
     for w in walkin_rows:
         label = f'Walk-In ({w.plan_type})'
@@ -5129,7 +5453,7 @@ def _revenue_report(start_date, end_date, method=None):
     transactions = [{
         'txn':         f'TXN-{9000 + p.id}',
         'member':      p.member.full_name if p.member else '—',
-        'plan':        p.plan.name if p.plan else '—',
+        'plan':        _payment_display_plan(p),
         'method':      p.method,
         'amount':      float(p.amount),
         'raw_dt':      p.paid_at,
@@ -5625,7 +5949,8 @@ def admin():
         'txn': f'TXN-{9000 + p.id}',
         'member_name': p.member.full_name,
         'member_profile_picture': url_for('static', filename=p.member.profile_picture) if p.member.profile_picture else None,
-        'plan': p.plan.name if p.plan else '—',
+        'plan': _payment_display_plan(p),
+        'is_promo': bool(p.notes and p.notes.startswith('Promo request:')),
         'method': p.method,
         'reference': p.reference_number or '—',
         'amount': f'{float(p.amount):,.2f}',
@@ -5652,7 +5977,7 @@ def admin():
     payment_history = [{
         'txn': f'TXN-{9000 + p.id}',
         'member_name': p.member.full_name,
-        'plan': p.plan.name if p.plan else '—',
+        'plan': _payment_display_plan(p),
         'method': p.method,
         'amount': f'{float(p.amount):,.2f}',
         'date': p.paid_at.strftime('%b %d, %Y'),
@@ -5746,6 +6071,37 @@ def seed_default_plans():
                 existing.inclusions = p['inclusions']
             if not existing.sort_order:
                 existing.sort_order = p['sort_order']
+    db.session.commit()
+
+
+def seed_default_promos():
+    """Seeds the two promos that used to be hardcoded directly into
+    member-dashboard.html ('16 Sessions', 'Boxing') so a fresh install
+    isn't empty out of the box — but from here on they're just normal
+    rows staff/admin can edit or delete from Manage Content → Promos,
+    exactly like any other promo they create themselves."""
+    defaults = [
+        {'title': '16 Sessions', 'price': 3500.0, 'period': 'Limited-time offer',
+         'inclusions': '16 gym-access sessions, usable any time before they expire\n'
+                        'Full equipment access during each session\n'
+                        'No long-term commitment — pay once, use as you go',
+         'sort_order': 1},
+        {'title': 'Boxing', 'price': 4000.0, 'period': 'Limited-time offer',
+         'inclusions': 'Full boxing program access for 30 days\n'
+                        'Use of gloves, pads, and boxing equipment\n'
+                        'Open access to regular gym facilities during the promo period',
+         'sort_order': 2},
+    ]
+    for p in defaults:
+        existing = GymPromo.query.filter_by(title=p['title']).first()
+        if existing is None:
+            db.session.add(GymPromo(
+                title=p['title'],
+                price=p['price'],
+                period=p['period'],
+                inclusions=p['inclusions'],
+                sort_order=p['sort_order'],
+            ))
     db.session.commit()
 
 
@@ -6401,6 +6757,8 @@ def _run_startup_migrations():
         ('users', 'profile_picture', "ALTER TABLE users ADD COLUMN profile_picture VARCHAR(255) NULL"),
         # ── 7-day cooldown on changing the profile picture ──
         ('users', 'profile_picture_updated_at', "ALTER TABLE users ADD COLUMN profile_picture_updated_at DATETIME NULL"),
+        # ── Optional "scan to pay" QR code shown alongside the GCash number ──
+        ('gym_settings', 'gcash_qr_path', "ALTER TABLE gym_settings ADD COLUMN gcash_qr_path VARCHAR(255) NULL"),
     ]
     with db.engine.connect() as conn:
         for table, column, ddl in migrations:
@@ -6409,6 +6767,19 @@ def _run_startup_migrations():
                 conn.execute(text(ddl))
                 conn.commit()
                 print(f"Migration: added {table}.{column}")
+                if table == 'gym_settings' and column == 'gcash_qr_path':
+                    # One-time backfill only, right after the column is
+                    # created — so existing installs show a QR immediately
+                    # without an admin having to upload one first. This
+                    # never runs again on later restarts, so an admin who
+                    # later clears the QR (removes it on purpose) won't
+                    # have it silently reappear.
+                    conn.execute(text(
+                        "UPDATE gym_settings SET gcash_qr_path = 'images/gcash-qr.jpg' "
+                        "WHERE gcash_qr_path IS NULL"
+                    ))
+                    conn.commit()
+                    print("Migration: seeded default gcash_qr_path for existing settings row(s)")
 
         # ── Widen food_items.suitable_meal if it's still the original,
         #    too-narrow VARCHAR(20) from an earlier version of this
@@ -6563,6 +6934,7 @@ def _run_startup_sequence():
     db.create_all()
     _run_startup_migrations()
     seed_default_plans()
+    seed_default_promos()
     seed_default_coaches()
     seed_default_equipment()
     seed_default_fitness_catalog()

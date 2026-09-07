@@ -726,15 +726,16 @@ const ContentManager = (() => {
   // this lets the dashboard offer two focused tabs without a second backend
   // model. TYPES lists every tab the UI can show; ENDPOINTS/LABELS below
   // map each one to the request it should make and its display name.
-  const TYPES = ['plans', 'services', 'facilities', 'machines'];
+  const TYPES = ['plans', 'promos', 'services', 'facilities', 'machines'];
   const ENDPOINTS = {
     plans:     { list: '/api/content/plans',     save: '/api/content/plans/save',     del: id => `/api/content/plans/${id}/delete` },
+    promos:    { list: '/api/content/promos',    save: '/api/content/promos/save',    del: id => `/api/content/promos/${id}/delete` },
     services:  { list: '/api/content/services',  save: '/api/content/services/save',  del: id => `/api/content/services/${id}/delete` },
     equipment: { list: '/api/content/equipment', save: '/api/content/equipment/save', del: id => `/api/content/equipment/${id}/delete` },
   };
   ENDPOINTS.facilities = ENDPOINTS.equipment;
   ENDPOINTS.machines   = ENDPOINTS.equipment;
-  const LABELS = { plans: 'Membership Plan', services: 'Service', facilities: 'Facility Photo', machines: 'Equipment' };
+  const LABELS = { plans: 'Membership Plan', promos: 'Promo', services: 'Service', facilities: 'Facility Photo', machines: 'Equipment' };
   // Which value of is_facility each tab represents, and therefore which
   // value gets saved automatically when adding/editing from that tab.
   const IS_FACILITY_TYPE = { facilities: true, machines: false };
@@ -744,7 +745,7 @@ const ContentManager = (() => {
   // cache.equipment holds the single raw list backing both the
   // "facilities" and "machines" tabs (and the Services equipment checklist);
   // it's filtered client-side per tab in _filterEquipment().
-  let cache = { plans: null, services: null, equipment: null };
+  let cache = { plans: null, promos: null, services: null, equipment: null };
   let pendingDelete = null; // { type, id }
   let loaded = false;
   // Category filter for the "machines" tab only (e.g. "Free Weights",
@@ -874,22 +875,30 @@ const ContentManager = (() => {
 
   function _cardHtml(type, item) {
     const isPlan = type === 'plans';
+    const isPromo = type === 'promos';
     const img = item.image_path
       ? `background-image:url('/static/${item.image_path}')`
       : '';
-    const fallbackIcon = isPlan ? '💳' : type === 'services' ? '🛎️' : type === 'facilities' ? '🏢' : '🏋️';
+    const fallbackIcon = isPlan ? '💳' : isPromo ? '🎁' : type === 'services' ? '🛎️' : type === 'facilities' ? '🏢' : '🏋️';
     const icon = item.image_path ? '' : (item.icon || fallbackIcon);
-    const priceLine = isPlan
-      ? `<div class="content-card-price">₱${Number(item.price).toLocaleString()} / ${item.duration_days} day${item.duration_days == 1 ? '' : 's'}</div>`
-      : '';
-    const categoryBadge = (!isPlan && item.category)
+    let priceLine = '';
+    if (isPlan) {
+      priceLine = `<div class="content-card-price">₱${Number(item.price).toLocaleString()} / ${item.duration_days} day${item.duration_days == 1 ? '' : 's'}</div>`;
+    } else if (isPromo) {
+      const periodTxt = item.period ? ` · ${_esc(item.period)}` : '';
+      priceLine = `<div class="content-card-price">₱${Number(item.price).toLocaleString()}${periodTxt}</div>`;
+    }
+    const categoryBadge = (!isPlan && !isPromo && item.category)
       ? `<div style="font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);">${_esc(item.category)}</div>`
       : '';
     let inclusionsHtml = '';
-    if (isPlan && item.inclusions) {
+    if ((isPlan || isPromo) && item.inclusions) {
       const lines = item.inclusions.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 4);
       if (lines.length) inclusionsHtml = `<ul class="content-card-inclusions">${lines.map(l => `<li>${_esc(l)}</li>`).join('')}</ul>`;
     }
+    const validUntilLine = (isPromo && item.valid_until)
+      ? `<div style="font-size:12px;color:var(--muted);margin-top:4px;">Valid until ${_esc(item.valid_until)}</div>`
+      : '';
     const statusBadge = item.is_active
       ? '<span class="badge badge-green">ACTIVE</span>'
       : '<span class="badge badge-muted">HIDDEN</span>';
@@ -900,6 +909,7 @@ const ContentManager = (() => {
           <div class="content-card-name">${_esc(item.name)}</div>
           ${categoryBadge}
           ${priceLine}
+          ${validUntilLine}
           ${item.description ? `<div class="content-card-desc">${_esc(item.description)}</div>` : ''}
           ${inclusionsHtml}
           <div class="content-card-actions">
@@ -921,16 +931,17 @@ const ContentManager = (() => {
     document.getElementById('cf-image-input').value = '';
     document.getElementById('cf-remove-image').checked = false;
 
-    // Name field. Plans/Services, and editing an existing item of any
-    // type, keep the classic free-text box. Adding a brand-new facility
-    // or machine instead shows a picker of already-used names (with
-    // rename/delete on each) — picking "+ Add New …" swaps to the
+    // Name field. Plans/Services/Promos, and editing an existing item of
+    // any type, keep the classic free-text box. Adding a brand-new
+    // facility or machine instead shows a picker of already-used names
+    // (with rename/delete on each) — picking "+ Add New …" swaps to the
     // free-text box for a name that isn't listed yet.
     const nameLabel = document.getElementById('cf-name-label');
     const nameInput = document.getElementById('cf-name');
     if (nameLabel) {
       nameLabel.textContent = type === 'machines'    ? 'Name of Equipment/Machine'
                              : type === 'facilities'  ? 'Name of Facility/Area'
+                             : type === 'promos'      ? 'Promo Title'
                              : 'Name';
     }
     nameInput.value = item ? item.name : '';
@@ -950,12 +961,27 @@ const ContentManager = (() => {
     }
 
     const isPlan = type === 'plans';
+    const isPromo = type === 'promos';
     document.getElementById('cf-plan-fields').style.display = isPlan ? 'grid' : 'none';
-    document.getElementById('cf-inclusions-wrap').style.display = isPlan ? 'block' : 'none';
+    const promoFields = document.getElementById('cf-promo-fields');
+    if (promoFields) promoFields.style.display = isPromo ? 'grid' : 'none';
+    const validUntilWrap = document.getElementById('cf-valid-until-wrap');
+    if (validUntilWrap) validUntilWrap.style.display = isPromo ? 'block' : 'none';
+    document.getElementById('cf-inclusions-wrap').style.display = (isPlan || isPromo) ? 'block' : 'none';
     if (isPlan) {
       document.getElementById('cf-price').value = item ? item.price : '';
       document.getElementById('cf-duration').value = item ? item.duration_days : '';
-      document.getElementById('cf-inclusions').value = item ? item.inclusions : '';
+    }
+    if (isPromo) {
+      const promoPrice = document.getElementById('cf-promo-price');
+      const periodInput = document.getElementById('cf-period');
+      const validUntilInput = document.getElementById('cf-valid-until');
+      if (promoPrice) promoPrice.value = item ? item.price : '';
+      if (periodInput) periodInput.value = item ? (item.period || '') : '';
+      if (validUntilInput) validUntilInput.value = item ? (item.valid_until || '') : '';
+    }
+    if (isPlan || isPromo) {
+      document.getElementById('cf-inclusions').value = item ? (item.inclusions || '') : '';
     }
 
     // Category + icon (services & equipment only). Category is always the
@@ -965,12 +991,12 @@ const ContentManager = (() => {
     // it when adding new, to avoid implying you're renaming the CURRENT
     // item by picking a different existing name from the list).
     const catEqWrap = document.getElementById('cf-category-icon-wrap');
-    if (catEqWrap) catEqWrap.style.display = isPlan ? 'none' : 'grid';
+    if (catEqWrap) catEqWrap.style.display = (isPlan || isPromo) ? 'none' : 'grid';
     const catInput  = document.getElementById('cf-category');
     const iconInput = document.getElementById('cf-icon');
     const catPickerWrap = document.getElementById('cf-category-picker-wrap');
     const catBack = document.getElementById('cf-category-toggle');
-    if (!isPlan) {
+    if (!isPlan && !isPromo) {
       _closePicker('category');
       if (catInput) catInput.value = item ? (item.category || '') : '';
       if (catPickerWrap) catPickerWrap.style.display = '';
@@ -1343,7 +1369,7 @@ const ContentManager = (() => {
     const file = document.getElementById('cf-image-input').files[0];
     if (file) fd.append('image', file);
 
-    if (type !== 'plans') {
+    if (type !== 'plans' && type !== 'promos') {
       const catInput  = document.getElementById('cf-category');
       const iconInput = document.getElementById('cf-icon');
       fd.append('category', catInput ? catInput.value.trim() : '');
@@ -1365,6 +1391,17 @@ const ContentManager = (() => {
       if (!duration || Number(duration) <= 0) { showToast('Enter a valid duration in days.', 'error'); return; }
       fd.append('price', price);
       fd.append('duration_days', duration);
+      fd.append('inclusions', document.getElementById('cf-inclusions').value);
+    }
+
+    if (type === 'promos') {
+      const price = document.getElementById('cf-promo-price').value;
+      if (!price || Number(price) < 0) { showToast('Enter a valid price.', 'error'); return; }
+      fd.append('price', price);
+      const periodInput = document.getElementById('cf-period');
+      fd.append('period', periodInput ? periodInput.value.trim() : '');
+      const validUntilInput = document.getElementById('cf-valid-until');
+      if (validUntilInput && validUntilInput.value) fd.append('valid_until', validUntilInput.value);
       fd.append('inclusions', document.getElementById('cf-inclusions').value);
     }
 

@@ -20,11 +20,13 @@ const MemberModule = (() => {
 
   // ── State ──
   let _plansByKey     = {};   // key -> {key,name,price,duration_days,description,inclusions,image_path}
+  let _promosList     = [];   // index-ordered list of {title,price,period,description,inclusions,valid_until}
   let _servicesById   = {};   // id  -> {id,name,description,image_path,category,icon,equipment:[{name,icon}]}
   let _equipmentById  = {};   // id  -> {id,name,description,image_path,category,icon} — used by the machine "how-to-use" guide modal
   let _exercisesById  = {};   // id  -> exercise object (populated when the weekly routine renders)
 
   let _selectedPlanKey   = null;
+  let _selectedPromoIndex = null; // index into _promosList of the currently-availed promo, or null
   let _promoSelected      = false; // true while a promo card is availed — student discount question hides while this is true
   let _pendingPlanRequest = null; // { formData } staged between submitRenewalPayment() and confirmPlanRequest()
   let _pendingPaymentMethod = null; // { formData } staged between submitPaymentMethod() and confirmSubmitPayment()
@@ -74,24 +76,40 @@ const MemberModule = (() => {
 
     // One-time popups (order matters least — each is independent)
     if (dashData.plan_approved_notice) {
+      const n = dashData.plan_approved_notice;
       const msg = document.getElementById('plan-approved-message');
-      if (msg) msg.textContent = `Congratulations! Your ${dashData.plan_approved_notice.plan_name} plan has been approved. Please proceed to payment.`;
+      if (msg) {
+        msg.textContent = n.is_promo
+          ? `Congratulations! Your ${n.plan_name} promo has been approved. Please proceed to payment.`
+          : `Congratulations! Your ${n.plan_name} plan has been approved. Please proceed to payment.`;
+      }
       openModal('plan-approved-modal');
     }
     if (dashData.payment_verified_notice) {
+      const n = dashData.payment_verified_notice;
       const msg = document.getElementById('payment-approved-message');
-      if (msg) msg.textContent = `You have successfully paid your ${dashData.payment_verified_notice.plan_name} plan! Active since ${dashData.payment_verified_notice.start_date}.`;
+      if (msg) {
+        msg.textContent = n.is_promo
+          ? `You have successfully paid for your ${n.plan_name} promo! Active since ${n.start_date}.`
+          : `You have successfully paid your ${n.plan_name} plan! Active since ${n.start_date}.`;
+      }
       openModal('payment-approved-modal');
     }
     if (dashData.plan_declined_notice) {
+      const n = dashData.plan_declined_notice;
       const msg = document.getElementById('plan-declined-message');
-      if (msg) msg.textContent = `Your ${dashData.plan_declined_notice.plan_name} plan request was declined. Please check with staff or admin, then feel free to submit a new request.`;
+      if (msg) {
+        msg.textContent = n.is_promo
+          ? `Your ${n.plan_name} promo request was declined. Please check with staff or admin, then feel free to submit a new request.`
+          : `Your ${n.plan_name} plan request was declined. Please check with staff or admin, then feel free to submit a new request.`;
+      }
       openModal('plan-declined-modal');
     }
     showNewAnnouncementNotices(dashData.new_announcements);
 
     // Plans / services lookup tables (used by the plan/service detail modals)
     (_parseJSON('member-plans-data') || []).forEach(p => { _plansByKey[p.key] = p; });
+    _promosList = _parseJSON('member-promos-data') || [];
     (_parseJSON('member-services-data') || []).forEach(s => { _servicesById[s.id] = s; });
     (_parseJSON('member-equipment-data') || []).forEach(e => { _equipmentById[e.id] = e; });
 
@@ -186,8 +204,11 @@ const MemberModule = (() => {
       // the .selected class leaves that inline highlight on screen.
       document.querySelectorAll('#member-membership-promo .plan-card.selected')
         .forEach(c => _paintPromoSelected(c, false));
+      _selectedPromoIndex = null;
     }
     _applyStudentFieldVisibility();
+    _applyCoachFieldVisibility();
+    _applySubmitButtonLabel();
   }
 
   /** Toggle-selects a promo card. Availing a promo hides the "Are you a
@@ -206,10 +227,12 @@ const MemberModule = (() => {
 
     if (wasSelected) {
       _promoSelected = false;
+      _selectedPromoIndex = null;
     } else {
       _paintPromoSelected(card, true);
       _promoSelected = true;
       _selectedPlanKey = null;
+      _selectedPromoIndex = Number(card.dataset.promoIndex);
       // Scoped to #choose-plan-grid specifically (not the whole panel) —
       // #choose-plan-panel also contains this promo grid, so a panel-wide
       // selector here would immediately strip the .selected class we just
@@ -219,36 +242,30 @@ const MemberModule = (() => {
         .forEach(c => c.classList.remove('selected'));
     }
     _applyStudentFieldVisibility();
+    _applyCoachFieldVisibility();
+    _applySubmitButtonLabel();
   }
 
-  /** Applies (or clears) the selected-promo look directly via inline
-   *  styles + a real DOM checkmark badge, independent of the stylesheet. */
+  /** Swaps the submit button's label — and color — between the plan look
+   *  ("REQUEST MEMBERSHIP PLAN", red) and the promo look ("REQUEST A
+   *  PROMO", gold), depending on whether a promo card is currently
+   *  availed, so the button always reflects what's actually being
+   *  submitted. */
+  function _applySubmitButtonLabel() {
+    const btn = document.getElementById('member-renew-submit-btn');
+    if (!btn) return;
+    btn.textContent = _promoSelected ? 'REQUEST A PROMO' : 'REQUEST MEMBERSHIP PLAN';
+    btn.classList.toggle('btn-gold', _promoSelected);
+    btn.classList.toggle('btn-red', !_promoSelected);
+  }
+
+  /** Applies (or clears) the selected-promo look. The gold "voucher" look
+   *  itself (dashed border, ticket notches, "SELECTED" ribbon) lives in
+   *  #member-membership-promo .plan-card.selected in the stylesheet, so
+   *  this just toggles the class — kept as its own function since other
+   *  code calls it directly to clear the look when a plan is chosen instead. */
   function _paintPromoSelected(card, on) {
     card.classList.toggle('selected', on);
-    if (on) {
-      card.style.borderColor = '#e61e25';
-      card.style.background = 'rgba(230,30,37,0.1)';
-      card.style.boxShadow = '0 12px 30px rgba(230,30,37,0.28)';
-      card.style.transform = 'translateY(-3px)';
-      if (!card.querySelector('.promo-selected-check')) {
-        const check = document.createElement('div');
-        check.className = 'promo-selected-check';
-        check.textContent = '✓';
-        check.style.cssText =
-          'position:absolute;top:14px;right:14px;width:22px;height:22px;' +
-          'border-radius:50%;background:#e61e25;color:#fff;font-size:13px;' +
-          'font-weight:700;display:flex;align-items:center;justify-content:center;' +
-          'line-height:1;pointer-events:none;';
-        card.appendChild(check);
-      }
-    } else {
-      card.style.borderColor = '';
-      card.style.background = '';
-      card.style.boxShadow = '';
-      card.style.transform = '';
-      const check = card.querySelector('.promo-selected-check');
-      if (check) check.remove();
-    }
   }
 
   /** Shows/hides the "Are you a student?" question (and resets it) based
@@ -265,6 +282,78 @@ const MemberModule = (() => {
       if (idGroup) idGroup.style.display = 'none';
     } else {
       studentGroup.style.display = '';
+    }
+  }
+
+  /** Shows the "Choose Your Coach" field only while a promo is availed
+   *  (the reverse of the student question above) — a coach is mandatory
+   *  with every promo, so no separate yes/no toggle is needed, just the
+   *  select itself. Resets it to the blank placeholder when hidden so a
+   *  stale choice doesn't linger on a regular plan — the member always
+   *  has to actively pick, even though one option is marked
+   *  "Recommended" as a hint. */
+  function _applyCoachFieldVisibility() {
+    const selectGroup = document.getElementById('member-renew-coach-select-group');
+    if (!selectGroup) return;
+
+    if (_promoSelected) {
+      selectGroup.style.display = '';
+      updateCoachAvailabilityNote();
+    } else {
+      selectGroup.style.display = 'none';
+      const coachSelect = document.getElementById('member-renew-coach-name');
+      if (coachSelect) coachSelect.value = '';
+    }
+  }
+
+  const _WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  /** Checks the currently-selected coach's available days against the
+   *  chosen start date and shows a friendly heads-up if they don't line
+   *  up — e.g. picking a Tuesday start for a Mon/Wed/Fri-only coach.
+   *  Purely informational (staff still confirms availability when
+   *  reviewing the request), so it never blocks submission. */
+  function updateCoachAvailabilityNote() {
+    const note = document.getElementById('member-coach-availability-note');
+    const coachSelect = document.getElementById('member-renew-coach-name');
+    const startInput = document.getElementById('member-renew-start');
+    if (!note || !coachSelect) return;
+
+    const coachName = coachSelect.value;
+    const startDate = startInput?.value || '';
+    if (!coachName) {
+      note.textContent = '';
+      return;
+    }
+
+    const option = Array.from(coachSelect.options).find(o => o.value === coachName);
+    const daysAttr = option?.dataset.days || '';
+    const availableDays = daysAttr.split(',').map(d => d.trim()).filter(Boolean);
+
+    if (!startDate) {
+      if (availableDays.length) {
+        note.style.color = '#c7c7cf';
+        note.textContent = `${coachName} is available: ${availableDays.join(', ')}.`;
+      } else {
+        note.style.color = '#c7c7cf';
+        note.textContent = `${coachName}'s available days aren't set yet — staff will confirm.`;
+      }
+      return;
+    }
+
+    const weekday = _WEEKDAY_ABBR[new Date(startDate + 'T00:00:00').getDay()];
+    const isAvailable = availableDays.includes(weekday);
+    const fullDayName = new Date(startDate + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long' });
+
+    if (!availableDays.length) {
+      note.style.color = '#c7c7cf';
+      note.textContent = `${coachName}'s available days aren't set yet — staff will confirm.`;
+    } else if (isAvailable) {
+      note.style.color = 'var(--green, #2ecc71)';
+      note.textContent = `✓ ${coachName} is available on ${fullDayName}s.`;
+    } else {
+      note.style.color = 'var(--gold, #e6b800)';
+      note.textContent = `⚠ ${coachName} isn't usually in on ${fullDayName}s (available: ${availableDays.join(', ')}). Staff will confirm or suggest another coach.`;
     }
   }
 
@@ -286,19 +375,94 @@ const MemberModule = (() => {
 
     const list = document.getElementById('plan-modal-list');
     if (list) {
-      const lines = (plan.inclusions || '').split('\n').map(l => l.trim()).filter(Boolean);
+      // plan.inclusions can arrive as either an array (server sends
+      // p.inclusions_list, already split per line) or a raw newline-
+      // separated string (older data shape) — normalize to an array
+      // before rendering so neither shape throws.
+      const raw = plan.inclusions;
+      const lines = (Array.isArray(raw) ? raw : (raw || '').split('\n'))
+        .map(l => (l || '').trim()).filter(Boolean);
       list.innerHTML = lines.length
         ? lines.map(l => `<li>${_esc(l)}</li>`).join('')
         : '<li>Full gym access for the plan duration.</li>';
     }
 
-    document.getElementById('plan-modal').dataset.planKey = key;
+    const modal = document.getElementById('plan-modal');
+    modal.dataset.mode = 'plan';
+    modal.dataset.planKey = key;
+    delete modal.dataset.promoIndex;
+    modal.classList.remove('modal-gold');
+    const priceEl = document.getElementById('plan-modal-price');
+    if (priceEl) priceEl.style.color = '';
+    const selectBtn = document.getElementById('plan-modal-select-btn');
+    if (selectBtn) {
+      selectBtn.textContent = 'SELECT THIS PLAN';
+      selectBtn.classList.remove('btn-gold');
+      selectBtn.classList.add('btn-red');
+    }
+    openModal('plan-modal');
+  }
+
+  /** Opens the same inclusions modal used for regular plans, but populated
+   *  from a promo's data instead — so members can see exactly what a promo
+   *  includes before availing it. `index` matches a promo's position in
+   *  #member-promos-data / its card's data-promo-index. */
+  function openPromoModal(index) {
+    const promo = _promosList[index];
+    if (!promo) {
+      console.warn(`openPromoModal: no promo data found at index ${index}. ` +
+        `_promosList currently has ${_promosList.length} entrie(s).`);
+      if (typeof showToast === 'function') {
+        showToast('Could not load promo details. Please refresh the page and try again.', 'error');
+      }
+      return;
+    }
+
+    document.getElementById('plan-modal-title').textContent = (promo.title || 'PROMO').toUpperCase();
+    document.getElementById('plan-modal-price').textContent = _peso(promo.price);
+    document.getElementById('plan-modal-subtitle').textContent =
+      promo.description || promo.period || 'Limited-time offer';
+
+    const list = document.getElementById('plan-modal-list');
+    if (list) {
+      const raw = promo.inclusions;
+      const lines = (Array.isArray(raw) ? raw : (raw || '').split('\n'))
+        .map(l => (l || '').trim()).filter(Boolean);
+      list.innerHTML = lines.length
+        ? lines.map(l => `<li>${_esc(l)}</li>`).join('')
+        : '<li>Full gym access for the promo duration.</li>';
+    }
+
+    const modal = document.getElementById('plan-modal');
+    modal.dataset.mode = 'promo';
+    modal.dataset.promoIndex = String(index);
+    delete modal.dataset.planKey;
+    modal.classList.add('modal-gold');
+    const priceEl = document.getElementById('plan-modal-price');
+    if (priceEl) priceEl.style.color = 'var(--promo-gold)';
+    const selectBtn = document.getElementById('plan-modal-select-btn');
+    if (selectBtn) {
+      selectBtn.textContent = 'SELECT THIS PROMO';
+      selectBtn.classList.remove('btn-red');
+      selectBtn.classList.add('btn-gold');
+    }
     openModal('plan-modal');
   }
 
   function selectPlanFromModal() {
-    const key = document.getElementById('plan-modal').dataset.planKey;
+    const modal = document.getElementById('plan-modal');
+    const mode = modal.dataset.mode || 'plan';
     closeModal('plan-modal');
+
+    if (mode === 'promo') {
+      const index = modal.dataset.promoIndex;
+      if (index === undefined) return;
+      const card = document.querySelector(`.plan-grid .plan-card[data-promo-index="${index}"]`);
+      if (card && !card.classList.contains('selected')) selectPromo(card);
+      return;
+    }
+
+    const key = modal.dataset.planKey;
     if (!key) return;
 
     const card = Array.from(document.querySelectorAll('.plan-grid .plan-card'))
@@ -335,14 +499,29 @@ const MemberModule = (() => {
     if (removeBtn) removeBtn.style.display = 'none';
   }
 
-  /** Validates the plan request form, then shows the invoice confirmation
-   *  modal — the actual submit happens in confirmPlanRequest(). */
+  /** Validates the plan (or promo) request form, then shows the invoice
+   *  confirmation modal — the actual submit happens in confirmPlanRequest().
+   *  A promo card being availed takes over entirely: no regular plan needs
+   *  to be picked, since a promo is what's actually being requested. */
   function submitRenewalPayment() {
+    if (_promoSelected) {
+      _submitPromoRequest();
+      return;
+    }
+
     if (!_selectedPlanKey || !_plansByKey[_selectedPlanKey]) {
       showToast('Please select a membership plan.', 'error');
       return;
     }
     const plan = _plansByKey[_selectedPlanKey];
+
+    // Reset the confirmation modal's labels back to the regular-plan
+    // wording in case a promo request last set them to their promo
+    // variants (see _submitPromoRequest below).
+    const priceLabel = document.getElementById('confirm-plan-price-label');
+    if (priceLabel) priceLabel.textContent = 'Regular Price';
+    const expiryLabel = document.getElementById('confirm-plan-expiry-label');
+    if (expiryLabel) expiryLabel.textContent = 'Expires';
 
     const startDate = document.getElementById('member-renew-start')?.value || '';
     if (!startDate) {
@@ -396,6 +575,64 @@ const MemberModule = (() => {
       new Date(startDate + 'T00:00:00').toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
     document.getElementById('confirm-plan-end-date').textContent = _previewExpiry(plan, startDate);
     document.getElementById('confirm-plan-total').textContent = _peso(total);
+
+    openModal('confirm-plan-modal');
+  }
+
+  /** Promo counterpart to submitRenewalPayment() above — skips plan
+   *  selection and the student question entirely (neither applies once a
+   *  promo is availed). A coach is mandatory with every promo, included
+   *  in the promo price at no extra cost (see _applyCoachFieldVisibility
+   *  above) — this validates that a coach was actually picked, then
+   *  populates the same invoice confirmation modal from the promo's own
+   *  data. */
+  function _submitPromoRequest() {
+    const promo = (_selectedPromoIndex != null) ? _promosList[_selectedPromoIndex] : null;
+    if (!promo) {
+      showToast('Please select a promo.', 'error');
+      return;
+    }
+
+    const startDate = document.getElementById('member-renew-start')?.value || '';
+    if (!startDate) {
+      showToast('Please choose a start date for your plan.', 'error');
+      return;
+    }
+
+    const coachSelect = document.getElementById('member-renew-coach-name');
+    const coachName = coachSelect ? coachSelect.value : '';
+    if (!coachName) {
+      showToast('Please choose a coach.', 'error');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('is_promo', '1');
+    formData.append('promo_id', promo.id);
+    formData.append('start_date', startDate);
+    formData.append('wants_coach', '1');
+    formData.append('coach_name', coachName);
+    _pendingPlanRequest = { formData };
+
+    document.getElementById('confirm-plan-name').textContent = (promo.title || 'PROMO').toUpperCase();
+
+    const priceLabel = document.getElementById('confirm-plan-price-label');
+    if (priceLabel) priceLabel.textContent = 'Promo Price';
+    document.getElementById('confirm-plan-regular-price').textContent = _peso(promo.price);
+    document.getElementById('confirm-plan-discount-row').style.display = 'none';
+
+    document.getElementById('confirm-plan-coach-row').style.display = 'flex';
+    document.getElementById('confirm-plan-coach-name').textContent = coachName;
+    document.getElementById('confirm-plan-coach-fee-row').style.display = 'none';
+
+    document.getElementById('confirm-plan-date').textContent =
+      new Date(startDate + 'T00:00:00').toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+
+    const expiryLabel = document.getElementById('confirm-plan-expiry-label');
+    if (expiryLabel) expiryLabel.textContent = 'Duration';
+    document.getElementById('confirm-plan-end-date').textContent = promo.period || 'See promo details';
+
+    document.getElementById('confirm-plan-total').textContent = _peso(promo.price);
 
     openModal('confirm-plan-modal');
   }
@@ -559,8 +796,11 @@ const MemberModule = (() => {
         }
 
         // Swap every avatar on the page that shows the current picture —
-        // the Profile tab's big avatar and the sidebar's small one.
-        [document.getElementById('profile-picture-avatar'), document.getElementById('sidebar-user-avatar')]
+        // the Profile tab's big avatar, the Settings tab's big avatar,
+        // and the sidebar's small one.
+        [document.getElementById('profile-picture-avatar'),
+         document.getElementById('settings-profile-picture-avatar'),
+         document.getElementById('sidebar-user-avatar')]
           .forEach(el => {
             if (!el) return;
             el.style.backgroundImage = `url('${data.profile_picture_url}')`;
@@ -569,16 +809,23 @@ const MemberModule = (() => {
             el.style.color = 'transparent';
           });
 
-        // Lock the edit button back down until the next cooldown ends.
-        const btn = document.getElementById('profile-picture-btn');
-        if (btn && data.available_at) {
-          btn.disabled = true;
-          btn.title = `You can change your photo again on ${data.available_at}.`;
-        }
-        const hint = document.getElementById('profile-picture-hint');
-        if (hint && data.available_at) {
-          hint.innerHTML = `You can change your profile picture again on <strong>${data.available_at}</strong>.`;
-        }
+        // Lock the edit button back down until the next cooldown ends —
+        // on both the Profile tab and the Settings tab.
+        [document.getElementById('profile-picture-btn'),
+         document.getElementById('settings-profile-picture-btn')]
+          .forEach(btn => {
+            if (btn && data.available_at) {
+              btn.disabled = true;
+              btn.title = `You can change your photo again on ${data.available_at}.`;
+            }
+          });
+        [document.getElementById('profile-picture-hint'),
+         document.getElementById('settings-profile-picture-hint')]
+          .forEach(hint => {
+            if (hint && data.available_at) {
+              hint.innerHTML = `You can change your profile picture again on <strong>${data.available_at}</strong>.`;
+            }
+          });
 
         showToast(data.message || 'Profile picture updated successfully.', 'success');
       })
@@ -1126,8 +1373,8 @@ const MemberModule = (() => {
   }
 
   return {
-    init, tab, selectPlan, selectPromo, openPlanModal, selectPlanFromModal,
-    toggleStudentIdField, previewStudentId, removeStudentId, submitRenewalPayment,
+    init, tab, selectPlan, selectPromo, openPlanModal, openPromoModal, selectPlanFromModal,
+    toggleStudentIdField, previewStudentId, removeStudentId, submitRenewalPayment, updateCoachAvailabilityNote,
     cancelPlanRequest, confirmPlanRequest, closePlanSuccessModal,
     closePlanApprovedModal, goToPaymentFromApproval, closePaymentApprovedModal,
     closePlanDeclinedModal, withdrawPlanRequest, cancelWithdrawRequest, confirmWithdrawRequest,
@@ -1158,8 +1405,10 @@ document.addEventListener('DOMContentLoaded', () => {
   window.selectPlan              = (card, key) => MemberModule.selectPlan(card, key);
   window.selectPromo             = (card) => MemberModule.selectPromo(card);
   window.openPlanModal           = (key) => MemberModule.openPlanModal(key);
+  window.openPromoModal          = (index) => MemberModule.openPromoModal(index);
   window.selectPlanFromModal     = () => MemberModule.selectPlanFromModal();
   window.toggleStudentIdField    = (el) => MemberModule.toggleStudentIdField(el);
+  window.updateCoachAvailabilityNote = () => MemberModule.updateCoachAvailabilityNote();
   window.previewStudentId        = (input) => MemberModule.previewStudentId(input);
   window.removeStudentId         = () => MemberModule.removeStudentId();
   window.submitRenewalPayment    = () => MemberModule.submitRenewalPayment();

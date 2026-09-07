@@ -172,7 +172,7 @@
               <span class="gate-banner-icon">⏳</span>
               <div>
                 <div class="gate-banner-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                  {{ awaiting_approval.plan_name }} plan request submitted
+                  {% if awaiting_approval.is_promo %}{{ awaiting_approval.plan_name }} promo request submitted{% else %}{{ awaiting_approval.plan_name }} plan request submitted{% endif %}
                   {% if awaiting_approval.request_status == 'Processing' %}
                   <span class="badge badge-gold">PROCESSING</span>
                   {% else %}
@@ -198,7 +198,7 @@
               <span class="gate-banner-icon">✅</span>
               <div>
                 <div class="gate-banner-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                  Your {{ pending_payment.plan_name }} plan has been approved!
+                  {% if pending_payment.is_promo %}Your {{ pending_payment.plan_name }} promo has been approved!{% else %}Your {{ pending_payment.plan_name }} plan has been approved!{% endif %}
                   <span class="badge badge-green">APPROVED</span>
                 </div>
                 <div class="gate-banner-text">₱{{ pending_payment.amount }} · Head to the Payment tab to choose Cash or GCash and complete payment.</div>
@@ -211,7 +211,7 @@
               <span class="gate-banner-icon">❌</span>
               <div>
                 <div class="gate-banner-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                  Your {{ declined_plan.name }} plan request was declined
+                  {% if declined_plan.is_promo %}Your {{ declined_plan.name }} promo request was declined{% else %}Your {{ declined_plan.name }} plan request was declined{% endif %}
                   <span class="badge badge-red">DECLINED</span>
                 </div>
                 <div class="gate-banner-text">Check with staff or admin for the reason, then submit a new request below whenever you're ready.</div>
@@ -242,27 +242,24 @@
               <div style="font-size:14px;color:var(--muted);margin-bottom:16px;">
                 Current deals and discounts for Power Gym members
               </div>
-              {% set default_promos = [
-                {'title': '16 Sessions', 'price': 3500, 'period': 'Limited-time offer'},
-                {'title': 'Boxing', 'price': 4000, 'period': 'Limited-time offer'}
-              ] %}
-              {% set promo_list = promos if promos else default_promos %}
+              {% set promo_list = promos %}
               <div class="plan-grid">
                 {% for promo in promo_list %}
-                <div class="plan-card plan-card-popular" onclick="selectPromo(this)">
+                <div class="plan-card plan-card-popular" data-promo-index="{{ loop.index0 }}" onclick="selectPromo(this)">
                   <div class="plan-card-tag">PROMO</div>
                   <div class="plan-name">{{ promo.title }}</div>
                   <div class="plan-price">₱{{ '{:,.0f}'.format(promo.price) if promo.price == promo.price|int else '{:,.2f}'.format(promo.price) }}</div>
                   <div class="plan-period">{{ promo.period if promo.period else 'Limited-time offer' }}</div>
-                  <div class="plan-view-link"{% if promo.description %} title="{{ promo.description }}"{% endif %}>👁 View Details</div>
+                  <div class="plan-view-link" onclick="event.stopPropagation();openPromoModal({{ loop.index0 }})">👁 View Inclusions</div>
                   {% if promo.valid_until %}<div style="font-size:12px;color:var(--muted);margin-top:10px;">Valid until {{ promo.valid_until }}</div>{% endif %}
                 </div>
                 {% else %}
                 <div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:20px;">No promos available right now. Check back soon.</div>
                 {% endfor %}
               </div>
-              <div style="font-size:13px;color:var(--muted);margin-top:12px;">
-                Tap a promo to avail it — student discounts don't apply to promo pricing, so that question is hidden below when a promo is selected.
+              <script id="member-promos-data" type="application/json">{{ promo_list|tojson }}</script>
+              <div style="font-size:15px;color:#c7c7cf;margin-top:12px;line-height:1.6;">
+                Tap a promo to avail it — student discounts don't apply to promo pricing, so that question is hidden below when a promo is selected. A coach is included with every promo — you'll choose which one below.
               </div>
             </div>
 
@@ -270,8 +267,8 @@
             <div class="proof-upload-box">
               <div class="form-group">
                 <label class="form-label">When do you want to start?</label>
-                <input class="form-input" type="date" id="member-renew-start">
-                <div style="font-size:14px;color:var(--muted);margin-top:4px;">
+                <input class="form-input" type="date" id="member-renew-start" onchange="updateCoachAvailabilityNote()">
+                <div style="font-size:15px;color:#c7c7cf;margin-top:4px;">
                   Pick today to start right away, or a future date if you'd rather begin later.
                 </div>
               </div>
@@ -286,7 +283,7 @@
                 <label class="form-label">Upload School ID (front, photo or scan)</label>
                 <input class="form-input" type="file" id="member-student-id" accept="image/*"
                        onchange="previewStudentId(this)">
-                <div style="font-size:14px;color:var(--muted);margin-top:4px;">
+                <div style="font-size:15px;color:#c7c7cf;margin-top:4px;">
                   Required to verify student status. Admin will confirm before your plan is approved.
                 </div>
                 <div class="proof-preview-wrap">
@@ -295,12 +292,31 @@
                           style="display:none;" onclick="removeStudentId()">✕ Remove &amp; replace</button>
                 </div>
               </div>
-              <div style="font-size:14px;color:var(--muted);margin-top:4px;margin-bottom:4px;line-height:1.6;">
+              <div class="form-group" id="member-renew-coach-select-group" style="display:none;">
+                <label class="form-label">Choose Your Coach</label>
+                <select class="form-input" id="member-renew-coach-name"
+                        onchange="updateCoachAvailabilityNote()">
+                  <option value="" selected>Select a coach</option>
+                  {% for c in coaches %}
+                  {% if c.is_active %}
+                  <option value="{{ c.name }}" data-days="{{ c.available_days|join(',') }}"
+                          {% if c.is_full %}disabled{% endif %}>
+                    {{ c.name }}{% if c.name == recommended_coach_name and not c.is_full %} — Recommended{% endif %}{% if c.is_full %} — Unavailable (Fully Booked){% endif %}
+                  </option>
+                  {% endif %}
+                  {% endfor %}
+                </select>
+                <div id="member-coach-availability-note" style="font-size:13px;margin-top:6px;line-height:1.5;"></div>
+                <div style="font-size:14px;color:#c7c7cf;margin-top:4px;">
+                  A coach is included with this promo at no extra cost. Not sure who to pick? The coach marked "Recommended" currently has the most open slots. Staff will confirm availability when reviewing your request.
+                </div>
+              </div>
+              <div style="font-size:15px;color:#c7c7cf;margin-top:4px;margin-bottom:4px;line-height:1.6;">
                 Submitting sends this plan as a request. Once submitted, go to the
                 <strong>Payment</strong> tab to choose Cash or GCash and complete payment —
                 your plan activates once staff or admin confirms it.
               </div>
-              <button class="btn btn-red" style="margin-top:16px;width:100%;" onclick="submitRenewalPayment()">
+              <button id="member-renew-submit-btn" class="btn btn-red" style="margin-top:16px;width:100%;" onclick="submitRenewalPayment()">
                 REQUEST MEMBERSHIP PLAN
               </button>
             </div>
@@ -357,7 +373,7 @@
         <div class="panel-body">
           <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">
             <div>
-              <div style="font-family:'Bebas Neue';font-size:31px;color:var(--red);">{{ awaiting_approval.plan_name|upper }} PLAN</div>
+              <div style="font-family:'Bebas Neue';font-size:31px;color:var(--red);">{{ awaiting_approval.plan_name|upper }}{% if not awaiting_approval.is_promo %} PLAN{% endif %}</div>
               <div style="font-size:13px;color:var(--muted);">Requested start: {{ awaiting_approval.start_date }}</div>
               {% if awaiting_approval.is_student %}
               <div style="font-size:12px;color:var(--gold);margin-top:4px;">🎓 Student discount applied</div>
@@ -367,9 +383,9 @@
           </div>
           <div style="font-size:15px;color:var(--muted);line-height:1.6;margin-bottom:14px;">
             {% if awaiting_approval.request_status == 'Processing' %}
-            ⏳ Staff is currently reviewing your plan request — it can no longer be cancelled.
+            ⏳ Staff is currently reviewing your {{ 'promo' if awaiting_approval.is_promo else 'plan' }} request — it can no longer be cancelled.
             {% else %}
-            ⏳ Your plan request is awaiting staff or admin approval.
+            ⏳ Your {{ 'promo' if awaiting_approval.is_promo else 'plan' }} request is awaiting staff or admin approval.
             {% endif %}
             Once it's approved, you'll be able to choose Cash or GCash and complete payment right here.
           </div>
@@ -386,8 +402,8 @@
         <div class="panel-body">
           <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:16px;">
             <div>
-              <div style="font-family:'Bebas Neue';font-size:31px;color:var(--red);">{{ pending_payment.plan_name|upper }} PLAN</div>
-              <div style="font-size:13px;color:var(--muted);">Requested start: {{ pending_payment.start_date }}</div>
+              <div style="font-family:'Bebas Neue';font-size:31px;color:var(--red);">{{ pending_payment.plan_name|upper }}{% if not pending_payment.is_promo %} PLAN{% endif %}</div>
+              <div style="font-size:17px;color:#c7c7cf;">Requested start: {{ pending_payment.start_date }}</div>
               {% if pending_payment.is_student %}
               <div style="font-size:12px;color:var(--gold);margin-top:4px;">🎓 Student discount applied</div>
               {% endif %}
@@ -405,17 +421,24 @@
               </select>
             </div>
             <div class="form-group" id="payment-gcash-fields" style="display:none;">
-              <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:14px 16px;margin-bottom:16px;">
-                <div style="font-size:12px;color:var(--muted);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:6px;">Send GCash payment to</div>
+              <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:20px 16px;margin-bottom:16px;text-align:center;">
+                {% if gcash_settings and gcash_settings.gcash_qr_path %}
+                <div style="font-size:14px;color:var(--muted);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:10px;">Scan to pay</div>
+                <img src="{{ url_for('static', filename=gcash_settings.gcash_qr_path) }}" alt="GCash QR code"
+                     onclick="openModal('gcash-qr-view-modal')"
+                     style="width:100%;max-width:260px;background:#fff;border-radius:10px;padding:14px;cursor:zoom-in;">
+                <div style="font-size:13px;color:var(--muted);margin-top:6px;">Tap to enlarge</div>
+                <div style="height:1px;background:rgba(255,255,255,0.1);margin:18px auto;max-width:260px;"></div>
+                {% else %}
+                <div style="font-size:14px;color:var(--muted);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:6px;">Send GCash payment to</div>
+                {% endif %}
                 <div style="font-family:'Bebas Neue';font-size:27px;color:var(--white);letter-spacing:1px;">{{ gcash_settings.gcash_number if gcash_settings else '0945 397 0594' }}</div>
                 <div style="font-size:15px;color:var(--muted);margin-top:2px;">{{ gcash_settings.gcash_account_name if gcash_settings else 'LYDIA M. EMATA' }}</div>
               </div>
-              <label class="form-label">GCash Reference Number</label>
-              <input class="form-input" id="payment-gcash-reference" placeholder="e.g. 1234567890123">
-              <label class="form-label" style="margin-top:14px;">Proof of Payment (screenshot)</label>
+              <label class="form-label">Proof of Payment (screenshot)</label>
               <input class="form-input" type="file" id="payment-gcash-proof" accept="image/*"
                      onchange="previewGcashProof(this)">
-              <div style="font-size:12px;color:var(--muted);margin-top:4px;">
+              <div style="font-size:15px;color:var(--muted);margin-top:4px;">
                 Upload a screenshot of your GCash payment confirmation. Admin will verify it
                 before your membership is activated.
               </div>
@@ -424,8 +447,10 @@
                 <button type="button" id="payment-gcash-proof-remove" class="proof-remove-btn"
                         style="display:none;" onclick="removeGcashProof()">✕ Remove &amp; replace</button>
               </div>
+              <label class="form-label" style="margin-top:14px;">GCash Reference Number</label>
+              <input class="form-input" id="payment-gcash-reference" placeholder="e.g. 1234567890123">
             </div>
-            <div style="font-size:13px;color:var(--muted);margin-top:4px;margin-bottom:4px;line-height:1.6;">
+            <div style="font-size:15px;color:var(--muted);margin-top:4px;margin-bottom:4px;line-height:1.6;">
               If paying by Cash, settle payment at the front desk with staff. If paying by GCash,
               attach your reference number and proof of payment above.
             </div>
@@ -926,6 +951,26 @@
         <div class="panel">
           <div class="panel-header"><div class="panel-title">Personal Information</div></div>
           <div class="panel-body">
+            <div class="profile-header" style="margin-bottom:24px;padding-bottom:20px;border-bottom:1px solid var(--border);">
+              <div class="profile-avatar-wrap">
+                <div class="profile-avatar" id="settings-profile-picture-avatar"
+                     style="{% if member.profile_picture %}background-image:url('{{ url_for('static', filename=member.profile_picture) }}');background-size:cover;background-position:center;color:transparent;{% endif %}">{{ (member.first_name[0] ~ member.last_name[0])|upper }}</div>
+                <button type="button" class="profile-avatar-edit-btn" id="settings-profile-picture-btn"
+                        onclick="document.getElementById('settings-profile-picture-input').click()"
+                        {% if not picture_can_change %}disabled title="You can change your photo again on {{ picture_available_at }}."{% else %}title="Change profile picture"{% endif %}>✎</button>
+                <input type="file" id="settings-profile-picture-input" accept="image/png,image/jpeg,image/webp" style="display:none;" onchange="changeProfilePicture(this)">
+              </div>
+              <div class="profile-header-info">
+                <div class="profile-name">{{ member.full_name }}</div>
+                <div class="profile-picture-hint" id="settings-profile-picture-hint">
+                  {% if picture_can_change %}
+                  You can update your profile picture. It can then be changed again after 7 days.
+                  {% else %}
+                  You can change your profile picture again on <strong>{{ picture_available_at }}</strong>.
+                  {% endif %}
+                </div>
+              </div>
+            </div>
             <div class="form-row-4">
               <div class="form-group">
                 <label class="form-label">First Name</label>
@@ -1080,7 +1125,7 @@
         <strong id="confirm-plan-name" style="color:var(--red);">MONTHLY</strong>
       </div>
       <div style="display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:15px;">
-        <span style="color:var(--muted);">Regular Price</span>
+        <span id="confirm-plan-price-label" style="color:var(--muted);">Regular Price</span>
         <span id="confirm-plan-regular-price">₱900</span>
       </div>
       <div id="confirm-plan-discount-row" style="display:none;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:15px;">
@@ -1100,7 +1145,7 @@
         <strong id="confirm-plan-date">—</strong>
       </div>
       <div style="display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:15px;">
-        <span style="color:var(--muted);">Expires</span>
+        <span id="confirm-plan-expiry-label" style="color:var(--muted);">Expires</span>
         <strong id="confirm-plan-end-date">—</strong>
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;margin-top:8px;border-top:1px solid var(--border);">
@@ -1246,6 +1291,22 @@
     <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="closePaymentSubmitSuccessModal()">OK</button>
   </div>
 </div>
+
+{% if gcash_settings and gcash_settings.gcash_qr_path %}
+<!-- Enlarged view of the GCash "scan to pay" QR, opened by tapping the
+     small QR thumbnail on the Payment tab. -->
+<div class="modal-overlay" id="gcash-qr-view-modal">
+  <div class="modal" style="max-width:340px;text-align:center;">
+    <button class="modal-close" onclick="closeModal('gcash-qr-view-modal')">✕</button>
+    <div class="modal-title" style="margin-bottom:14px;">SCAN TO PAY</div>
+    <img src="{{ url_for('static', filename=gcash_settings.gcash_qr_path) }}" alt="GCash QR code"
+         style="width:100%;max-width:260px;background:#fff;border-radius:10px;padding:12px;">
+    <div style="font-size:14px;color:var(--muted);margin-top:14px;">
+      {{ gcash_settings.gcash_account_name }} · {{ gcash_settings.gcash_number }}
+    </div>
+  </div>
+</div>
+{% endif %}
 
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>

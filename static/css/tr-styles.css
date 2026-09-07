@@ -30,6 +30,8 @@
   --red-glow:    rgba(230, 30, 37, 0.28);
 
   --gold:        #ffab40;
+  --promo-gold:      #d4af37;
+  --promo-gold-glow: rgba(212, 175, 55, 0.28);
   --white:       #f5f5f7;
   --muted:       #8b92a8;
   --green:       #00e676;
@@ -463,81 +465,88 @@ body::before {
 #choose-plan-panel .plan-period { font-size: 15px; color: var(--muted); margin-bottom: 10px; }
 #choose-plan-panel .plan-view-link { font-size: 15px; margin-top: auto; cursor: pointer; }
 #choose-plan-panel .form-label { font-size: 16px; }
+#payment-submit-panel .form-label { font-size: 16px; letter-spacing: 1.5px; }
 #choose-plan-panel .form-input { font-size: 17px; padding: 11px 14px; }
 
-/* ── Promo panel (member dashboard, inside My Membership) — same card treatment as "Choose a Plan" ── */
+/* ── Promo panel (member dashboard, inside My Membership) — "voucher/ticket" treatment, distinct from "Choose a Plan" ── */
 #member-membership-promo .plan-grid {
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 18px;
 }
 #member-membership-promo .plan-card {
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 22px 20px;
-  background: linear-gradient(160deg, rgba(255,255,255,0.035), rgba(255,255,255,0) 65%);
+  border: 1.5px dashed rgba(212,175,55,0.45);
+  border-radius: 10px;
+  padding: 18px 18px 16px;
+  background:
+    radial-gradient(circle at 0 50%, var(--card) 0, var(--card) 8px, transparent 8.5px),
+    radial-gradient(circle at 100% 50%, var(--card) 0, var(--card) 8px, transparent 8.5px),
+    linear-gradient(135deg, rgba(212,175,55,0.09), rgba(212,175,55,0) 60%);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   cursor: pointer;
-  transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+}
+/* Kill the red top accent bar inherited from #choose-plan-panel .plan-card::before —
+   promos use the dashed border + gold ribbon instead, not a top bar. */
+#member-membership-promo .plan-card::before,
+#member-membership-promo .plan-card:hover::before,
+#member-membership-promo .plan-card.selected::before {
+  content: none;
 }
 #member-membership-promo .plan-card.selected {
-  border-color: var(--red);
-  background: rgba(230,30,37,0.1);
-  box-shadow: 0 12px 30px rgba(230,30,37,0.28);
-  transform: translateY(-3px);
+  border-style: solid;
+  border-color: var(--promo-gold);
+  background: rgba(212,175,55,0.12);
+  box-shadow: 0 0 0 1px rgba(212,175,55,0.35), 0 10px 24px rgba(212,175,55,0.2);
 }
-#member-membership-promo .plan-card.selected::before { opacity: 1; }
 #member-membership-promo .plan-card.selected::after {
   content: '✓';
   position: absolute;
   top: 14px; right: 14px;
   width: 22px; height: 22px;
   border-radius: 50%;
-  background: var(--red);
-  color: var(--white);
+  background: var(--promo-gold);
+  color: var(--black);
   font-size: 13px;
   font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-#member-membership-promo .plan-card::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 4px;
-  background: var(--red);
-  opacity: 0;
-  transition: opacity 0.25s ease;
-}
 #member-membership-promo .plan-card:hover {
-  transform: translateY(-5px);
-  border-color: var(--red);
-  background: rgba(230,30,37,0.07);
-  box-shadow: 0 12px 26px rgba(230,30,37,0.18);
+  border-color: var(--promo-gold);
+  background: rgba(212,175,55,0.08);
+  box-shadow: 0 8px 20px rgba(212,175,55,0.15);
 }
-#member-membership-promo .plan-card:hover::before { opacity: 0.65; }
-#member-membership-promo .plan-card-popular { border-color: rgba(230,30,37,0.35); }
+#member-membership-promo .plan-card-popular { border-color: rgba(212,175,55,0.45); }
 #member-membership-promo .plan-card-tag {
   align-self: flex-start;
-  background: var(--red);
-  color: var(--white);
-  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  color: var(--promo-gold);
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.6px;
-  padding: 3px 10px;
-  border-radius: 20px;
-  margin-bottom: 10px;
+  letter-spacing: 1.5px;
+  padding: 0;
+  border-radius: 0;
+  margin-bottom: 12px;
 }
-#member-membership-promo .plan-name { font-size: 20px; letter-spacing: 1.2px; margin-bottom: 4px; }
-#member-membership-promo .plan-price { font-size: 38px; }
-#member-membership-promo .plan-period { font-size: 15px; color: var(--muted); margin-bottom: 10px; }
-#member-membership-promo .plan-view-link { font-size: 15px; margin-top: auto; cursor: pointer; }
+#member-membership-promo .plan-card-tag::before { content: '🏷️'; font-size: 12px; }
+#member-membership-promo .plan-name { font-size: 19px; letter-spacing: 1.2px; margin-bottom: 4px; color: var(--white); }
+#member-membership-promo .plan-price { font-size: 34px; color: var(--promo-gold); }
+#member-membership-promo .plan-period { font-size: 13px; color: var(--muted); margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px dashed var(--border); }
+#member-membership-promo .plan-view-link { font-size: 14px; margin-top: auto; cursor: pointer; color: var(--promo-gold); text-decoration: none; }
+#member-membership-promo .plan-view-link:hover { text-decoration: underline; }
 
 #choose-plan-panel .btn { font-size: 16px; }
 #choose-plan-panel .gate-banner-title { font-size: 17.5px; }
 #choose-plan-panel .gate-banner-text { font-size: 15.5px; }
+#member-membership .gate-banner-title { font-size: 17.5px; }
+#member-membership .gate-banner-text { font-size: 15.5px; }
 
 /* Payment options */
 .payment-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
@@ -881,7 +890,7 @@ body::before {
   cursor: not-allowed;
   transform: none;
 }
-.profile-picture-hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.profile-picture-hint { font-size: 13px; color: var(--muted); margin-top: 6px; }
 .profile-picture-hint strong { color: var(--white); }
 .profile-header-info { flex: 1; min-width: 160px; }
 .profile-name {
@@ -891,7 +900,7 @@ body::before {
   font-size: 24px;
   text-transform: uppercase;
 }
-.profile-email { font-size: 14px; color: var(--muted); margin-top: 2px; }
+.profile-email { font-size: 15px; color: var(--muted); margin-top: 2px; }
 
 .info-grid {
   display: grid;
@@ -1163,6 +1172,12 @@ body::before {
 .btn-red:hover {
   background: var(--red-dark);
   box-shadow: 0 0 18px var(--red-glow), 0 4px 14px rgba(230, 30, 37, 0.35);
+  filter: brightness(1.1);
+}
+.btn-gold    { background: var(--promo-gold); color: var(--black); }
+.btn-gold:hover {
+  background: var(--promo-gold);
+  box-shadow: 0 0 18px var(--promo-gold-glow), 0 4px 14px rgba(212,175,55,0.35);
   filter: brightness(1.1);
 }
 .btn-outline  { background: transparent; border: 1px solid var(--border); color: var(--white); }
