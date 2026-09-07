@@ -64,7 +64,8 @@
 
     <div class="sidebar-footer">
       <div class="user-info">
-        <div class="user-avatar" id="sidebar-user-avatar">{{ (current_user.first_name[0] ~ current_user.last_name[0])|upper if current_user else 'AD' }}</div>
+        <div class="user-avatar" id="sidebar-user-avatar"
+             style="{% if current_user and current_user.profile_picture %}background-image:url('{{ url_for('static', filename=current_user.profile_picture) }}');background-size:cover;background-position:center;color:transparent;{% endif %}">{{ (current_user.first_name[0] ~ current_user.last_name[0])|upper if current_user else 'AD' }}</div>
         <div>
           <div class="user-name"  id="sidebar-user-name">{{ current_user.full_name if current_user else 'Administrator' }}</div>
           <div class="user-email" id="sidebar-user-email">{{ current_user.email if current_user else 'admin@powergym.com' }}</div>
@@ -541,10 +542,24 @@
       <div class="panel">
         <div class="panel-body">
           <div class="profile-header">
-            <div class="profile-avatar">{{ (current_user.first_name[0] ~ current_user.last_name[0])|upper if current_user else 'AD' }}</div>
+            <div class="profile-avatar-wrap">
+              <div class="profile-avatar" id="profile-picture-avatar"
+                   style="{% if current_user and current_user.profile_picture %}background-image:url('{{ url_for('static', filename=current_user.profile_picture) }}');background-size:cover;background-position:center;color:transparent;{% endif %}">{{ (current_user.first_name[0] ~ current_user.last_name[0])|upper if current_user else 'AD' }}</div>
+              <button type="button" class="profile-avatar-edit-btn" id="profile-picture-btn"
+                      onclick="document.getElementById('profile-picture-input').click()"
+                      {% if not picture_can_change %}disabled title="You can change your photo again on {{ picture_available_at }}."{% else %}title="Change profile picture"{% endif %}>✎</button>
+              <input type="file" id="profile-picture-input" accept="image/png,image/jpeg,image/webp" style="display:none;" onchange="changeProfilePicture(this)">
+            </div>
             <div class="profile-header-info">
               <div class="profile-name">{{ current_user.full_name if current_user else 'Administrator' }}</div>
               <div class="profile-email">{{ current_user.email if current_user else '' }}</div>
+              <div class="profile-picture-hint" id="profile-picture-hint">
+                {% if picture_can_change %}
+                You can update your profile picture. It can then be changed again after 7 days.
+                {% else %}
+                You can change your profile picture again on <strong>{{ picture_available_at }}</strong>.
+                {% endif %}
+              </div>
             </div>
             <button class="btn btn-outline" onclick="adminTab('settings', document.getElementById('nav-admin-settings'))">✎ EDIT PROFILE</button>
           </div>
@@ -576,6 +591,26 @@
         <div class="panel">
           <div class="panel-header"><div class="panel-title">Personal Information</div></div>
           <div class="panel-body">
+            <div class="profile-header" style="margin-bottom:24px;padding-bottom:20px;border-bottom:1px solid var(--border);">
+              <div class="profile-avatar-wrap">
+                <div class="profile-avatar" id="settings-profile-picture-avatar"
+                     style="{% if current_user and current_user.profile_picture %}background-image:url('{{ url_for('static', filename=current_user.profile_picture) }}');background-size:cover;background-position:center;color:transparent;{% endif %}">{{ (current_user.first_name[0] ~ current_user.last_name[0])|upper if current_user else 'AD' }}</div>
+                <button type="button" class="profile-avatar-edit-btn" id="settings-profile-picture-btn"
+                        onclick="document.getElementById('settings-profile-picture-input').click()"
+                        {% if not picture_can_change %}disabled title="You can change your photo again on {{ picture_available_at }}."{% else %}title="Change profile picture"{% endif %}>✎</button>
+                <input type="file" id="settings-profile-picture-input" accept="image/png,image/jpeg,image/webp" style="display:none;" onchange="changeProfilePicture(this)">
+              </div>
+              <div class="profile-header-info">
+                <div class="profile-name">{{ current_user.full_name if current_user else 'Administrator' }}</div>
+                <div class="profile-picture-hint" id="settings-profile-picture-hint">
+                  {% if picture_can_change %}
+                  You can update your profile picture. It can then be changed again after 7 days.
+                  {% else %}
+                  You can change your profile picture again on <strong>{{ picture_available_at }}</strong>.
+                  {% endif %}
+                </div>
+              </div>
+            </div>
             <div class="form-row-4">
               <div class="form-group">
                 <label class="form-label">First Name</label>
@@ -662,6 +697,16 @@
       <div class="panel" style="margin-top:24px;">
         <div class="panel-header">
           <div><div class="panel-title">GCash Payment Details</div><div style="font-size:13px;color:var(--muted);margin-top:2px;">This is the GCash account members are shown when submitting a payment. Update it any time your account or number changes.</div></div>
+          <div style="display:flex;gap:8px;flex-shrink:0;">
+            <button type="button" class="btn btn-outline btn-sm" id="gcash-add-btn" onclick="toggleGcashEdit()"
+                    {% if gcash_settings and gcash_settings.gcash_number %}disabled{% endif %}>＋ ADD</button>
+            <button type="button" class="btn btn-outline btn-sm" id="gcash-edit-btn" onclick="toggleGcashEdit()"
+                    {% if not (gcash_settings and gcash_settings.gcash_number) %}disabled{% endif %}>✎ EDIT</button>
+            <button type="button" class="btn btn-outline btn-sm" id="gcash-delete-btn"
+                    style="color:var(--red);border-color:rgba(230,30,37,0.4);"
+                    {% if not (gcash_settings and gcash_settings.gcash_number) %}disabled{% endif %}
+                    onclick="promptDeleteGcashSettings()">🗑️ DELETE</button>
+          </div>
         </div>
         <div class="panel-body">
           <div class="form-row">
@@ -669,13 +714,14 @@
               <label class="form-label">GCash Number</label>
               <input class="form-input" id="gcash-number" placeholder="0917 123 4567"
                      value="{{ gcash_settings.gcash_number if gcash_settings else '' }}"
-                     maxlength="13" inputmode="numeric"
+                     maxlength="13" inputmode="numeric" disabled
                      oninput="this.value=this.value.replace(/[^\d\s]/g,'')">
             </div>
             <div class="form-group">
               <label class="form-label">Account Name</label>
               <input class="form-input" id="gcash-account-name" placeholder="JUAN D. DELA CRUZ"
                      value="{{ gcash_settings.gcash_account_name if gcash_settings else '' }}"
+                     disabled
                      oninput="this.value=this.value.toUpperCase()">
             </div>
           </div>
@@ -694,16 +740,35 @@
               </div>
               <div style="flex:1;min-width:200px;">
                 <input class="form-input" type="file" id="gcash-qr-input" accept="image/png,image/jpeg,image/webp"
-                       onchange="previewGcashQr(this)">
+                       disabled onchange="previewGcashQr(this)">
                 <label id="gcash-qr-remove-row" style="display:{{ 'flex' if (gcash_settings and gcash_settings.gcash_qr_path) else 'none' }};align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-top:8px;cursor:pointer;">
-                  <input type="checkbox" id="gcash-qr-remove" onchange="toggleGcashQrRemove(this)">
+                  <input type="checkbox" id="gcash-qr-remove" disabled onchange="toggleGcashQrRemove(this)">
                   <span>Remove current QR code</span>
                 </label>
               </div>
             </div>
           </div>
 
-          <button class="btn btn-red" id="gcash-settings-submit-btn" style="width:100%;margin-top:8px;" onclick="submitGcashSettings()">SAVE GCASH DETAILS</button>
+          <div style="display:flex;gap:10px;margin-top:8px;">
+            <button class="btn btn-red" id="gcash-settings-submit-btn" style="flex:1;display:none;" onclick="submitGcashSettings()">SAVE GCASH DETAILS</button>
+            <button class="btn btn-outline" id="gcash-settings-cancel-btn" style="flex:1;display:none;" onclick="cancelGcashEdit()">CANCEL</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Confirm: delete GCash payment details -->
+      <div class="modal-overlay" id="confirm-delete-gcash-modal">
+        <div class="modal" style="max-width:400px;">
+          <button class="modal-close" onclick="closeModal('confirm-delete-gcash-modal')">✕</button>
+          <div class="modal-title" style="text-align:center;">REMOVE GCASH DETAILS?</div>
+          <div style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;">
+            This clears the GCash number, account name, and QR code shown to members.
+            They won't be able to pay via GCash until you add new details.
+          </div>
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+            <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="closeModal('confirm-delete-gcash-modal')">NO</button>
+            <button class="btn btn-red" id="confirm-delete-gcash-btn" style="width:100%;justify-content:center;" onclick="confirmDeleteGcashSettings()">YES, DELETE</button>
+          </div>
         </div>
       </div>
 

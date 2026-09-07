@@ -1227,8 +1227,95 @@ const StaffModule = (() => {
     });
   }
 
+  /* ════════════════════════════════════════════════
+     PROFILE — change profile picture (7-day cooldown,
+     enforced server-side; the button here is also
+     disabled client-side while ineligible)
+  ════════════════════════════════════════════════ */
+  function changeProfilePicture(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      showToast('Profile picture must be a PNG, JPG, JPEG, or WEBP file.', 'error');
+      input.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('Profile picture must be smaller than 5MB.', 'error');
+      input.value = '';
+      return;
+    }
+
+    // Let the person reposition/zoom before it's uploaded, rather than
+    // saving whatever framing the raw file happened to have.
+    openImageCropper(file, (blob, blobName) => {
+      _uploadProfilePicture(blob, blobName, input);
+    }, () => {
+      input.value = '';
+    });
+  }
+
+  function _uploadProfilePicture(blob, blobName, input) {
+    const formData = new FormData();
+    formData.append('profile_picture', blob, blobName);
+
+    showLoadingOverlay('Uploading your new photo...');
+    fetch('/update-profile-picture', { method: 'POST', body: formData })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        hideLoadingOverlay();
+        input.value = '';
+        if (!ok || !data.success) {
+          showToast(data.error || 'Failed to update profile picture.', 'error');
+          return;
+        }
+
+        // Swap every avatar on the page that shows the current picture —
+        // the Profile tab's big avatar, the Settings tab's big avatar,
+        // and the sidebar's small one.
+        [document.getElementById('profile-picture-avatar'),
+         document.getElementById('settings-profile-picture-avatar'),
+         document.getElementById('sidebar-user-avatar')]
+          .forEach(el => {
+            if (!el) return;
+            el.style.backgroundImage = `url('${data.profile_picture_url}')`;
+            el.style.backgroundSize = 'cover';
+            el.style.backgroundPosition = 'center';
+            el.style.color = 'transparent';
+          });
+
+        // Lock the edit button back down until the next cooldown ends —
+        // on both the Profile tab and the Settings tab.
+        [document.getElementById('profile-picture-btn'),
+         document.getElementById('settings-profile-picture-btn')]
+          .forEach(btn => {
+            if (btn && data.available_at) {
+              btn.disabled = true;
+              btn.title = `You can change your photo again on ${data.available_at}.`;
+            }
+          });
+        [document.getElementById('profile-picture-hint'),
+         document.getElementById('settings-profile-picture-hint')]
+          .forEach(hint => {
+            if (hint && data.available_at) {
+              hint.innerHTML = `You can change your profile picture again on <strong>${data.available_at}</strong>.`;
+            }
+          });
+
+        showToast(data.message || 'Profile picture updated successfully.', 'success');
+      })
+      .catch(() => {
+        hideLoadingOverlay();
+        input.value = '';
+        showToast('Could not reach the server. Please try again.', 'error');
+      });
+  }
+
   return { init, tab, promptRecordPayment, confirmRecordPayment, cancelRecordPayment, closePaymentRecordedModal, checkInMember, checkOutMember, flatlineAndCheckOut, filterCheckinTable, filterCheckinByStatus, filterMembersByStatus, filterMembersTable, toggleMemberIdColumn, toggleCheckinIdColumn, viewPaymentProof, onPayMemberInput, onPayStudentToggle, updatePayAmountDisplay, generateReport, submitCoachUpdate, confirmCoachUpdate, closeCoachSaveSuccessModal, toggleCoachEdit, addCoach, promptDeleteCoach, confirmDeleteCoach,
-           generateStaffAnalyticsReport, clearStaffReportDateRange, refreshStaffReport, exportStaffReportPDF, submitWalkIn, confirmWalkIn, confirmWalkInSubmit, toggleWalkInCoach, selectWalkInPlan };
+           generateStaffAnalyticsReport, clearStaffReportDateRange, refreshStaffReport, exportStaffReportPDF, submitWalkIn, confirmWalkIn, confirmWalkInSubmit, toggleWalkInCoach, selectWalkInPlan,
+           changeProfilePicture };
 })();
 
 
@@ -1274,4 +1361,5 @@ document.addEventListener('DOMContentLoaded', () => {
   window.clearStaffReportDateRange    = () => StaffModule.clearStaffReportDateRange();
   window.refreshStaffReport           = () => StaffModule.refreshStaffReport();
   window.exportStaffReportPDF         = () => StaffModule.exportStaffReportPDF();
+  window.changeProfilePicture         = (input) => StaffModule.changeProfilePicture(input);
 });

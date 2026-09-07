@@ -724,7 +724,11 @@ const MemberModule = (() => {
 
   function togglePaymentProofField(selectEl) {
     const gcashFields = document.getElementById('payment-gcash-fields');
-    if (gcashFields) gcashFields.style.display = selectEl.value === 'gcash' ? '' : 'none';
+    const isGcash = selectEl.value === 'gcash';
+    if (gcashFields) gcashFields.style.display = isGcash ? '' : 'none';
+
+    const submitBtn = document.getElementById('payment-submit-btn');
+    if (submitBtn) submitBtn.textContent = isGcash ? 'PROCEED TO PAYMENT' : 'PROCEED TO FRONT DESK';
   }
 
   function previewGcashProof(input) {

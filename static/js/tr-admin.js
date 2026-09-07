@@ -848,6 +848,112 @@ const AdminModule = (() => {
     }
   }
 
+  // Snapshot of the GCash fields taken when Edit is clicked, so Cancel can
+  // restore them without a page reload.
+  let _gcashOriginal = null;
+
+  function _setGcashEditMode(editing) {
+    const numEl      = document.getElementById('gcash-number');
+    const nameEl     = document.getElementById('gcash-account-name');
+    const qrInput    = document.getElementById('gcash-qr-input');
+    const removeCheck= document.getElementById('gcash-qr-remove');
+    const saveBtn    = document.getElementById('gcash-settings-submit-btn');
+    const cancelBtn  = document.getElementById('gcash-settings-cancel-btn');
+    const addBtn     = document.getElementById('gcash-add-btn');
+    const editBtn    = document.getElementById('gcash-edit-btn');
+    const deleteBtn  = document.getElementById('gcash-delete-btn');
+
+    if (numEl)  numEl.disabled  = !editing;
+    if (nameEl) nameEl.disabled = !editing;
+    if (qrInput) qrInput.disabled = !editing;
+    if (removeCheck) removeCheck.disabled = !editing;
+    if (saveBtn)   saveBtn.style.display   = editing ? '' : 'none';
+    if (cancelBtn) cancelBtn.style.display = editing ? '' : 'none';
+    // ADD/EDIT/DELETE stay visible and clickable at all times, except
+    // while a save/edit is already in progress (all three disabled then
+    // so the admin can't stack conflicting actions).
+    if (addBtn)    addBtn.disabled    = editing;
+    if (editBtn)   editBtn.disabled   = editing;
+    if (deleteBtn) deleteBtn.disabled = editing;
+  }
+
+  /** Unlock the GCash fields for editing. */
+  function toggleGcashEdit() {
+    _gcashOriginal = {
+      number: _val('gcash-number'),
+      name:   _val('gcash-account-name'),
+      qrSrc:  (document.getElementById('gcash-qr-current-preview') || {}).src || '',
+      qrVisible: (document.getElementById('gcash-qr-current-wrap') || {}).style.display !== 'none',
+    };
+    _setGcashEditMode(true);
+  }
+
+  /** Discard any unsaved changes and re-lock the GCash fields. */
+  function cancelGcashEdit() {
+    const numEl  = document.getElementById('gcash-number');
+    const nameEl = document.getElementById('gcash-account-name');
+    if (_gcashOriginal) {
+      if (numEl)  numEl.value  = _gcashOriginal.number;
+      if (nameEl) nameEl.value = _gcashOriginal.name;
+    }
+    const qrInput = document.getElementById('gcash-qr-input');
+    if (qrInput) qrInput.value = '';
+    const removeCheck = document.getElementById('gcash-qr-remove');
+    if (removeCheck) removeCheck.checked = false;
+    const wrap = document.getElementById('gcash-qr-current-wrap');
+    const img  = document.getElementById('gcash-qr-current-preview');
+    if (_gcashOriginal && _gcashOriginal.qrVisible) {
+      if (img) img.src = _gcashOriginal.qrSrc;
+      if (wrap) wrap.style.display = '';
+    } else if (wrap) {
+      wrap.style.display = 'none';
+    }
+    _setGcashEditMode(false);
+  }
+
+  /** Open the confirmation modal before clearing the GCash config. */
+  function promptDeleteGcashSettings() {
+    openModal('confirm-delete-gcash-modal');
+  }
+
+  /** Clear the GCash number/name/QR after the admin confirms. Members
+   *  won't see a usable GCash option again until it's re-added. */
+  function confirmDeleteGcashSettings() {
+    const btn = document.getElementById('confirm-delete-gcash-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'DELETING...'; }
+
+    fetch('/admin/delete-gcash-settings', { method: 'POST' })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        closeModal('confirm-delete-gcash-modal');
+        if (!ok || !data.success) {
+          showToast((data && data.error) || 'Failed to remove GCash details.', 'error');
+          return;
+        }
+        const numEl  = document.getElementById('gcash-number');
+        const nameEl = document.getElementById('gcash-account-name');
+        if (numEl)  numEl.value  = '';
+        if (nameEl) nameEl.value = '';
+        const qrInput = document.getElementById('gcash-qr-input');
+        if (qrInput) qrInput.value = '';
+        const removeCheck = document.getElementById('gcash-qr-remove');
+        if (removeCheck) removeCheck.checked = false;
+        const wrap      = document.getElementById('gcash-qr-current-wrap');
+        const removeRow = document.getElementById('gcash-qr-remove-row');
+        if (wrap) wrap.style.display = 'none';
+        if (removeRow) removeRow.style.display = 'none';
+        _setGcashEditMode(false);
+        showToast(data.message || 'GCash payment details removed.', 'success');
+      })
+      .catch(() => {
+        closeModal('confirm-delete-gcash-modal');
+        showToast('Could not reach the server. Please try again.', 'error');
+      })
+      .finally(() => {
+        if (btn) { btn.disabled = false; btn.textContent = 'YES, DELETE'; }
+      });
+  }
+
   /** Save the GCash account number/name (and optional QR code) shown to
    *  members on the Payment tab. Lets admin swap accounts any time
    *  without touching code. */
@@ -916,6 +1022,7 @@ const AdminModule = (() => {
         }
 
         closeModal('confirm-gcash-settings-modal');
+        _setGcashEditMode(false);
         showToast(data.message || 'GCash payment details updated.', 'success');
       })
       .catch(() => showToast('Could not reach the server. Please try again.', 'error'))
@@ -1115,6 +1222,92 @@ const AdminModule = (() => {
       });
   }
 
+  /* ════════════════════════════════════════════════
+     PROFILE — change profile picture (7-day cooldown,
+     enforced server-side; the button here is also
+     disabled client-side while ineligible)
+  ════════════════════════════════════════════════ */
+  function changeProfilePicture(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      showToast('Profile picture must be a PNG, JPG, JPEG, or WEBP file.', 'error');
+      input.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('Profile picture must be smaller than 5MB.', 'error');
+      input.value = '';
+      return;
+    }
+
+    // Let the person reposition/zoom before it's uploaded, rather than
+    // saving whatever framing the raw file happened to have.
+    openImageCropper(file, (blob, blobName) => {
+      _uploadProfilePicture(blob, blobName, input);
+    }, () => {
+      input.value = '';
+    });
+  }
+
+  function _uploadProfilePicture(blob, blobName, input) {
+    const formData = new FormData();
+    formData.append('profile_picture', blob, blobName);
+
+    showLoadingOverlay('Uploading your new photo...');
+    fetch('/update-profile-picture', { method: 'POST', body: formData })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        hideLoadingOverlay();
+        input.value = '';
+        if (!ok || !data.success) {
+          showToast(data.error || 'Failed to update profile picture.', 'error');
+          return;
+        }
+
+        // Swap every avatar on the page that shows the current picture —
+        // the Profile tab's big avatar, the Settings tab's big avatar,
+        // and the sidebar's small one.
+        [document.getElementById('profile-picture-avatar'),
+         document.getElementById('settings-profile-picture-avatar'),
+         document.getElementById('sidebar-user-avatar')]
+          .forEach(el => {
+            if (!el) return;
+            el.style.backgroundImage = `url('${data.profile_picture_url}')`;
+            el.style.backgroundSize = 'cover';
+            el.style.backgroundPosition = 'center';
+            el.style.color = 'transparent';
+          });
+
+        // Lock the edit button back down until the next cooldown ends —
+        // on both the Profile tab and the Settings tab.
+        [document.getElementById('profile-picture-btn'),
+         document.getElementById('settings-profile-picture-btn')]
+          .forEach(btn => {
+            if (btn && data.available_at) {
+              btn.disabled = true;
+              btn.title = `You can change your photo again on ${data.available_at}.`;
+            }
+          });
+        [document.getElementById('profile-picture-hint'),
+         document.getElementById('settings-profile-picture-hint')]
+          .forEach(hint => {
+            if (hint && data.available_at) {
+              hint.innerHTML = `You can change your profile picture again on <strong>${data.available_at}</strong>.`;
+            }
+          });
+
+        showToast(data.message || 'Profile picture updated successfully.', 'success');
+      })
+      .catch(() => {
+        hideLoadingOverlay();
+        input.value = '';
+        showToast('Could not reach the server. Please try again.', 'error');
+      });
+  }
+
   return {
     init, tab, addMember, openEditMemberModal, saveEditMember, deleteMemberRow,
     generateAnalyticsReport, refreshCurrentReport, exportReportPDF, clearReportDateRange,
@@ -1122,8 +1315,10 @@ const AdminModule = (() => {
     publishAnnouncement, confirmPublishAnnouncement, openEditAnnouncementModal, saveEditAnnouncement,
     toggleAnnouncement, deleteAnnouncement, submitGcashSettings, confirmGcashSettings,
     previewGcashQr, toggleGcashQrRemove, submitTermsSettings,
+    toggleGcashEdit, cancelGcashEdit, promptDeleteGcashSettings, confirmDeleteGcashSettings,
     submitCoachUpdate, confirmCoachUpdate, closeCoachSaveSuccessModal,
-    toggleCoachEdit, addCoach, promptDeleteCoach, confirmDeleteCoach
+    toggleCoachEdit, addCoach, promptDeleteCoach, confirmDeleteCoach,
+    changeProfilePicture
   };
 })();
 
@@ -1158,6 +1353,10 @@ document.addEventListener('DOMContentLoaded', () => {
   window.confirmGcashSettings    = AdminModule.confirmGcashSettings;
   window.previewGcashQr          = (input) => AdminModule.previewGcashQr(input);
   window.toggleGcashQrRemove     = (checkbox) => AdminModule.toggleGcashQrRemove(checkbox);
+  window.toggleGcashEdit         = () => AdminModule.toggleGcashEdit();
+  window.cancelGcashEdit         = () => AdminModule.cancelGcashEdit();
+  window.promptDeleteGcashSettings  = () => AdminModule.promptDeleteGcashSettings();
+  window.confirmDeleteGcashSettings = () => AdminModule.confirmDeleteGcashSettings();
   window.submitTermsSettings     = AdminModule.submitTermsSettings;
   window.submitCoachUpdate       = AdminModule.submitCoachUpdate;
   window.confirmCoachUpdate      = AdminModule.confirmCoachUpdate;
@@ -1166,4 +1365,5 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addCoach                = () => AdminModule.addCoach();
   window.promptDeleteCoach       = (coachId, coachName) => AdminModule.promptDeleteCoach(coachId, coachName);
   window.confirmDeleteCoach      = () => AdminModule.confirmDeleteCoach();
+  window.changeProfilePicture    = (input) => AdminModule.changeProfilePicture(input);
 });

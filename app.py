@@ -4151,6 +4151,30 @@ def admin_update_gcash_settings():
     })
 
 
+@app.route('/admin/delete-gcash-settings', methods=['POST'])
+def admin_delete_gcash_settings():
+    """Admin-only: clear the GCash number, account name, and QR code shown
+    to members on the Payment tab. Members won't see a usable GCash option
+    again until the admin re-enters details via Edit."""
+    if session.get('role') != 'admin':
+        return jsonify(success=False, error='Unauthorized.'), 403
+
+    settings = _get_gym_settings()
+    old_qr_path = settings.gcash_qr_path
+
+    settings.gcash_number = None
+    settings.gcash_account_name = None
+    settings.gcash_qr_path = None
+    db.session.commit()
+
+    # Best-effort cleanup of the QR file — only ever deletes admin-uploaded
+    # files (under uploads/content), never a bundled default asset.
+    if old_qr_path and old_qr_path.startswith('uploads/content/'):
+        _delete_content_image(old_qr_path)
+
+    return jsonify(success=True, message='GCash payment details removed.')
+
+
 @app.route('/admin/update-terms-settings', methods=['POST'])
 def admin_update_terms_settings():
     """Admin-only: update the Terms & Policy text shown to new members
@@ -5244,6 +5268,8 @@ def staff():
     staff_user.last_seen_announcements_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.session.commit()
 
+    picture_can_change, picture_available_at = _profile_picture_cooldown(staff_user)
+
     return render_template(
         'staff-dashboard.html',
         attendance_today=attendance_today,
@@ -5267,6 +5293,8 @@ def staff():
         announcements=announcements,
         new_announcements=new_announcements,
         current_user=staff_user,
+        picture_can_change=picture_can_change,
+        picture_available_at=picture_available_at.strftime('%B %d, %Y') if picture_available_at else None,
     )
 
 
@@ -5993,6 +6021,9 @@ def admin():
 
     coaches_data = _get_coaches_data()
 
+    admin_user = User.query.get(session['user_id'])
+    picture_can_change, picture_available_at = _profile_picture_cooldown(admin_user)
+
     return render_template(
         'admin-dashboard.html',
         members=members,
@@ -6002,10 +6033,12 @@ def admin():
         attendance_today=attendance_today,
         attendance_calendar=attendance_calendar,
         announcements=announcements,
-        current_user=User.query.get(session['user_id']),
+        current_user=admin_user,
         gcash_settings=_get_gym_settings(),
         coaches=coaches_data,
         coach_days=VALID_COACH_DAYS,
+        picture_can_change=picture_can_change,
+        picture_available_at=picture_available_at.strftime('%B %d, %Y') if picture_available_at else None,
     )
 
 

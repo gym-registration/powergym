@@ -67,7 +67,8 @@
 
     <div class="sidebar-footer">
       <div class="user-info">
-        <div class="user-avatar" id="sidebar-user-avatar" style="background:var(--blue);">{{ (current_user.first_name[0] ~ current_user.last_name[0])|upper if current_user else 'SF' }}</div>
+        <div class="user-avatar" id="sidebar-user-avatar"
+             style="{% if current_user and current_user.profile_picture %}background-image:url('{{ url_for('static', filename=current_user.profile_picture) }}');background-size:cover;background-position:center;color:transparent;{% else %}background:var(--blue);{% endif %}">{{ (current_user.first_name[0] ~ current_user.last_name[0])|upper if current_user else 'SF' }}</div>
         <div>
           <div class="user-name"  id="sidebar-user-name">{{ current_user.full_name if current_user else 'Staff Member' }}</div>
           <div class="user-email" id="sidebar-user-email">{{ current_user.email if current_user else 'staff@powergym.com' }}</div>
@@ -801,10 +802,24 @@
       <div class="panel">
         <div class="panel-body">
           <div class="profile-header">
-            <div class="profile-avatar">{{ (current_user.first_name[0] ~ current_user.last_name[0])|upper if current_user else 'SF' }}</div>
+            <div class="profile-avatar-wrap">
+              <div class="profile-avatar" id="profile-picture-avatar"
+                   style="{% if current_user and current_user.profile_picture %}background-image:url('{{ url_for('static', filename=current_user.profile_picture) }}');background-size:cover;background-position:center;color:transparent;{% endif %}">{{ (current_user.first_name[0] ~ current_user.last_name[0])|upper if current_user else 'SF' }}</div>
+              <button type="button" class="profile-avatar-edit-btn" id="profile-picture-btn"
+                      onclick="document.getElementById('profile-picture-input').click()"
+                      {% if not picture_can_change %}disabled title="You can change your photo again on {{ picture_available_at }}."{% else %}title="Change profile picture"{% endif %}>✎</button>
+              <input type="file" id="profile-picture-input" accept="image/png,image/jpeg,image/webp" style="display:none;" onchange="changeProfilePicture(this)">
+            </div>
             <div class="profile-header-info">
               <div class="profile-name">{{ current_user.full_name if current_user else 'Staff Member' }}</div>
               <div class="profile-email">{{ current_user.email if current_user else '' }}</div>
+              <div class="profile-picture-hint" id="profile-picture-hint">
+                {% if picture_can_change %}
+                You can update your profile picture. It can then be changed again after 7 days.
+                {% else %}
+                You can change your profile picture again on <strong>{{ picture_available_at }}</strong>.
+                {% endif %}
+              </div>
             </div>
             <button class="btn btn-outline" onclick="staffTab('settings', document.getElementById('nav-staff-settings'))">✎ EDIT PROFILE</button>
           </div>
@@ -836,6 +851,26 @@
         <div class="panel">
           <div class="panel-header"><div class="panel-title">Personal Information</div></div>
           <div class="panel-body">
+            <div class="profile-header" style="margin-bottom:24px;padding-bottom:20px;border-bottom:1px solid var(--border);">
+              <div class="profile-avatar-wrap">
+                <div class="profile-avatar" id="settings-profile-picture-avatar"
+                     style="{% if current_user and current_user.profile_picture %}background-image:url('{{ url_for('static', filename=current_user.profile_picture) }}');background-size:cover;background-position:center;color:transparent;{% endif %}">{{ (current_user.first_name[0] ~ current_user.last_name[0])|upper if current_user else 'SF' }}</div>
+                <button type="button" class="profile-avatar-edit-btn" id="settings-profile-picture-btn"
+                        onclick="document.getElementById('settings-profile-picture-input').click()"
+                        {% if not picture_can_change %}disabled title="You can change your photo again on {{ picture_available_at }}."{% else %}title="Change profile picture"{% endif %}>✎</button>
+                <input type="file" id="settings-profile-picture-input" accept="image/png,image/jpeg,image/webp" style="display:none;" onchange="changeProfilePicture(this)">
+              </div>
+              <div class="profile-header-info">
+                <div class="profile-name">{{ current_user.full_name if current_user else 'Staff Member' }}</div>
+                <div class="profile-picture-hint" id="settings-profile-picture-hint">
+                  {% if picture_can_change %}
+                  You can update your profile picture. It can then be changed again after 7 days.
+                  {% else %}
+                  You can change your profile picture again on <strong>{{ picture_available_at }}</strong>.
+                  {% endif %}
+                </div>
+              </div>
+            </div>
             <div class="form-row-4">
               <div class="form-group">
                 <label class="form-label">First Name</label>
