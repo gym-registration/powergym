@@ -75,6 +75,23 @@
 
     <!-- ── Member Overview ──────────────── -->
     <div id="member-overview" class="sub-panel">
+
+      <!-- ── Notification Bell — only shown on the Overview tab. Combines
+           admin announcements and the Gym Bot's expiry reminders into a
+           single place the member can check any time. ── -->
+      <div class="notif-bell-wrap">
+        <button class="notif-bell-btn" id="notif-bell-btn" onclick="toggleNotificationPanel()" aria-label="Notifications" aria-haspopup="true">
+          🔔
+          <span class="notif-bell-badge" id="notif-bell-badge" style="display:none;">0</span>
+        </button>
+        <div class="notif-panel" id="notif-panel">
+          <div class="notif-panel-header">Notifications</div>
+          <div class="notif-panel-list" id="notif-panel-list">
+            <div class="notif-empty">No notifications yet.</div>
+          </div>
+        </div>
+      </div>
+
       <div class="page-header">
         <div><div class="page-title">MEMBER PORTAL</div><div class="page-subtitle">Welcome back — keep pushing!</div></div>
       </div>
@@ -122,24 +139,6 @@
         <button class="btn btn-red btn-sm" onclick="memberTab('membership', document.getElementById('nav-member-membership'))">CHOOSE A PLAN</button>
       </div>
       {% endif %}
-
-      <!-- Announcements for member -->
-      <div class="panel announcement-panel">
-        <div class="panel-header"><div class="panel-title">📢 GYM ANNOUNCEMENTS</div></div>
-        <div class="panel-body">
-          {% if announcements %}
-          {% for a in announcements %}
-          <div style="{% if not loop.first %}margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08);{% endif %}">
-            <div style="font-weight:600;margin-bottom:4px;">{{ a.title }}</div>
-            <div style="white-space:pre-wrap;">{{ a.body }}</div>
-            <div style="font-size:12px;color:var(--muted);margin-top:6px;">{{ a.created_at.strftime('%b %d, %Y') if a.created_at else '' }}</div>
-          </div>
-          {% endfor %}
-          {% else %}
-          No announcements right now — check back soon.
-          {% endif %}
-        </div>
-      </div>
     </div><!-- /member-overview -->
 
     <!-- ── My Membership ────────────────── -->
@@ -449,8 +448,17 @@
                     <button type="button" id="payment-gcash-proof-remove" class="proof-remove-btn"
                             style="display:none;" onclick="removeGcashProof()">✕ Remove &amp; replace</button>
                   </div>
+
+                  <!-- Auto-filled from the uploaded screenshot via OCR (see
+                       previewGcashProof -> _runGcashReceiptOCR in tr-member.js).
+                       Hidden until a file is picked / OCR responds. -->
+                  <div id="payment-gcash-ocr-box" class="gcash-ocr-box" style="display:none;"></div>
+
                   <label class="form-label" style="margin-top:14px;">GCash Reference Number</label>
                   <input class="form-input" id="payment-gcash-reference" placeholder="e.g. 1234567890123">
+                  <div style="font-size:12px;color:var(--muted);margin-top:4px;">
+                    Auto-filled from your receipt when we can read it — double-check it matches before submitting.
+                  </div>
                 </div>
               </div>
             </div>
@@ -1237,14 +1245,29 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="reminder-bot-modal">
+  <div class="modal" style="max-width:440px;">
+    <button class="modal-close" onclick="closeReminderBotModal()">✕</button>
+    <div style="display:flex;justify-content:center;margin-bottom:14px;">
+      <div style="width:56px;height:56px;border-radius:50%;background:rgba(230,30,30,0.15);border:1px solid rgba(230,30,30,0.3);display:flex;align-items:center;justify-content:center;font-size:29px;">🔔</div>
+    </div>
+    <div class="modal-title" style="text-align:center;">MEMBERSHIP REMINDER</div>
+    <div id="reminder-bot-sender" style="font-size:12px;color:var(--gold);text-align:center;font-weight:600;margin-top:8px;"></div>
+    <div id="reminder-bot-body" style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:14px 0;white-space:pre-wrap;"></div>
+    <div id="reminder-bot-counter" style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:16px;"></div>
+    <button class="btn btn-red" id="reminder-bot-btn" style="width:100%;justify-content:center;" onclick="closeReminderBotModal()">OK</button>
+  </div>
+</div>
+
 <div class="modal-overlay" id="announcement-notice-modal">
   <div class="modal" style="max-width:440px;">
     <button class="modal-close" onclick="closeAnnouncementNoticeModal()">✕</button>
     <div style="display:flex;justify-content:center;margin-bottom:14px;">
       <div style="width:56px;height:56px;border-radius:50%;background:rgba(245,197,24,0.15);border:1px solid rgba(245,197,24,0.3);display:flex;align-items:center;justify-content:center;font-size:29px;">📢</div>
     </div>
-    <div class="modal-title" style="text-align:center;">NOTICE FROM THE ADMIN</div>
+    <div class="modal-title" style="text-align:center;">NOTICE</div>
     <div id="announcement-notice-title" style="font-weight:700;text-align:center;margin-top:12px;color:var(--gold);"></div>
+    <div id="announcement-notice-sender" style="font-size:12px;color:var(--muted);text-align:center;margin-top:2px;"></div>
     <div id="announcement-notice-body" style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:10px 0;white-space:pre-wrap;"></div>
     <div id="announcement-notice-counter" style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:16px;"></div>
     <button class="btn btn-red" id="announcement-notice-btn" style="width:100%;justify-content:center;" onclick="closeAnnouncementNoticeModal()">OK</button>
@@ -1326,7 +1349,7 @@
   </div>
 </div>
 
-<script id="member-dashboard-data" type="application/json">{{ {'present_days': present_days, 'no_plan_days': no_plan_days, 'days_in_month': days_in_month, 'today_day': today_day, 'year': attendance_year, 'month': attendance_month, 'plan_approved_notice': plan_approved_notice, 'payment_verified_notice': payment_verified_notice, 'plan_declined_notice': plan_declined_notice, 'new_announcements': new_announcements}|tojson }}</script>
+<script id="member-dashboard-data" type="application/json">{{ {'present_days': present_days, 'no_plan_days': no_plan_days, 'days_in_month': days_in_month, 'today_day': today_day, 'year': attendance_year, 'month': attendance_month, 'plan_approved_notice': plan_approved_notice, 'payment_verified_notice': payment_verified_notice, 'plan_declined_notice': plan_declined_notice, 'new_announcements': new_announcements, 'bot_reminders': bot_reminders, 'notification_center': notification_center, 'notification_unread_count': notification_unread_count}|tojson }}</script>
 <script src="{{ url_for('static', filename='js/tr-common.js') }}"></script>
 <script src="{{ url_for('static', filename='js/tr-member.js') }}"></script>
 </body>

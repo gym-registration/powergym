@@ -182,7 +182,13 @@
         </div>
         <div class="form-group">
           <label class="form-label">Birthday</label>
-          <input class="form-input" type="date" id="reg-bday">
+          <input class="form-input" type="date" id="reg-bday" required oninput="validateBirthdayField()">
+          <div style="font-size:12px;color:var(--muted);margin-top:4px;" id="reg-bday-hint">
+            You must be at least 14 years old to join.
+          </div>
+          <div id="reg-bday-error" role="alert" style="display:none;font-size:13px;font-weight:600;color:#ff4d4d;margin-top:6px;line-height:1.4;">
+            ⚠ You must be at least 14 years old to register.
+          </div>
         </div>
       </div>
       <div class="form-group">
@@ -556,6 +562,122 @@ function hideAuthScreen() {
 {% if open_screen %}
 document.addEventListener('DOMContentLoaded', () => showAuthScreen('{{ open_screen }}'));
 {% endif %}
+</script>
+
+<!-- Age-gate fix: enforces the 14+ minimum birthday rule for new
+     member registration. Placed after tr-login.js so it takes
+     priority over anything defined there, and adds a hard click
+     guard so an invalid birthday can never submit registration. -->
+<script>
+(function () {
+  var bdayInput = document.getElementById('reg-bday');
+  var hint = document.getElementById('reg-bday-hint');
+  var errNote = document.getElementById('reg-bday-error');
+  var submitBtn = document.getElementById('reg-submit-btn');
+  var MIN_AGE = 14;
+  var MAX_AGE = 100;
+
+  function dateYearsAgo(years) {
+    var d = new Date();
+    d.setFullYear(d.getFullYear() - years);
+    return d.toISOString().split('T')[0];
+  }
+
+  // Stop the date picker itself from offering invalid dates.
+  if (bdayInput) {
+    bdayInput.max = dateYearsAgo(MIN_AGE);
+    bdayInput.min = dateYearsAgo(MAX_AGE);
+  }
+
+  function calcAge(birthDateStr) {
+    if (!birthDateStr) return null;
+    var bd = new Date(birthDateStr + 'T00:00:00');
+    if (isNaN(bd.getTime())) return null;
+    var today = new Date();
+    var age = today.getFullYear() - bd.getFullYear();
+    var m = today.getMonth() - bd.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < bd.getDate())) age--;
+    return age;
+  }
+
+  function isBirthdayValid() {
+    if (!bdayInput || !bdayInput.value) return false;
+    var age = calcAge(bdayInput.value);
+    return age !== null && age >= MIN_AGE && age <= MAX_AGE;
+  }
+
+  // Renders the visible note under the field. This is the single
+  // source of truth for that note — re-asserted on every relevant
+  // event (and on a short interval below) so nothing else on the
+  // page can silently clear it and leave the field looking fine.
+  function renderBirthdayNote() {
+    if (!bdayInput) return;
+    var val = bdayInput.value;
+    var age = val ? calcAge(val) : null;
+    var failedCheck = !!val && (age === null || age < MIN_AGE || age > MAX_AGE);
+    var overAge = age !== null && age > MAX_AGE;
+
+    // Match the phone field's hint styling exactly: plain muted
+    // gray at rest. Only the dedicated error note below turns red,
+    // and only once the user has actually entered a failing date.
+    if (hint) hint.style.color = 'var(--muted)';
+
+    if (errNote) {
+      if (!failedCheck) {
+        errNote.style.display = 'none';
+      } else if (overAge) {
+        errNote.textContent = '⚠ Please enter a valid birth date.';
+        errNote.style.display = 'block';
+      } else {
+        errNote.textContent = '⚠ You must be at least 14 years old to register.';
+        errNote.style.display = 'block';
+      }
+    }
+
+    if (submitBtn) {
+      submitBtn.style.opacity = failedCheck ? '0.6' : '';
+    }
+  }
+
+  // Global name kept so it also fires via the oninput="" attribute
+  // on the field, and so it wins over any same-named function
+  // tr-login.js might declare (this script loads after it).
+  window.validateBirthdayField = renderBirthdayNote;
+
+  if (bdayInput) {
+    ['input', 'change', 'blur'].forEach(function (evt) {
+      bdayInput.addEventListener(evt, renderBirthdayNote);
+    });
+    // Defensive re-assert: guards against any other script on the
+    // page clearing the note after we set it.
+    setInterval(renderBirthdayNote, 500);
+    renderBirthdayNote();
+  }
+
+  // Hard guard: intercepts the click in the capture phase, before
+  // the button's own onclick="completeRegistration()" can run, so
+  // an under-14 (or bogus) birthday can never submit the form —
+  // regardless of what tr-login.js does.
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest ? e.target.closest('#reg-submit-btn') : null;
+    if (!btn) return;
+    if (!isBirthdayValid()) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      renderBirthdayNote();
+      if (bdayInput) {
+        bdayInput.focus();
+        bdayInput.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        if (bdayInput.reportValidity) bdayInput.reportValidity();
+      }
+      if (typeof showToast === 'function') {
+        showToast('You must be at least 14 years old to register.', 'error');
+      } else {
+        alert('You must be at least 14 years old to register.');
+      }
+    }
+  }, true);
+})();
 </script>
 </body>
 </html>

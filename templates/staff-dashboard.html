@@ -54,9 +54,6 @@
       <div class="nav-item" id="nav-staff-members" onclick="staffTab('members',this)">
         <span class="nav-icon">👥</span> View Members
       </div>
-      <div class="nav-item" id="nav-staff-notices" onclick="staffTab('notices',this)">
-        <span class="nav-icon">📢</span> Announcement
-      </div>
       <div class="nav-item" id="nav-staff-analytics" onclick="staffTab('analytics',this)">
         <span class="nav-icon">📈</span> Analytics
       </div>
@@ -84,15 +81,45 @@
 
     <!-- ── Staff Overview ───────────────── -->
     <div id="staff-overview" class="sub-panel">
+
+      <!-- ── Notification Bell — only shown on the Overview tab. Lists the
+           staff-targeted announcements from admin so staff can check them
+           any time instead of only catching a one-time popup. ── -->
+      <div class="notif-bell-wrap">
+        <button class="notif-bell-btn" id="notif-bell-btn" onclick="toggleNotificationPanel()" aria-label="Notifications" aria-haspopup="true">
+          🔔
+          <span class="notif-bell-badge" id="notif-bell-badge" style="display:none;">0</span>
+        </button>
+        <div class="notif-panel" id="notif-panel">
+          <div class="notif-panel-header">Notifications</div>
+          <div class="notif-panel-list" id="notif-panel-list">
+            <div class="notif-empty">No notifications yet.</div>
+          </div>
+        </div>
+      </div>
+
       <div class="page-header">
         <div><div class="page-title">STAFF DASHBOARD</div><div class="page-subtitle">Today's operations at a glance</div></div>
       </div>
 
       <div class="stats-grid">
-        <div class="stat-card blue"> <span class="stat-icon">✅</span><div class="stat-value">{{ stats.checkins_today }}</div> <div class="stat-label">Check-ins Today</div></div>
-        <div class="stat-card green"><span class="stat-icon">👥</span><div class="stat-value">{{ stats.active_members }}</div><div class="stat-label">Active Members</div></div>
-        <div class="stat-card gold"> <span class="stat-icon">⏳</span><div class="stat-value">{{ stats.pending_payments }}</div>  <div class="stat-label">Pending Payments</div></div>
-        <div class="stat-card red">  <span class="stat-icon">⚠️</span><div class="stat-value">{{ stats.expiring_soon }}</div> <div class="stat-label">Expiring Soon</div></div>
+        <div class="stat-card blue stat-card-link" role="button" tabindex="0" aria-label="Go to Check-in / Out"
+             onclick="staffTab('checkin', null)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();staffTab('checkin', null);}">
+          <span class="stat-icon">✅</span><div class="stat-value">{{ stats.checkins_today }}</div> <div class="stat-label">Check-ins Today</div>
+        </div>
+        <div class="stat-card green stat-card-link" role="button" tabindex="0" aria-label="Go to View Members filtered to Active"
+             onclick="goToActiveMembers()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();goToActiveMembers();}">
+          <span class="stat-icon">👥</span><div class="stat-value">{{ stats.active_members }}</div><div class="stat-label">Active Members</div>
+        </div>
+        <div class="stat-card gold stat-card-link" role="button" tabindex="0" aria-label="Go to Request"
+             onclick="staffTab('request', null)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();staffTab('request', null);}">
+          <span class="stat-icon">⏳</span><div class="stat-value">{{ stats.pending_payments }}</div>  <div class="stat-label">Pending Payments</div>
+        </div>
+        <div class="stat-card red stat-card-link" role="button" tabindex="0" aria-label="Jump to Members Expiring This Week"
+             onclick="document.getElementById('staff-expiring-panel').scrollIntoView({behavior:'smooth', block:'start'});"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('staff-expiring-panel').scrollIntoView({behavior:'smooth', block:'start'});}">
+          <span class="stat-icon">⚠️</span><div class="stat-value">{{ stats.expiring_soon }}</div> <div class="stat-label">Expiring Soon</div>
+        </div>
       </div>
 
       <div class="grid-2">
@@ -148,7 +175,7 @@
       </div>
 
       <!-- Expiring members alert -->
-      <div class="panel">
+      <div class="panel" id="staff-expiring-panel">
         <div class="panel-header"><div class="panel-title">Members Expiring This Week</div></div>
         <table class="data-table">
           <thead><tr><th>Name</th><th>Plan</th><th>Expiry</th><th>Action</th></tr></thead>
@@ -156,7 +183,7 @@
             {% for e in expiring_soon %}
             <tr>
               <td>{{ e.name }}</td><td>{{ e.plan }}</td><td>{{ e.expiry }}</td>
-              <td><button class="btn btn-sm btn-outline" onclick="showToast('Renewal reminder sent','success')">Send Reminder</button></td>
+              <td><button class="btn btn-sm btn-outline" onclick="sendExpiryReminder({{ e.id }}, this)">Send Reminder</button></td>
             </tr>
             {% else %}
             <tr><td colspan="4" style="text-align:center;color:var(--muted);">No memberships expiring this week.</td></tr>
@@ -378,14 +405,21 @@
           <div class="form-row" id="walkin-coach-select-row" style="display:none;">
             <div class="form-group">
               <label class="form-label" id="walkin-coach-select-label">Select Coach</label>
-              <select class="form-input" id="walkin-coach-name" style="max-width:320px;">
+              <select class="form-input" id="walkin-coach-name" style="max-width:320px;" onchange="updateWalkInCoachNote()">
                 <option value="">Select a coach</option>
                 {% for c in coaches %}
                 {% if c.is_active %}
-                <option value="{{ c.name }}">{{ c.name }}</option>
+                <option value="{{ c.name }}" data-days="{{ c.available_days|join(',') }}"
+                        {% if c.is_full %}disabled{% endif %}>
+                  {{ c.name }}{% if c.name == recommended_coach_name and not c.is_full %} — Recommended{% endif %}{% if c.is_full %} — Unavailable (Fully Booked){% endif %}
+                </option>
                 {% endif %}
                 {% endfor %}
               </select>
+              <div id="walkin-coach-availability-note" style="font-size:13px;margin-top:6px;line-height:1.5;"></div>
+              <div style="font-size:12px;color:var(--muted);margin-top:4px;">
+                Not sure who to assign? The coach marked "Recommended" currently has the most open slots.
+              </div>
             </div>
           </div>
           <div style="font-size:16px;color:var(--white);margin-bottom:14px;">
@@ -606,10 +640,10 @@
 
       <!-- Status filter pills -->
       <div class="status-filter-bar" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
-        <button type="button" class="status-pill active" data-status="all" onclick="filterMembersByStatus('all', this)">All</button>
-        <button type="button" class="status-pill" data-status="active" onclick="filterMembersByStatus('active', this)">Active</button>
-        <button type="button" class="status-pill" data-status="pending" onclick="filterMembersByStatus('pending', this)">Pending</button>
-        <button type="button" class="status-pill" data-status="expired" onclick="filterMembersByStatus('expired', this)">Expired</button>
+        <button type="button" class="status-pill active" data-status="all" id="members-filter-all" onclick="filterMembersByStatus('all', this)">All</button>
+        <button type="button" class="status-pill" data-status="active" id="members-filter-active" onclick="filterMembersByStatus('active', this)">Active</button>
+        <button type="button" class="status-pill" data-status="pending" id="members-filter-pending" onclick="filterMembersByStatus('pending', this)">Pending</button>
+        <button type="button" class="status-pill" data-status="expired" id="members-filter-expired" onclick="filterMembersByStatus('expired', this)">Expired</button>
         <button type="button" class="btn btn-outline btn-sm" id="toggle-id-btn" style="margin-left:auto;" onclick="toggleMemberIdColumn()">👁 HIDE ID</button>
       </div>
 
@@ -738,27 +772,6 @@
       </div>
     </div><!-- /staff-payments -->
 
-    <!-- ── Notices ──────────────────────── -->
-    <div id="staff-notices" class="sub-panel">
-      <div class="page-header"><div><div class="page-title">ANNOUNCEMENT</div><div class="page-subtitle">Announcements from admin</div></div></div>
-      <div class="panel">
-        <div class="panel notice-panel" style="margin-bottom:0;">
-          <div class="panel-header"><div class="panel-title">📢 Active Announcements</div></div>
-          <div class="panel-body">
-            {% for a in announcements %}
-            <div style="margin-bottom:12px;">
-              <div style="font-weight:600;margin-bottom:4px;color:var(--gold);">{{ a.title }}</div>
-              <div style="font-size:15px;color:var(--white);white-space:pre-wrap;">{{ a.body }}</div>
-              <div style="font-size:12px;color:var(--muted);margin-top:6px;">Posted by {{ a.posted_by.full_name if a.posted_by else 'Admin' }} · {{ a.created_at.strftime('%b %d, %Y') if a.created_at else '' }}</div>
-            </div>
-            {% else %}
-            <div style="color:var(--muted);font-size:15px;">No active announcements right now.</div>
-            {% endfor %}
-          </div>
-        </div>
-      </div>
-    </div><!-- /staff-notices -->
-
     <!-- ── Analytics ─────────────────────── -->
     <div id="staff-analytics" class="sub-panel">
       <div class="page-header">
@@ -781,9 +794,9 @@
             For the Revenue Report, only <strong style="color:var(--white);">Cash</strong> payments are included (this also covers Walk-In guest payments) — GCash is verified and reported by Admin.
           </div>
           <div style="display:flex;gap:12px;flex-wrap:wrap;">
-            <button class="btn btn-red" onclick="generateStaffAnalyticsReport('membership')">📋 Membership Report</button>
-            <button class="btn btn-red" onclick="generateStaffAnalyticsReport('revenue')">💰 Revenue Report</button>
-            <button class="btn btn-red" onclick="generateStaffAnalyticsReport('attendance')">📅 Attendance Report</button>
+            <button class="btn btn-red report-btn" id="staff-report-btn-membership" onclick="generateStaffAnalyticsReport('membership')">📋 Membership Report</button>
+            <button class="btn btn-red report-btn" id="staff-report-btn-revenue" onclick="generateStaffAnalyticsReport('revenue')">💰 Revenue Report</button>
+            <button class="btn btn-red report-btn" id="staff-report-btn-attendance" onclick="generateStaffAnalyticsReport('attendance')">📅 Attendance Report</button>
           </div>
         </div>
       </div>
@@ -1196,8 +1209,9 @@
     <div style="display:flex;justify-content:center;margin-bottom:14px;">
       <div style="width:56px;height:56px;border-radius:50%;background:rgba(245,197,24,0.15);border:1px solid rgba(245,197,24,0.3);display:flex;align-items:center;justify-content:center;font-size:29px;">📢</div>
     </div>
-    <div class="modal-title" style="text-align:center;">NOTICE FROM THE ADMIN</div>
+    <div class="modal-title" style="text-align:center;">NOTICE</div>
     <div id="announcement-notice-title" style="font-weight:700;text-align:center;margin-top:12px;color:var(--gold);"></div>
+    <div id="announcement-notice-sender" style="font-size:12px;color:var(--muted);text-align:center;margin-top:2px;"></div>
     <div id="announcement-notice-body" style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:10px 0;white-space:pre-wrap;"></div>
     <div id="announcement-notice-counter" style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:16px;"></div>
     <button class="btn btn-red" id="announcement-notice-btn" style="width:100%;justify-content:center;" onclick="closeAnnouncementNoticeModal()">OK</button>
@@ -1273,7 +1287,7 @@
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>
 
-<script id="staff-dashboard-data" type="application/json">{{ {'new_announcements': new_announcements}|tojson }}</script>
+<script id="staff-dashboard-data" type="application/json">{{ {'new_announcements': new_announcements, 'notification_center': notification_center, 'notification_unread_count': notification_unread_count}|tojson }}</script>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>

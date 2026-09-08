@@ -278,6 +278,12 @@ const AdminModule = (() => {
 
     currentReportType = type;
 
+    // Highlight which report button is currently selected, so it's clear
+    // at a glance which report is being shown below.
+    document.querySelectorAll('#admin-analytics .report-btn').forEach(btn => btn.classList.remove('active'));
+    const activeBtn = document.getElementById('report-btn-' + type);
+    if (activeBtn) activeBtn.classList.add('active');
+
     const range    = document.getElementById('report-range')?.value || 'this_month';
     const fromDate = document.getElementById('report-from')?.value || '';
     const toDate   = document.getElementById('report-to')?.value   || '';
@@ -606,6 +612,25 @@ const AdminModule = (() => {
     _applyAdminMembersFilter();
   }
 
+  /** Jump from an Overview stat card ("Total Members" / "Active Members")
+   *  straight to Member Management, pre-filtered to the given status and
+   *  with any leftover search text cleared, so the count on the card and
+   *  the rows shown actually match. */
+  function goToAdminMembers(status) {
+    tab('members', null);
+    const searchEl = document.getElementById('admin-members-search');
+    if (searchEl) searchEl.value = '';
+    filterMembersByStatus(status, document.getElementById('admin-members-filter-' + status));
+  }
+
+  /** Jump from the "Monthly Revenue" Overview stat card straight to the
+   *  Payments tab, scrolled down to Payment History. */
+  function goToAdminRevenue() {
+    tab('payments', null);
+    const panel = document.getElementById('admin-payment-history-panel');
+    if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   /** Called as the admin types in the Member Management search box */
   function filterMembersTable() {
     _applyAdminMembersFilter();
@@ -627,6 +652,19 @@ const AdminModule = (() => {
 
     const emptyState = document.getElementById('admin-members-empty-state');
     if (emptyState) emptyState.style.display = (rows.length && visibleCount === 0) ? 'block' : 'none';
+  }
+
+  /** Show/hide the ID column in Member Management — same behavior as
+   *  Staff → View Members' HIDE ID toggle. */
+  function toggleMemberIdColumn() {
+    const table = document.getElementById('members-table');
+    const btn   = document.getElementById('toggle-admin-id-btn');
+    if (!table || !btn) return;
+    const cells = table.querySelectorAll('.col-member-id');
+    const isHidden = btn.dataset.hidden === 'true';
+    cells.forEach(cell => { cell.style.display = isHidden ? '' : 'none'; });
+    btn.dataset.hidden = isHidden ? 'false' : 'true';
+    btn.textContent = isHidden ? '👁 HIDE ID' : '🙈 SHOW ID';
   }
 
   // ── Announcements ─────────────────────────────
@@ -1311,7 +1349,8 @@ const AdminModule = (() => {
   return {
     init, tab, addMember, openEditMemberModal, saveEditMember, deleteMemberRow,
     generateAnalyticsReport, refreshCurrentReport, exportReportPDF, clearReportDateRange,
-    viewPaymentProof, filterMembersByStatus, filterMembersTable,
+    viewPaymentProof, filterMembersByStatus, filterMembersTable, toggleMemberIdColumn,
+    goToAdminMembers, goToAdminRevenue,
     publishAnnouncement, confirmPublishAnnouncement, openEditAnnouncementModal, saveEditAnnouncement,
     toggleAnnouncement, deleteAnnouncement, submitGcashSettings, confirmGcashSettings,
     previewGcashQr, toggleGcashQrRemove, submitTermsSettings,
@@ -1343,6 +1382,9 @@ document.addEventListener('DOMContentLoaded', () => {
   window.viewPaymentProof        = AdminModule.viewPaymentProof;
   window.filterAdminMembersByStatus = (status, el) => AdminModule.filterMembersByStatus(status, el);
   window.filterAdminMembersTable    = () => AdminModule.filterMembersTable();
+  window.toggleAdminMemberIdColumn  = () => AdminModule.toggleMemberIdColumn();
+  window.goToAdminMembers        = (status) => AdminModule.goToAdminMembers(status);
+  window.goToAdminRevenue        = () => AdminModule.goToAdminRevenue();
   window.publishAnnouncement     = AdminModule.publishAnnouncement;
   window.confirmPublishAnnouncement = AdminModule.confirmPublishAnnouncement;
   window.openEditAnnouncementModal = AdminModule.openEditAnnouncementModal;

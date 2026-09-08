@@ -23,7 +23,12 @@ const StaffModule = (() => {
     _bindModalBackdrops();
     Navigation.activateTab('staff', 'overview', document.getElementById('nav-staff-overview'));
 
-    showNewAnnouncementNotices(_parseStaffDashboardData().new_announcements);
+    // Admin announcements no longer pop up automatically on load — they
+    // wait quietly in the notification bell (see _initNotificationBell /
+    // openNotifItem below) and only pop up once staff opens the bell and
+    // taps the specific notice they want to read.
+    const dashData = _parseStaffDashboardData();
+    _initNotificationBell(dashData.notification_center || [], dashData.notification_unread_count || 0);
 
     const payPlanEl = document.getElementById('pay-plan');
     if (payPlanEl) payPlanEl.addEventListener('change', updatePayAmountDisplay);
@@ -43,6 +48,99 @@ const StaffModule = (() => {
     } catch (e) {
       return {};
     }
+  }
+
+  function _esc(s) {
+    return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  /* ── Notification bell — lists admin announcements targeted at staff so
+     they can check them any time instead of only catching a one-time
+     popup. `items` comes from the server's notification_center;
+     `unreadCount` is how many were new on this page load. ── */
+  let _staffNotifItems = [];
+
+  function _initNotificationBell(items, unreadCount) {
+    const badge = document.getElementById('notif-bell-badge');
+    if (badge) {
+      if (unreadCount > 0) {
+        badge.textContent = unreadCount > 9 ? '9+' : String(unreadCount);
+        badge.style.display = 'flex';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+    _staffNotifItems = items || [];
+
+    const listEl = document.getElementById('notif-panel-list');
+    if (!listEl) return;
+    if (!items || !items.length) {
+      listEl.innerHTML = '<div class="notif-empty">No notifications yet.</div>';
+      return;
+    }
+    listEl.innerHTML = items.map((item, idx) => `
+      <div class="notif-item${item.is_new ? ' notif-item-new' : ''}" onclick="StaffModule.openNotifItem(${idx})" style="cursor:pointer;">
+        <div class="notif-item-top">
+          <span class="notif-item-icon">${_esc(item.icon || '🔔')}</span>
+          <span class="notif-item-title">${_esc(item.title)}</span>
+          ${item.is_new ? '<span class="notif-item-new-dot" title="New" style="width:8px;height:8px;border-radius:50%;background:#ff4d4d;display:inline-block;margin-left:6px;"></span>' : ''}
+        </div>
+        ${item.sender ? `<div class="notif-item-sender">From: ${_esc(item.sender)}</div>` : ''}
+        <div class="notif-item-body">${_esc(item.body)}</div>
+        <div class="notif-item-date">${_esc(item.date)}</div>
+        <div class="notif-item-hint">Tap to view full message</div>
+      </div>
+    `).join('');
+  }
+
+  function toggleNotificationPanel() {
+    const panel = document.getElementById('notif-panel');
+    if (!panel) return;
+    const opening = !panel.classList.contains('open');
+    panel.classList.toggle('open', opening);
+
+    if (opening) {
+      const badge = document.getElementById('notif-bell-badge');
+      if (badge) badge.style.display = 'none';
+
+      // Persist that this was actually seen, so already-viewed notices
+      // don't come back as "unread" next login — only genuinely new
+      // ones (posted after this moment) will.
+      fetch('/staff/notifications/mark-seen', { method: 'POST' }).catch(() => {});
+
+      const onOutsideClick = (e) => {
+        const wrap = document.querySelector('.notif-bell-wrap');
+        if (wrap && !wrap.contains(e.target)) {
+          panel.classList.remove('open');
+          document.removeEventListener('click', onOutsideClick);
+          document.removeEventListener('keydown', onEscape);
+        }
+      };
+      const onEscape = (e) => {
+        if (e.key === 'Escape') {
+          panel.classList.remove('open');
+          document.removeEventListener('click', onOutsideClick);
+          document.removeEventListener('keydown', onEscape);
+        }
+      };
+      setTimeout(() => {
+        document.addEventListener('click', onOutsideClick);
+        document.addEventListener('keydown', onEscape);
+      }, 0);
+    }
+  }
+
+  /** Tapping a notification in the bell panel is what actually pops the
+   *  full-size "NOTICE" popup for that one item. */
+  function openNotifItem(idx) {
+    const item = _staffNotifItems[idx];
+    if (!item) return;
+
+    const panel = document.getElementById('notif-panel');
+    if (panel) panel.classList.remove('open');
+
+    showNewAnnouncementNotices([{ title: item.subject, body: item.body, sender: item.sender }]);
   }
 
   /** Update every "Ongoing" duration cell to show real elapsed time, ticking every second */
@@ -525,6 +623,30 @@ const StaffModule = (() => {
       });
   }
 
+  /** "Send Reminder" on the Members Expiring This Week panel — queues a
+   *  plan-specific expiry message that pops up as a bot notice next time
+   *  that member opens their dashboard. */
+  function sendExpiryReminder(memberId, btn) {
+    const originalLabel = btn ? btn.textContent : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'SENDING...'; }
+
+    fetch(`/staff/send-reminder/${memberId}`, { method: 'POST' })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok || !data.success) {
+          showToast(data.error || 'Could not send reminder.', 'error');
+          if (btn) { btn.disabled = false; btn.textContent = originalLabel; }
+          return;
+        }
+        showToast(`Reminder sent to ${data.member_name}.`, 'success');
+        if (btn) { btn.textContent = 'SENT ✓'; }
+      })
+      .catch(() => {
+        showToast('Could not reach the server. Please try again.', 'error');
+        if (btn) { btn.disabled = false; btn.textContent = originalLabel; }
+      });
+  }
+
   /** Find a member's row in the Check-in/Out table by their email (data-email) */
   function _findCheckinRow(email) {
     if (!email) return null;
@@ -666,11 +788,14 @@ const StaffModule = (() => {
       const coachNameEl = document.getElementById('walkin-coach-name');
       if (coachNameEl) coachNameEl.selectedIndex = 0;
       if (selectLabel) selectLabel.textContent = 'Select Coach';
+      const note = document.getElementById('walkin-coach-availability-note');
+      if (note) note.textContent = '';
     } else {
       // Boxing: no paid toggle, coach picker always shown and required.
       if (questionRow) questionRow.style.display = 'none';
       if (selectRow) selectRow.style.display = 'block';
       if (selectLabel) selectLabel.textContent = 'Select Coach (included, no extra charge)';
+      updateWalkInCoachNote();
     }
 
     _updateWalkInAmount();
@@ -687,7 +812,46 @@ const StaffModule = (() => {
       const coachEl = document.getElementById('walkin-coach-name');
       if (coachEl) coachEl.selectedIndex = 0;
     }
+    updateWalkInCoachNote();
     _updateWalkInAmount();
+  }
+
+  const _WALKIN_WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  /** Checks the currently-selected coach's available days against today
+   *  (walk-ins are always same-day, so there's no separate start date to
+   *  compare against) and shows a friendly heads-up if the coach isn't
+   *  normally in today. Purely informational — never blocks recording the
+   *  walk-in, since staff can confirm on the spot. Mirrors the Member
+   *  portal's "Choose Your Coach" note on the promo plan-request form. */
+  function updateWalkInCoachNote() {
+    const note = document.getElementById('walkin-coach-availability-note');
+    const coachSelect = document.getElementById('walkin-coach-name');
+    if (!note || !coachSelect) return;
+
+    const coachName = coachSelect.value;
+    if (!coachName) {
+      note.textContent = '';
+      return;
+    }
+
+    const option = Array.from(coachSelect.options).find(o => o.value === coachName);
+    const daysAttr = option?.dataset.days || '';
+    const availableDays = daysAttr.split(',').map(d => d.trim()).filter(Boolean);
+
+    const todayAbbr = _WALKIN_WEEKDAY_ABBR[new Date().getDay()];
+    const todayName = new Date().toLocaleDateString(undefined, { weekday: 'long' });
+
+    if (!availableDays.length) {
+      note.style.color = 'var(--muted)';
+      note.textContent = `${coachName}'s available days aren't set yet.`;
+    } else if (availableDays.includes(todayAbbr)) {
+      note.style.color = 'var(--green)';
+      note.textContent = `${coachName} is in today (${todayName}). ✓`;
+    } else {
+      note.style.color = 'var(--gold)';
+      note.textContent = `Heads up — ${coachName} isn't usually in on ${todayName}s. Available: ${availableDays.join(', ')}.`;
+    }
   }
 
   /** Recompute "Amount to collect" = plan base price + (Daily's optional
@@ -910,6 +1074,17 @@ const StaffModule = (() => {
     _applyMembersFilter();
   }
 
+  /** Jump from the "Active Members" Overview stat card straight to the
+   *  Member Directory tab, pre-filtered to Active and with any leftover
+   *  search text cleared, so the count on the card and the rows shown
+   *  actually match. */
+  function goToActiveMembers() {
+    tab('members', null);
+    const searchEl = document.getElementById('members-search');
+    if (searchEl) searchEl.value = '';
+    filterMembersByStatus('active', document.getElementById('members-filter-active'));
+  }
+
   /** Called as the staff member types in the Member Directory search box */
   function filterMembersTable() {
     _applyMembersFilter();
@@ -985,6 +1160,12 @@ const StaffModule = (() => {
     if (!panel || !title || !body) return;
 
     staffCurrentReportType = type;
+
+    // Highlight which report button is currently selected, so it's clear
+    // at a glance which report is being shown below.
+    document.querySelectorAll('#staff-analytics .report-btn').forEach(btn => btn.classList.remove('active'));
+    const activeBtn = document.getElementById('staff-report-btn-' + type);
+    if (activeBtn) activeBtn.classList.add('active');
 
     const fromDate = document.getElementById('staff-report-from')?.value || '';
     const toDate   = document.getElementById('staff-report-to')?.value   || '';
@@ -1313,9 +1494,9 @@ const StaffModule = (() => {
       });
   }
 
-  return { init, tab, promptRecordPayment, confirmRecordPayment, cancelRecordPayment, closePaymentRecordedModal, checkInMember, checkOutMember, flatlineAndCheckOut, filterCheckinTable, filterCheckinByStatus, filterMembersByStatus, filterMembersTable, toggleMemberIdColumn, toggleCheckinIdColumn, viewPaymentProof, onPayMemberInput, onPayStudentToggle, updatePayAmountDisplay, generateReport, submitCoachUpdate, confirmCoachUpdate, closeCoachSaveSuccessModal, toggleCoachEdit, addCoach, promptDeleteCoach, confirmDeleteCoach,
-           generateStaffAnalyticsReport, clearStaffReportDateRange, refreshStaffReport, exportStaffReportPDF, submitWalkIn, confirmWalkIn, confirmWalkInSubmit, toggleWalkInCoach, selectWalkInPlan,
-           changeProfilePicture };
+  return { init, tab, promptRecordPayment, confirmRecordPayment, cancelRecordPayment, closePaymentRecordedModal, checkInMember, checkOutMember, flatlineAndCheckOut, sendExpiryReminder, filterCheckinTable, filterCheckinByStatus, filterMembersByStatus, filterMembersTable, goToActiveMembers, toggleMemberIdColumn, toggleCheckinIdColumn, viewPaymentProof, onPayMemberInput, onPayStudentToggle, updatePayAmountDisplay, generateReport, submitCoachUpdate, confirmCoachUpdate, closeCoachSaveSuccessModal, toggleCoachEdit, addCoach, promptDeleteCoach, confirmDeleteCoach,
+           generateStaffAnalyticsReport, clearStaffReportDateRange, refreshStaffReport, exportStaffReportPDF, submitWalkIn, confirmWalkIn, confirmWalkInSubmit, toggleWalkInCoach, selectWalkInPlan, updateWalkInCoachNote,
+           changeProfilePicture, toggleNotificationPanel, openNotifItem };
 })();
 
 
@@ -1335,14 +1516,17 @@ document.addEventListener('DOMContentLoaded', () => {
   window.checkInMember  = (idOrValue) => StaffModule.checkInMember(idOrValue);
   window.checkOutMember = (idOrValue) => StaffModule.checkOutMember(idOrValue);
   window.flatlineAndCheckOut = (el, email) => StaffModule.flatlineAndCheckOut(el, email);
+  window.sendExpiryReminder  = (memberId, btn) => StaffModule.sendExpiryReminder(memberId, btn);
   window.filterCheckinTable   = (term) => StaffModule.filterCheckinTable(term);
   window.filterCheckinByStatus = (status, el) => StaffModule.filterCheckinByStatus(status, el);
   window.submitWalkIn         = () => StaffModule.submitWalkIn();
   window.confirmWalkIn        = () => StaffModule.confirmWalkIn();
   window.confirmWalkInSubmit  = () => StaffModule.confirmWalkInSubmit();
   window.toggleWalkInCoach    = () => StaffModule.toggleWalkInCoach();
+  window.updateWalkInCoachNote = () => StaffModule.updateWalkInCoachNote();
   window.selectWalkInPlan     = (card, planType, price) => StaffModule.selectWalkInPlan(card, planType, price);
   window.filterMembersByStatus = (status, el) => StaffModule.filterMembersByStatus(status, el);
+  window.goToActiveMembers     = () => StaffModule.goToActiveMembers();
   window.filterMembersTable    = () => StaffModule.filterMembersTable();
   window.toggleMemberIdColumn  = () => StaffModule.toggleMemberIdColumn();
   window.toggleCheckinIdColumn = () => StaffModule.toggleCheckinIdColumn();
@@ -1362,4 +1546,5 @@ document.addEventListener('DOMContentLoaded', () => {
   window.refreshStaffReport           = () => StaffModule.refreshStaffReport();
   window.exportStaffReportPDF         = () => StaffModule.exportStaffReportPDF();
   window.changeProfilePicture         = (input) => StaffModule.changeProfilePicture(input);
+  window.toggleNotificationPanel      = () => StaffModule.toggleNotificationPanel();
 });

@@ -1,9 +1,11 @@
 import os
+import re
 import secrets
 import string
 import calendar
 import csv
 import io
+import tempfile
 import time
 from collections import OrderedDict
 from dotenv import load_dotenv
@@ -151,6 +153,74 @@ def _image_has_readable_text(file_path, min_chars=8):
     return len(alnum_only) >= min_chars
 
 
+# ── GCash receipt auto-read (pytesseract) ────────────────────
+# Best-effort OCR so the member doesn't have to retype what's already on
+# the screenshot they just uploaded. This never blocks submission — if
+# OCR is unavailable or a field can't be found, that field just comes
+# back None and the member types/confirms it manually. GCash receipts
+# aren't a fixed layout across app versions, so the regexes below are
+# deliberately loose (several keyword variants, tolerant spacing).
+_GCASH_REF_RE    = re.compile(r'(?:ref(?:erence)?\.?\s*(?:no\.?|number)?|txn\s*id)\s*[:\-]?\s*([0-9][0-9 ]{9,17}[0-9])', re.IGNORECASE)
+_GCASH_REF_BARE_RE = re.compile(r'\b(\d[\d ]{10,16}\d)\b')  # fallback: any long standalone digit run
+_GCASH_AMOUNT_RE = re.compile(r'(?:total amount|amount sent|amount)?\s*(?:php|₱)\s*([\d,]+\.\d{2})', re.IGNORECASE)
+_GCASH_DATE_RE   = re.compile(
+    r'\b((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}'
+    r'|\d{4}-\d{2}-\d{2}'
+    r'|\d{1,2}/\d{1,2}/\d{2,4})\b',
+    re.IGNORECASE,
+)
+_GCASH_NAME_RE   = re.compile(r'(?:sent to|sender|from|to)\s*[:\-]?\s*([A-Za-z][A-Za-z.\-\' ]{2,40})', re.IGNORECASE)
+
+
+def _extract_gcash_receipt_fields(file_path):
+    """Best-effort OCR read of a GCash proof-of-payment screenshot.
+    Returns a dict with amount/reference/date/name keys (each a string
+    or None), or None entirely if OCR can't run at all (pytesseract or
+    opencv missing, unreadable image)."""
+    if pytesseract is None or cv2 is None:
+        return None
+    img = cv2.imread(file_path)
+    if img is None:
+        return None
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # Upscale small screenshots — tesseract reads small phone-screenshot
+    # text much more reliably above ~1000px tall.
+    h, w = gray.shape[:2]
+    if h < 1000:
+        scale = 1000 / h
+        gray = cv2.resize(gray, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
+    try:
+        text_out = pytesseract.image_to_string(gray)
+    except Exception:
+        return None
+
+    result = {'amount': None, 'reference': None, 'date': None, 'name': None}
+
+    m = _GCASH_AMOUNT_RE.search(text_out)
+    if m:
+        result['amount'] = m.group(1)
+
+    m = _GCASH_REF_RE.search(text_out)
+    if not m:
+        m = _GCASH_REF_BARE_RE.search(text_out)
+    if m:
+        result['reference'] = re.sub(r'\s+', '', m.group(1))
+
+    m = _GCASH_DATE_RE.search(text_out)
+    if m:
+        result['date'] = m.group(1)
+
+    m = _GCASH_NAME_RE.search(text_out)
+    if m:
+        # OCR of the "Sent to"/"Sender" line can drag in trailing junk
+        # (icons read as stray letters); keep it to a plausible name length.
+        candidate = ' '.join(m.group(1).split())
+        if 2 <= len(candidate.split()) <= 5:
+            result['name'] = candidate
+
+    return result
+
+
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev_secret_key')
 
@@ -248,6 +318,43 @@ def _plan_expiry(plan, start_date):
         return _add_calendar_month(start_date, 1)
     duration_days = plan.duration_days if plan else 30
     return start_date + timedelta(days=duration_days)
+
+
+# Per-plan wording for the automated expiry reminder (Send Reminder button
+# on the staff 'Members Expiring This Week' panel). Falls back to a generic
+# line for any plan name not listed here (promos, future plans, etc.).
+_REMINDER_MESSAGES_BY_PLAN = {
+    'Daily':   "Hi {first_name}! Your Daily Pass expires on {expiry} ({days_left}). Just grab another pass at the front desk anytime to keep training with us!",
+    'Weekly':  "Hi {first_name}! Your Weekly Plan expires on {expiry} ({days_left}). Once it expires, head to My Membership to pick your next plan and keep your access going.",
+    'Half Month': "Hi {first_name}! Your Half Month Plan expires on {expiry} ({days_left}). Once it expires, head to My Membership to pick your next plan and keep your access going.",
+    'Monthly': "Hi {first_name}! Your Monthly Membership expires on {expiry} ({days_left}). Once it expires, head to My Membership to pick your next plan and stay on track with your fitness goals!",
+    'Yearly':  "Hi {first_name}! Your Yearly Membership expires on {expiry} ({days_left}). Once it expires, head to My Membership to pick your next plan and keep your gains going!",
+}
+_REMINDER_MESSAGE_DEFAULT = "Hi {first_name}! Your {plan} plan expires on {expiry} ({days_left}). Once it expires, head to My Membership to pick your next plan and keep your gym access active."
+
+
+def _reminder_message(plan_name, expiry_date, first_name, today=None):
+    """Build the plan-specific 'your membership is expiring' message shown
+    to a member as a bot popup. `days_left` reads as 'today', 'tomorrow',
+    or 'in N days' so it still makes sense however close the expiry is."""
+    today = today or _today_manila()
+    delta = (expiry_date - today).days if expiry_date else None
+    if delta is None:
+        days_left = ''
+    elif delta <= 0:
+        days_left = 'today'
+    elif delta == 1:
+        days_left = 'tomorrow'
+    else:
+        days_left = f'in {delta} days'
+
+    template = _REMINDER_MESSAGES_BY_PLAN.get(plan_name, _REMINDER_MESSAGE_DEFAULT)
+    return template.format(
+        first_name=first_name or 'there',
+        plan=plan_name or 'membership',
+        expiry=expiry_date.strftime('%b %d, %Y') if expiry_date else 'soon',
+        days_left=days_left,
+    )
 
 
 # Discounted prices for students with a verified school ID. Daily is not
@@ -484,6 +591,16 @@ def _format_full_name(first_name, last_name, middle_initial=None, extension_name
     return full
 
 
+def _notif_sender_label(user, fallback='System'):
+    """Human-readable 'who sent this' label for a notification-bell entry —
+    just the sender's name (e.g. 'Juan Dela Cruz'). Falls back to
+    `fallback` when there's no linked account (message was auto-generated,
+    or the sender's account was since deleted)."""
+    if not user:
+        return fallback
+    return user.full_name
+
+
 
 class User(db.Model):
     __tablename__ = 'users'
@@ -519,6 +636,10 @@ class User(db.Model):
     # Tracks the last time this user's dashboard checked in on announcements,
     # so we know which ones are "new" for them since their last visit.
     last_seen_announcements_at = db.Column(db.DateTime, nullable=True)
+    # Tracks the last time this user opened the notification bell, so the
+    # badge count reflects announcements/reminders posted since then without
+    # affecting the separate "pop up on login" logic above.
+    last_seen_notifications_at = db.Column(db.DateTime, nullable=True)
 
     membership       = db.relationship('Membership', back_populates='member', uselist=False, cascade='all, delete-orphan')
     payments         = db.relationship('Payment', foreign_keys='Payment.member_id', back_populates='member', cascade='all, delete-orphan')
@@ -825,6 +946,28 @@ class Announcement(db.Model):
                              onupdate=lambda: datetime.now(timezone.utc))
 
     posted_by = db.relationship('User', foreign_keys=[posted_by_id])
+
+
+class MembershipReminder(db.Model):
+    """A one-off 'your plan is expiring' notice queued by staff/admin from
+    the 'Members Expiring This Week' panel (Send Reminder button). Unlike
+    Announcement (broadcast to many members), each row targets exactly one
+    member. It pops up as a 'message bot' popup the next time that member
+    loads their dashboard, then is marked delivered so it never shows twice.
+    A brand-new table like this is created automatically by db.create_all()
+    on next startup — no ALTER TABLE / manual migration needed."""
+    __tablename__ = 'membership_reminders'
+    id           = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    member_id    = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    plan_name    = db.Column(db.String(50), nullable=True)
+    expiry_date  = db.Column(db.Date, nullable=True)
+    message      = db.Column(db.Text, nullable=False)
+    sent_by_id   = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at   = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    delivered_at = db.Column(db.DateTime, nullable=True)
+
+    member  = db.relationship('User', foreign_keys=[member_id])
+    sent_by = db.relationship('User', foreign_keys=[sent_by_id])
 
 
 # Many-to-many join table linking a Service to the Equipment/Machines used
@@ -2265,6 +2408,20 @@ def register():
     if not _valid_phone(phone):
         return jsonify(success=False, error='Phone number must start with 09 and be exactly 11 digits.'), 400
 
+    # ── Age gate: members must be 14 or older to join the gym. Birthday is
+    # required (not optional) specifically so this can be enforced — never
+    # trust a client-side date-input min/max alone. ──
+    if not birthday:
+        return jsonify(success=False, error='Please enter your birthday.'), 400
+    try:
+        birthday_date = datetime.strptime(birthday, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify(success=False, error='Please enter a valid birthday.'), 400
+    if birthday_date > date.today():
+        return jsonify(success=False, error='Birthday cannot be in the future.'), 400
+    if _calculate_age(birthday_date) < 14:
+        return jsonify(success=False, error='You must be at least 14 years old to join Power Gym.'), 400
+
     if User.query.filter_by(email=email).first() is not None:
         return jsonify(success=False, error='An account with this email already exists.'), 409
 
@@ -2272,13 +2429,6 @@ def register():
         profile_picture_path = _save_profile_picture(profile_picture_file)
     except ValueError as e:
         return jsonify(success=False, error=str(e)), 400
-
-    birthday_date = None
-    if birthday:
-        try:
-            birthday_date = datetime.strptime(birthday, '%Y-%m-%d').date()
-        except ValueError:
-            birthday_date = None
 
     # ── Create the user ──
     new_user = User(
@@ -3456,6 +3606,52 @@ def member_cancel_plan_request():
     return jsonify(success=True, message='Plan request cancelled. You can submit a new request anytime.')
 
 
+@app.route('/member/ocr-gcash-proof', methods=['POST'])
+def member_ocr_gcash_proof():
+    """Reads the GCash screenshot the member just picked (before they hit
+    submit) and tries to auto-detect the amount, reference number, date,
+    and sender name printed on it, so the member doesn't have to retype
+    them. This is a preview-only pass — the file isn't saved here; the
+    real save happens in /member/submit-payment-method on final submit."""
+    if session.get('role') != 'member':
+        return jsonify(success=False, error='Unauthorized.'), 403
+
+    proof_file = request.files.get('gcash_proof')
+    if not proof_file or not proof_file.filename:
+        return jsonify(success=False, error='No file provided.'), 400
+
+    ext = proof_file.filename.rsplit('.', 1)[-1].lower() if '.' in proof_file.filename else ''
+    if ext not in PROOF_ALLOWED_EXT:
+        return jsonify(success=False, error='Unsupported file type.'), 400
+    if ext == 'pdf':
+        # OCR here only handles images (opencv can't read PDFs); a PDF
+        # proof just skips straight to manual entry.
+        return jsonify(success=True, detected=None, ocr_available=False)
+
+    proof_file.seek(0, os.SEEK_END)
+    size = proof_file.tell()
+    proof_file.seek(0)
+    if size > PROOF_MAX_BYTES:
+        return jsonify(success=False, error='File is too large (max 10MB).'), 400
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=f'.{ext}', delete=False) as tmp:
+            proof_file.save(tmp.name)
+            tmp_path = tmp.name
+        detected = _extract_gcash_receipt_fields(tmp_path)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    if detected is None:
+        # OCR isn't available on this server — tell the frontend so it
+        # can quietly fall back to plain manual entry, no error shown.
+        return jsonify(success=True, detected=None, ocr_available=False)
+
+    return jsonify(success=True, detected=detected, ocr_available=True)
+
+
 @app.route('/member/submit-payment-method', methods=['POST'])
 def member_submit_payment_method():
     """Called from the Payment tab: attaches the chosen payment method
@@ -3856,6 +4052,48 @@ def staff_checkout():
         duration=duration_text,
     )
 
+
+
+@app.route('/staff/send-reminder/<int:member_id>', methods=['POST'])
+def staff_send_reminder(member_id):
+    """Queue a plan-specific expiry reminder for a member — fired from the
+    'Send Reminder' button on the 'Members Expiring This Week' panel. Shows
+    up as a bot popup next time that member opens their dashboard."""
+    if session.get('role') not in ('staff', 'admin'):
+        return jsonify(success=False, error='Unauthorized.'), 403
+
+    member = User.query.get(member_id)
+    if member is None or member.role != 'member':
+        return jsonify(success=False, error='Member not found.'), 404
+
+    membership = member.membership
+    if membership is None or membership.status != 'active':
+        return jsonify(success=False, error=f'{member.first_name} does not have an active plan.'), 409
+
+    today = _today_manila()
+    days_left = (membership.expiry_date - today).days if membership.expiry_date else None
+    if days_left is None or not (0 <= days_left <= 7):
+        return jsonify(success=False, error=f"{member.first_name}'s plan isn't expiring within 7 days."), 409
+
+    plan_name = membership.plan.name if membership.plan else None
+    message = _reminder_message(plan_name, membership.expiry_date, member.first_name, today=today)
+
+    reminder = MembershipReminder(
+        member_id=member.id,
+        plan_name=plan_name,
+        expiry_date=membership.expiry_date,
+        message=message,
+        sent_by_id=session.get('user_id'),
+    )
+    db.session.add(reminder)
+    db.session.commit()
+
+    return jsonify(
+        success=True,
+        message=f'Reminder queued for {member.full_name} — they\'ll see it next time they log in.',
+        member_name=member.full_name,
+        preview=message,
+    )
 
 
 @app.route('/staff/walkin', methods=['POST'])
@@ -4811,11 +5049,82 @@ def member():
     # plan_approved_notice etc.
     last_seen = user.last_seen_announcements_at
     new_announcements = [
-        {'title': a.title, 'body': a.body} for a in announcements
+        {'title': a.title, 'body': a.body, 'sender': _notif_sender_label(a.posted_by, fallback='Admin')}
+        for a in announcements
         if last_seen is None or (a.created_at and a.created_at > last_seen)
     ]
     user.last_seen_announcements_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.session.commit()
+
+    # Membership expiry reminders queued by staff (Send Reminder button) pop
+    # up once, as a "message bot" popup, the next time this member loads
+    # their dashboard — then get marked delivered so they never show twice.
+    pending_reminders = (
+        MembershipReminder.query
+        .filter_by(member_id=user.id, delivered_at=None)
+        .order_by(MembershipReminder.created_at.asc())
+        .all()
+    )
+    bot_reminders = [r.message for r in pending_reminders]
+    if pending_reminders:
+        _now = datetime.now(timezone.utc).replace(tzinfo=None)
+        for r in pending_reminders:
+            r.delivered_at = _now
+        db.session.commit()
+
+    # ── Notification bell — a persistent, revisitable history combining
+    #    admin announcements and the Gym Bot's expiry reminders, so a
+    #    member can check them any time instead of only catching the
+    #    one-time popups above.
+    #
+    #    Unread state is keyed off last_seen_notifications_at, which only
+    #    advances when the member actually OPENS the bell (see
+    #    /member/notifications/mark-seen) — not just on every page load.
+    #    That's what makes "seen once, don't renotify until something
+    #    new" hold up across logins: a notice a member never actually
+    #    opened stays flagged unread the next time they log in, while one
+    #    they did open won't come back just because they revisited. ──
+    last_seen_notif = user.last_seen_notifications_at
+    reminder_history = (
+        MembershipReminder.query
+        .filter_by(member_id=user.id)
+        .order_by(MembershipReminder.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    notification_center = sorted(
+        [
+            {
+                'type': 'announcement',
+                'icon': '📢',
+                'title': 'Notice',       # generic label shown in the bell list
+                'subject': a.title,      # the admin's actual announcement title — shown in the popup
+                'body': a.body,
+                'sender': _notif_sender_label(a.posted_by, fallback='Admin'),
+                'date_sort': a.created_at,
+                'date': _to_manila(a.created_at).strftime('%b %d, %Y · %I:%M %p') if a.created_at else '',
+            } for a in announcements[:20]
+        ] + [
+            {
+                'type': 'reminder',
+                'icon': '🔔',
+                'title': 'Membership Reminder',
+                'body': r.message,
+                'sender': _notif_sender_label(r.sent_by, fallback='Automated System'),
+                'date_sort': r.created_at,
+                'date': _to_manila(r.created_at).strftime('%b %d, %Y · %I:%M %p') if r.created_at else '',
+            } for r in reminder_history
+        ],
+        key=lambda item: item['date_sort'] or datetime.min,
+        reverse=True,
+    )
+    notification_unread_count = 0
+    for item in notification_center:
+        is_new = bool(item['date_sort'] and (last_seen_notif is None or item['date_sort'] > last_seen_notif))
+        item['is_new'] = is_new
+        if is_new:
+            notification_unread_count += 1
+        del item['date_sort']  # not JSON-safe, only used for sorting/unread checks above
 
     # ── Public-facing content (membership plans / services / equipment) ──
     # Sourced from the same admin/staff-editable tables that drive the home
@@ -4945,10 +5254,32 @@ def member():
         plan_declined_notice=plan_declined_notice,
         announcements=announcements,
         new_announcements=new_announcements,
+        bot_reminders=bot_reminders,
+        notification_center=notification_center,
+        notification_unread_count=notification_unread_count,
         gcash_settings=_get_gym_settings(),
         picture_can_change=picture_can_change,
         picture_available_at=picture_available_at.strftime('%B %d, %Y') if picture_available_at else None,
     )
+
+
+@app.route('/member/notifications/mark-seen', methods=['POST'])
+def member_notifications_mark_seen():
+    """Called the moment a member actually opens the notification bell
+    panel (not on every page load) — advances last_seen_notifications_at
+    so those items stop counting as unread on future visits, while
+    anything posted after this moment still shows up as new."""
+    if 'user_id' not in session or session.get('role') != 'member':
+        return jsonify(success=False, error='Not logged in.'), 401
+
+    user = User.query.get(session['user_id'])
+    if user is None:
+        session.clear()
+        return jsonify(success=False, error='User not found.'), 404
+
+    user.last_seen_notifications_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.session.commit()
+    return jsonify(success=True)
 
 
 def _get_attendance_calendar():
@@ -5201,6 +5532,15 @@ def staff():
 
     coaches_data = _get_coaches_data()
 
+    # ── Walk In tab: the coach with the most open slots is flagged as
+    #    "recommended", same hint shown to members on the promo plan-request
+    #    form, so staff aren't stuck guessing who to assign a guest to. ──
+    _walkin_available_coaches = [c for c in coaches_data if c['is_active'] and not c['is_full']]
+    recommended_coach_name = (
+        max(_walkin_available_coaches, key=lambda c: c['slots_left'])['name']
+        if _walkin_available_coaches else None
+    )
+
     # ── Walk In tab: the Daily plan's current price/duration, plus the
     #    list of walk-ins recorded today (most recent first) ──
     daily_plan = MembershipPlan.query.filter_by(name='Daily').first()
@@ -5268,6 +5608,33 @@ def staff():
     staff_user.last_seen_announcements_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.session.commit()
 
+    # ── Notification bell — same pattern as the member dashboard: a
+    #    persistent, revisitable list of admin announcements so staff can
+    #    check them any time instead of only catching a one-time popup.
+    #    Unread state is keyed off last_seen_notifications_at, which only
+    #    advances when staff actually open the bell (see
+    #    /staff/notifications/mark-seen) — not just on every page load. ──
+    last_seen_notif = staff_user.last_seen_notifications_at
+    notification_center = [
+        {
+            'type': 'announcement',
+            'icon': '📢',
+            'title': 'Notice',
+            'subject': a.title,
+            'body': a.body,
+            'sender': _notif_sender_label(a.posted_by, fallback='Admin'),
+            'date_sort': a.created_at,
+            'date': _to_manila(a.created_at).strftime('%b %d, %Y · %I:%M %p') if a.created_at else '',
+        } for a in announcements[:20]
+    ]
+    notification_unread_count = 0
+    for item in notification_center:
+        is_new = bool(item['date_sort'] and (last_seen_notif is None or item['date_sort'] > last_seen_notif))
+        item['is_new'] = is_new
+        if is_new:
+            notification_unread_count += 1
+        del item['date_sort']
+
     picture_can_change, picture_available_at = _profile_picture_cooldown(staff_user)
 
     return render_template(
@@ -5281,6 +5648,7 @@ def staff():
         processed_requests=processed_requests,
         coach_assignments=coach_assignments,
         coaches=coaches_data,
+        recommended_coach_name=recommended_coach_name,
         coach_days=VALID_COACH_DAYS,
         daily_plan=daily_plan,
         walkins_today=walkins_today,
@@ -5292,10 +5660,31 @@ def staff():
         report_ranges=REPORT_RANGES,
         announcements=announcements,
         new_announcements=new_announcements,
+        notification_center=notification_center,
+        notification_unread_count=notification_unread_count,
         current_user=staff_user,
         picture_can_change=picture_can_change,
         picture_available_at=picture_available_at.strftime('%B %d, %Y') if picture_available_at else None,
     )
+
+
+@app.route('/staff/notifications/mark-seen', methods=['POST'])
+def staff_notifications_mark_seen():
+    """Called the moment staff actually open the notification bell panel
+    (not on every page load) — advances last_seen_notifications_at so
+    those items stop counting as unread on future visits, while anything
+    posted after this moment still shows up as new."""
+    if 'user_id' not in session or session.get('role') != 'staff':
+        return jsonify(success=False, error='Not logged in.'), 401
+
+    staff_user = User.query.get(session['user_id'])
+    if staff_user is None:
+        session.clear()
+        return jsonify(success=False, error='User not found.'), 404
+
+    staff_user.last_seen_notifications_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.session.commit()
+    return jsonify(success=True)
 
 
 def _format_currency_short(amount):
@@ -6792,6 +7181,8 @@ def _run_startup_migrations():
         ('users', 'profile_picture_updated_at', "ALTER TABLE users ADD COLUMN profile_picture_updated_at DATETIME NULL"),
         # ── Optional "scan to pay" QR code shown alongside the GCash number ──
         ('gym_settings', 'gcash_qr_path', "ALTER TABLE gym_settings ADD COLUMN gcash_qr_path VARCHAR(255) NULL"),
+        # ── Notification bell (announcements + membership reminders) ──
+        ('users', 'last_seen_notifications_at', "ALTER TABLE users ADD COLUMN last_seen_notifications_at DATETIME NULL"),
     ]
     with db.engine.connect() as conn:
         for table, column, ddl in migrations:

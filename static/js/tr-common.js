@@ -1486,11 +1486,16 @@ function _renderAnnouncementNotice() {
   const idx  = _announcementNoticeTotal - _announcementNoticeQueue.length + 1;
 
   const titleEl   = document.getElementById('announcement-notice-title');
+  const senderEl  = document.getElementById('announcement-notice-sender');
   const bodyEl    = document.getElementById('announcement-notice-body');
   const counterEl = document.getElementById('announcement-notice-counter');
   const btnEl     = document.getElementById('announcement-notice-btn');
 
-  if (titleEl)   titleEl.textContent   = item.title;
+  if (titleEl)  titleEl.textContent  = item.title;
+  if (senderEl) {
+    senderEl.textContent = item.sender ? `From: ${item.sender}` : '';
+    senderEl.style.display = item.sender ? '' : 'none';
+  }
   if (bodyEl)    bodyEl.textContent    = item.body;
   if (counterEl) counterEl.textContent = _announcementNoticeTotal > 1 ? `Notice ${idx} of ${_announcementNoticeTotal}` : '';
   if (btnEl)     btnEl.textContent     = _announcementNoticeQueue.length > 1 ? 'NEXT' : 'OK';
@@ -1506,6 +1511,61 @@ function closeAnnouncementNoticeModal() {
     _renderAnnouncementNotice();
   } else {
     closeModal('announcement-notice-modal');
+  }
+}
+
+/** "GYM BOT" membership-expiry reminder popup — separate from the admin
+ *  announcement notice above so it reads as an automated system message,
+ *  not something the admin wrote. `items` is an array where each entry is
+ *  either a plain message string (legacy shape) or an object
+ *  `{message, sender}` when we know who queued the reminder (server's
+ *  `sent_by` staff/admin account, or "Gym Bot (Automated)" as a fallback).
+ *  `onDone`, if given, fires once the whole queue has been dismissed. */
+let _reminderBotQueue = [];
+let _reminderBotTotal = 0;
+let _reminderBotOnDone = null;
+
+function showBotReminders(items, onDone) {
+  if (!items || !items.length) {
+    if (typeof onDone === 'function') onDone();
+    return;
+  }
+  _reminderBotQueue  = items.slice();
+  _reminderBotTotal  = items.length;
+  _reminderBotOnDone = (typeof onDone === 'function') ? onDone : null;
+  _renderReminderBot();
+}
+
+function _renderReminderBot() {
+  if (!_reminderBotQueue.length) return;
+  const raw     = _reminderBotQueue[0];
+  const message = typeof raw === 'string' ? raw : raw.message;
+  const sender  = typeof raw === 'string' ? null : raw.sender;
+  const idx = _reminderBotTotal - _reminderBotQueue.length + 1;
+
+  const senderEl  = document.getElementById('reminder-bot-sender');
+  const bodyEl    = document.getElementById('reminder-bot-body');
+  const counterEl = document.getElementById('reminder-bot-counter');
+  const btnEl     = document.getElementById('reminder-bot-btn');
+
+  if (senderEl) {
+    senderEl.textContent = sender ? `From: ${sender}` : '';
+    senderEl.style.display = sender ? '' : 'none';
+  }
+  if (bodyEl)    bodyEl.textContent    = message;
+  if (counterEl) counterEl.textContent = _reminderBotTotal > 1 ? `Reminder ${idx} of ${_reminderBotTotal}` : '';
+  if (btnEl)     btnEl.textContent     = _reminderBotQueue.length > 1 ? 'NEXT' : 'OK';
+
+  openModal('reminder-bot-modal');
+}
+
+function closeReminderBotModal() {
+  _reminderBotQueue.shift();
+  if (_reminderBotQueue.length) {
+    _renderReminderBot();
+  } else {
+    closeModal('reminder-bot-modal');
+    if (_reminderBotOnDone) { const done = _reminderBotOnDone; _reminderBotOnDone = null; done(); }
   }
 }
 
@@ -1714,6 +1774,8 @@ document.addEventListener('DOMContentLoaded', () => {
   window.showToast     = showToast;
   window.showNewAnnouncementNotices = showNewAnnouncementNotices;
   window.closeAnnouncementNoticeModal = closeAnnouncementNoticeModal;
+  window.showBotReminders = showBotReminders;
+  window.closeReminderBotModal = closeReminderBotModal;
   window.buildAttGrid  = buildAttGrid;
   window.doLogout      = doLogout;
   window.verifyPayment = verifyPayment;

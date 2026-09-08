@@ -105,13 +105,19 @@ const MemberModule = (() => {
       }
       openModal('plan-declined-modal');
     }
-    showNewAnnouncementNotices(dashData.new_announcements);
+    // Neither admin announcements nor Gym Bot membership-expiry reminders
+    // pop up automatically on load anymore — both wait quietly in the
+    // notification bell (see _initNotificationBell / openNotifItem below)
+    // and only pop up once the member opens the bell and taps the specific
+    // message they want to read.
 
     // Plans / services lookup tables (used by the plan/service detail modals)
     (_parseJSON('member-plans-data') || []).forEach(p => { _plansByKey[p.key] = p; });
     _promosList = _parseJSON('member-promos-data') || [];
     (_parseJSON('member-services-data') || []).forEach(s => { _servicesById[s.id] = s; });
     (_parseJSON('member-equipment-data') || []).forEach(e => { _equipmentById[e.id] = e; });
+
+    _initNotificationBell(dashData.notification_center || [], dashData.notification_unread_count || 0);
 
     _initFitnessWizard();
     _initProgressBars();
@@ -151,6 +157,109 @@ const MemberModule = (() => {
   function _peso(n) {
     const num = Number(n) || 0;
     return '₱' + num.toLocaleString(undefined, { minimumFractionDigits: num % 1 ? 2 : 0, maximumFractionDigits: 2 });
+  }
+
+  /* ── Notification bell — combines admin announcements and the Gym
+     Bot's expiry reminders into one revisitable list. `items` comes
+     from the server's notification_center (already sorted newest
+     first); `unreadCount` is how many were new on this page load. ── */
+  let _notifItems = []; // kept around so a click on a list entry can re-open it as its own popup
+
+  function _initNotificationBell(items, unreadCount) {
+    const badge = document.getElementById('notif-bell-badge');
+    if (badge) {
+      if (unreadCount > 0) {
+        badge.textContent = unreadCount > 9 ? '9+' : String(unreadCount);
+        badge.style.display = 'flex';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+    _notifItems = items || [];
+
+    const listEl = document.getElementById('notif-panel-list');
+    if (!listEl) return;
+    if (!items || !items.length) {
+      listEl.innerHTML = '<div class="notif-empty">No notifications yet.</div>';
+      return;
+    }
+    listEl.innerHTML = items.map((item, idx) => `
+      <div class="notif-item${item.is_new ? ' notif-item-new' : ''}" onclick="MemberModule.openNotifItem(${idx})" style="cursor:pointer;">
+        <div class="notif-item-top">
+          <span class="notif-item-icon">${_esc(item.icon || '🔔')}</span>
+          <span class="notif-item-title">${_esc(item.title)}</span>
+          ${item.is_new ? '<span class="notif-item-new-dot" title="New" style="width:8px;height:8px;border-radius:50%;background:#ff4d4d;display:inline-block;margin-left:6px;"></span>' : ''}
+        </div>
+        ${item.sender ? `<div class="notif-item-sender">From: ${_esc(item.sender)}</div>` : ''}
+        <div class="notif-item-body">${_esc(item.body)}</div>
+        <div class="notif-item-date">${_esc(item.date)}</div>
+        <div class="notif-item-hint">Tap to view full message</div>
+      </div>
+    `).join('');
+  }
+
+  /** Tapping a notification in the bell panel is what actually pops the
+   *  full-size popup for that one item — Gym Bot reminders no longer show
+   *  themselves automatically on page load, so this is the only way they
+   *  (and, for consistency, past announcements) get opened as a popup. */
+  function openNotifItem(idx) {
+    const item = _notifItems[idx];
+    if (!item) return;
+
+    // Close the panel so it doesn't sit open behind the popup.
+    const panel = document.getElementById('notif-panel');
+    if (panel) panel.classList.remove('open');
+
+    if (item.type === 'reminder') {
+      showBotReminders([{ message: item.body, sender: item.sender }]);
+    } else {
+      // item.title is the generic bell-list label ("Notice"); item.subject
+      // is the admin's actual announcement title, shown as the popup's
+      // gold heading above the message body.
+      showNewAnnouncementNotices([{ title: item.subject, body: item.body, sender: item.sender }]);
+    }
+  }
+
+  function toggleNotificationPanel() {
+    const panel = document.getElementById('notif-panel');
+    if (!panel) return;
+    const opening = !panel.classList.contains('open');
+    panel.classList.toggle('open', opening);
+
+    if (opening) {
+      // Clear the unread badge the moment they actually check the list —
+      // it's just been reviewed, so it shouldn't keep counting as unread.
+      const badge = document.getElementById('notif-bell-badge');
+      if (badge) badge.style.display = 'none';
+
+      // Persist that this was actually seen, so already-viewed notices
+      // don't come back as "unread" the next time this member logs in —
+      // only genuinely new ones (posted after this moment) will.
+      fetch('/member/notifications/mark-seen', { method: 'POST' }).catch(() => {});
+
+      // Close on an outside click / Escape, one-shot listeners.
+      const onOutsideClick = (e) => {
+        const wrap = document.querySelector('.notif-bell-wrap');
+        if (wrap && !wrap.contains(e.target)) {
+          panel.classList.remove('open');
+          document.removeEventListener('click', onOutsideClick);
+          document.removeEventListener('keydown', onEscape);
+        }
+      };
+      const onEscape = (e) => {
+        if (e.key === 'Escape') {
+          panel.classList.remove('open');
+          document.removeEventListener('click', onOutsideClick);
+          document.removeEventListener('keydown', onEscape);
+        }
+      };
+      // Deferred so the click that opened the panel doesn't immediately close it.
+      setTimeout(() => {
+        document.addEventListener('click', onOutsideClick);
+        document.addEventListener('keydown', onEscape);
+      }, 0);
+    }
   }
 
   /** Best-effort client-side preview of a plan's expiry date, mirroring
@@ -743,6 +852,69 @@ const MemberModule = (() => {
       if (removeBtn) removeBtn.style.display = 'inline-block';
     };
     reader.readAsDataURL(file);
+
+    _runGcashReceiptOCR(file);
+  }
+
+  /** Sends the just-picked GCash screenshot to the server to auto-read
+   *  the amount, reference number, date, and sender name off it, then
+   *  displays them and quietly fills in the Reference Number field so
+   *  the member doesn't have to retype it. Never blocks the flow —
+   *  on any failure it just hides the box and the member types as before. */
+  function _runGcashReceiptOCR(file) {
+    const box = document.getElementById('payment-gcash-ocr-box');
+    if (!box) return;
+
+    box.style.display = 'block';
+    box.innerHTML = '<div class="gcash-ocr-status">🔎 Reading your receipt…</div>';
+
+    const formData = new FormData();
+    formData.append('gcash_proof', file);
+
+    _apiForm('/member/ocr-gcash-proof', formData)
+      .then(({ ok, data }) => {
+        if (!ok || !data.success || !data.ocr_available || !data.detected) {
+          box.style.display = 'none';
+          return;
+        }
+        const d = data.detected;
+        if (!d.amount && !d.reference && !d.date && !d.name) {
+          box.innerHTML = '<div class="gcash-ocr-status">Couldn\'t auto-read this receipt — please fill in the reference number below.</div>';
+          return;
+        }
+
+        const rows = [];
+        if (d.name)      rows.push(['Name', d.name]);
+        if (d.date)      rows.push(['Date', d.date]);
+        if (d.amount)    rows.push(['Amount', `₱${d.amount}`]);
+        if (d.reference) rows.push(['Reference No.', d.reference]);
+
+        box.innerHTML =
+          '<div class="gcash-ocr-status gcash-ocr-status-ok">✓ Detected from your receipt — please double-check against the screenshot:</div>' +
+          '<div class="gcash-ocr-fields">' +
+          rows.map(([label, value]) => `
+            <div class="gcash-ocr-field">
+              <span class="gcash-ocr-field-label">${label}</span>
+              <span class="gcash-ocr-field-value">${_escapeHtml(value)}</span>
+            </div>`).join('') +
+          '</div>';
+
+        // Auto-fill the reference field only if the member hasn't
+        // already typed one in — never stomp on a manual correction.
+        const refInput = document.getElementById('payment-gcash-reference');
+        if (refInput && d.reference && !refInput.value.trim()) {
+          refInput.value = d.reference;
+        }
+      })
+      .catch(() => {
+        box.style.display = 'none';
+      });
+  }
+
+  function _escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
   }
 
   /** Clears a wrongly-picked GCash proof file so the member can choose again. */
@@ -750,9 +922,11 @@ const MemberModule = (() => {
     const input = document.getElementById('payment-gcash-proof');
     const preview = document.getElementById('payment-gcash-proof-preview');
     const removeBtn = document.getElementById('payment-gcash-proof-remove');
+    const ocrBox = document.getElementById('payment-gcash-ocr-box');
     if (input) input.value = '';
     if (preview) { preview.src = ''; preview.style.display = 'none'; }
     if (removeBtn) removeBtn.style.display = 'none';
+    if (ocrBox) { ocrBox.style.display = 'none'; ocrBox.innerHTML = ''; }
   }
 
   /* ════════════════════════════════════════════════
@@ -1388,6 +1562,7 @@ const MemberModule = (() => {
     changeAttendanceMonth, openServiceModal, openEquipmentModal, openExerciseInstructionsModal,
     submitFitnessStep1, selectFitnessGoal, fitnessWizardBack, submitFitnessStep2,
     retryFitnessCalculation, fitnessWizardEditGoal, switchFitnessPlanTab,
+    toggleNotificationPanel, openNotifItem,
   };
 })();
 
@@ -1444,6 +1619,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.retryFitnessCalculation = () => MemberModule.retryFitnessCalculation();
   window.fitnessWizardEditGoal   = () => MemberModule.fitnessWizardEditGoal();
   window.switchFitnessPlanTab    = (tabName, btnEl) => MemberModule.switchFitnessPlanTab(tabName, btnEl);
+  window.toggleNotificationPanel = () => MemberModule.toggleNotificationPanel();
 
   try {
     MemberModule.init();

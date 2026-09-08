@@ -746,6 +746,7 @@ body::before {
   min-height: 100vh;
   padding: 32px;
   max-width: calc(100vw - 240px);
+  position: relative; /* positioning context for the notif bell, which scrolls with the page */
 }
 
 .page-header {
@@ -807,6 +808,14 @@ body::before {
 .stat-card.green::after { background: var(--green); }
 .stat-card.blue::after  { background: var(--navy-light); }
 .stat-card.gold::after  { background: var(--gold); }
+
+.stat-card-link {
+  cursor: pointer;
+}
+.stat-card-link:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
 
 .stat-icon { font-size: 22px; margin-bottom: 12px; display: block; }
 .stat-value { font-family: 'Bebas Neue', sans-serif; font-size: 49px; line-height: 1; margin-bottom: 4px; }
@@ -1174,6 +1183,12 @@ body::before {
   box-shadow: 0 0 18px var(--red-glow), 0 4px 14px rgba(230, 30, 37, 0.35);
   filter: brightness(1.1);
 }
+.report-btn.active {
+  background: var(--red-dark);
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px rgba(230,30,37,0.35), 0 4px 14px rgba(230,30,37,0.35);
+}
 .btn-gold    { background: var(--promo-gold); color: var(--black); }
 .btn-gold:hover {
   background: var(--promo-gold);
@@ -1250,6 +1265,7 @@ body::before {
 }
 .form-input:focus { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-glow); }
 .form-input::placeholder { color: #444; }
+.form-input.field-error { border-color: var(--red); box-shadow: 0 0 0 2px rgba(230,30,37,0.25); }
 
 /* Native <select> dropdowns: force a dark popup so option text (light) stays
    readable instead of falling back to the browser's white default. */
@@ -1266,7 +1282,8 @@ select.form-input option:focus {
 }
 
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.form-row-4 { display: grid; grid-template-columns: 2fr 1fr 2fr 1fr; gap: 12px; }
+.form-row-4 { display: grid; grid-template-columns: 2fr 0.9fr 2fr 1.2fr; gap: 12px; }
+.form-row-4 .form-label { white-space: nowrap; }
 
 /* Password field with show/hide eye toggle */
 .password-field { position: relative; }
@@ -1384,6 +1401,74 @@ select.form-input option:focus {
    8. Toast Notifications
 ══════════════════════════════════ */
 .toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 9998; display: flex; flex-direction: column; gap: 10px; }
+
+/* ══════════════════════════════════
+   7b. Notification Bell (member dashboard)
+   Fixed top-right, visible on every tab — combines admin
+   announcements and the Gym Bot's expiry reminders into one
+   place the member can revisit any time.
+══════════════════════════════════ */
+/* Sits in its normal place at the top of the page content and scrolls
+   away with everything else — not pinned to the screen. */
+.notif-bell-wrap { position: absolute; top: 32px; right: 32px; z-index: 10; }
+.notif-bell-btn {
+  position: relative;
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--white);
+  font-size: 19px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: border-color 0.2s, background 0.2s, filter 0.2s;
+}
+.notif-bell-btn:hover { border-color: var(--red); filter: brightness(1.1); }
+.notif-bell-badge {
+  position: absolute; top: -3px; right: -3px;
+  min-width: 18px; height: 18px; padding: 0 4px;
+  border-radius: 9px;
+  background: var(--red); color: var(--white);
+  font-size: 11px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid var(--dark);
+}
+.notif-panel {
+  display: none;
+  position: absolute; top: calc(100% + 10px); right: 0;
+  width: 340px; max-height: 420px; overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.5);
+  padding: 6px 0;
+}
+.notif-panel.open { display: block; animation: fadeIn 0.15s ease; }
+.notif-panel-header {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+  font-size: 13px; color: var(--muted);
+  padding: 10px 16px; border-bottom: 1px solid var(--border);
+}
+.notif-item { padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.notif-item:last-child { border-bottom: none; }
+.notif-item-top { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.notif-item-icon { font-size: 13px; flex-shrink: 0; }
+.notif-item-title { font-size: 13px; font-weight: 700; color: var(--white); }
+.notif-item-sender { font-size: 11px; color: var(--gold); font-weight: 600; margin-bottom: 3px; }
+.notif-item-body {
+  font-size: 13px; color: var(--muted); line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.notif-item-date { font-size: 11px; color: #565d70; margin-top: 5px; }
+.notif-item-hint { font-size: 11px; color: #565d70; margin-top: 4px; font-style: italic; }
+.notif-item:hover { background: rgba(255,255,255,0.03); }
+.notif-empty { padding: 26px 16px; text-align: center; font-size: 13px; color: var(--muted); }
+@media (max-width: 640px) {
+  .notif-bell-wrap { top: 16px; right: 16px; }
+  .notif-panel { width: min(320px, calc(100vw - 32px)); }
+}
 .toast {
   background: var(--card);
   border: 1px solid var(--border);
@@ -1503,6 +1588,16 @@ select.form-input option:focus {
 .proof-preview { width: 170px; max-width: 100%; border: 1px solid var(--border); border-radius: 6px; object-fit: cover; display: block; }
 .proof-upload-box { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
 .proof-preview-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 6px; }
+
+/* ── GCash receipt auto-read (OCR) box ── */
+.gcash-ocr-box { margin-top: 12px; padding: 12px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 8px; }
+.gcash-ocr-status { font-size: 13px; color: var(--muted); }
+.gcash-ocr-status-ok { color: var(--green); margin-bottom: 8px; }
+.gcash-ocr-fields { display: flex; flex-direction: column; gap: 6px; }
+.gcash-ocr-field { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; padding: 4px 0; border-bottom: 1px dashed rgba(255,255,255,0.08); }
+.gcash-ocr-field:last-child { border-bottom: none; }
+.gcash-ocr-field-label { color: var(--muted); }
+.gcash-ocr-field-value { color: var(--white); font-weight: 600; text-align: right; word-break: break-word; }
 .proof-remove-btn {
   background: transparent;
   border: 1px solid var(--red);

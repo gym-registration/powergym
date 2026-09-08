@@ -90,10 +90,22 @@
       </div>
 
       <div class="stats-grid">
-        <div class="stat-card red">  <span class="stat-icon">👥</span><div class="stat-value">{{ stats.total_members }}</div><div class="stat-label">Total Members</div></div>
-        <div class="stat-card green"><span class="stat-icon">✅</span><div class="stat-value">{{ stats.active_members }}</div><div class="stat-label">Active Members</div></div>
-        <div class="stat-card blue"> <span class="stat-icon">📋</span><div class="stat-value">{{ stats.checkins_today }}</div> <div class="stat-label">Check-ins Today</div></div>
-        <div class="stat-card gold"> <span class="stat-icon">💰</span><div class="stat-value">₱{{ stats.monthly_revenue }}</div><div class="stat-label">Monthly Revenue</div></div>
+        <div class="stat-card red stat-card-link" role="button" tabindex="0" aria-label="Go to Member Management"
+             onclick="goToAdminMembers('all')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();goToAdminMembers('all');}">
+          <span class="stat-icon">👥</span><div class="stat-value">{{ stats.total_members }}</div><div class="stat-label">Total Members</div>
+        </div>
+        <div class="stat-card green stat-card-link" role="button" tabindex="0" aria-label="Go to Member Management filtered to Active"
+             onclick="goToAdminMembers('active')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();goToAdminMembers('active');}">
+          <span class="stat-icon">✅</span><div class="stat-value">{{ stats.active_members }}</div><div class="stat-label">Active Members</div>
+        </div>
+        <div class="stat-card blue stat-card-link" role="button" tabindex="0" aria-label="Go to Attendance"
+             onclick="adminTab('attendance', null)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();adminTab('attendance', null);}">
+          <span class="stat-icon">📋</span><div class="stat-value">{{ stats.checkins_today }}</div> <div class="stat-label">Check-ins Today</div>
+        </div>
+        <div class="stat-card gold stat-card-link" role="button" tabindex="0" aria-label="Go to Payment History"
+             onclick="goToAdminRevenue()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();goToAdminRevenue();}">
+          <span class="stat-icon">💰</span><div class="stat-value">₱{{ stats.monthly_revenue }}</div><div class="stat-label">Monthly Revenue</div>
+        </div>
       </div>
 
       <div class="grid-2">
@@ -176,24 +188,25 @@
       </div>
 
       <!-- Status filter pills (same behavior as Staff → View Members) -->
-      <div class="status-filter-bar" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
-        <button type="button" class="status-pill active" data-status="all" onclick="filterAdminMembersByStatus('all', this)">All</button>
-        <button type="button" class="status-pill" data-status="active" onclick="filterAdminMembersByStatus('active', this)">Active</button>
-        <button type="button" class="status-pill" data-status="pending" onclick="filterAdminMembersByStatus('pending', this)">Pending</button>
-        <button type="button" class="status-pill" data-status="expired" onclick="filterAdminMembersByStatus('expired', this)">Expired</button>
-        <button type="button" class="status-pill" data-status="declined" onclick="filterAdminMembersByStatus('declined', this)">Declined</button>
-        <button type="button" class="status-pill" data-status="no-plan" onclick="filterAdminMembersByStatus('no-plan', this)">No Plan</button>
+      <div class="status-filter-bar" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
+        <button type="button" class="status-pill active" data-status="all" id="admin-members-filter-all" onclick="filterAdminMembersByStatus('all', this)">All</button>
+        <button type="button" class="status-pill" data-status="active" id="admin-members-filter-active" onclick="filterAdminMembersByStatus('active', this)">Active</button>
+        <button type="button" class="status-pill" data-status="pending" id="admin-members-filter-pending" onclick="filterAdminMembersByStatus('pending', this)">Pending</button>
+        <button type="button" class="status-pill" data-status="expired" id="admin-members-filter-expired" onclick="filterAdminMembersByStatus('expired', this)">Expired</button>
+        <button type="button" class="status-pill" data-status="declined" id="admin-members-filter-declined" onclick="filterAdminMembersByStatus('declined', this)">Declined</button>
+        <button type="button" class="status-pill" data-status="no-plan" id="admin-members-filter-no-plan" onclick="filterAdminMembersByStatus('no-plan', this)">No Plan</button>
+        <button type="button" class="btn btn-outline btn-sm" id="toggle-admin-id-btn" style="margin-left:auto;" onclick="toggleAdminMemberIdColumn()">👁 HIDE ID</button>
       </div>
 
       <div class="panel">
         <table class="data-table" id="members-table">
-          <thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Plan</th><th>Expiry</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead><tr><th class="col-member-id">ID</th><th>Name</th><th>Email</th><th>Plan</th><th>Expiry</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
             {% for m in members %}
             <tr data-id="{{ m.id }}" data-plan="{{ m.plan }}" data-phone="{{ m.phone or '' }}" data-expiry-iso="{{ m.expiry_date.isoformat() if m.expiry_date else '' }}" data-first-name="{{ m.first_name }}" data-middle-initial="{{ m.middle_initial or '' }}" data-last-name="{{ m.last_name }}" data-extension-name="{{ m.extension_name or '' }}"
                 data-name="{{ m.name|lower }}"
                 data-status="{{ 'active' if m.status == 'Active' else 'pending' if m.status == 'Pending' else 'expired' if m.status == 'Expired' else 'declined' if m.status == 'Declined' else 'no-plan' }}">
-              <td>#{{ m.id }}</td><td>{{ m.name }}</td><td>{{ m.email }}</td><td>{{ m.plan }}</td><td>{{ m.expiry }}</td>
+              <td class="col-member-id">#{{ m.id }}</td><td>{{ m.name }}</td><td>{{ m.email }}</td><td>{{ m.plan }}</td><td>{{ m.expiry }}</td>
               <td>
                 {% if m.status == 'Active' %}
                 <span class="badge badge-green">Active</span>
@@ -286,7 +299,7 @@
           {% endfor %}
         </div>
       </div>
-      <div class="panel">
+      <div class="panel" id="admin-payment-history-panel">
         <div class="panel-header"><div class="panel-title">Payment History</div></div>
         <table class="data-table">
           <thead><tr><th>Txn#</th><th>Member</th><th>Plan</th><th>Method</th><th>Amount</th><th>Date</th><th>Status</th></tr></thead>
@@ -368,9 +381,9 @@
             Set both From and To dates to look up a custom range. Leave them blank (or use Clear Dates) to default to this month.
           </div>
           <div style="display:flex;gap:12px;flex-wrap:wrap;">
-            <button class="btn btn-red" onclick="generateAnalyticsReport('membership')">📋 Membership Report</button>
-            <button class="btn btn-red" onclick="generateAnalyticsReport('revenue')">💰 Revenue Report</button>
-            <button class="btn btn-red" onclick="generateAnalyticsReport('attendance')">📅 Attendance Report</button>
+            <button class="btn btn-red report-btn" id="report-btn-membership" onclick="generateAnalyticsReport('membership')">📋 Membership Report</button>
+            <button class="btn btn-red report-btn" id="report-btn-revenue" onclick="generateAnalyticsReport('revenue')">💰 Revenue Report</button>
+            <button class="btn btn-red report-btn" id="report-btn-attendance" onclick="generateAnalyticsReport('attendance')">📅 Attendance Report</button>
           </div>
         </div>
       </div>
