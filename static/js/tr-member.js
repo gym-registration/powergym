@@ -833,18 +833,55 @@ const MemberModule = (() => {
 
   function togglePaymentProofField(selectEl) {
     const gcashFields = document.getElementById('payment-gcash-fields');
+    const cashNote = document.getElementById('payment-cash-note');
     const isGcash = selectEl.value === 'gcash';
     if (gcashFields) gcashFields.style.display = isGcash ? '' : 'none';
+    if (cashNote) cashNote.style.display = isGcash ? 'none' : '';
 
     const submitBtn = document.getElementById('payment-submit-btn');
-    if (submitBtn) submitBtn.textContent = isGcash ? 'PROCEED TO PAYMENT' : 'PROCEED TO FRONT DESK';
+    if (submitBtn) submitBtn.textContent = isGcash ? 'SUBMIT PAYMENT' : 'PROCEED TO FRONT DESK';
+  }
+
+  /** Copies the gym's GCash number to the clipboard when the member taps
+   *  the small copy icon next to it on the payment card. */
+  function copyGcashNumber(btn) {
+    const number = btn?.dataset?.copy || '';
+    if (!number) return;
+    const done = () => showToast('GCash number copied.', 'success');
+    const fail = () => showToast('Could not copy — please copy it manually.', 'error');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(number).then(done).catch(fail);
+    } else {
+      fail();
+    }
+  }
+
+  /** "I'll pay later" — clears out the GCash sub-fields and drops the
+   *  method selector back to its default so the member isn't left mid-form.
+   *  The Submit Payment panel itself stays put; they can come back to it
+   *  any time from the Payment tab. */
+  function deferPaymentMethod() {
+    const select = document.getElementById('payment-method-select');
+    removeGcashProof();
+    ['payment-gcash-sender', 'payment-gcash-date', 'payment-gcash-time', 'payment-gcash-reference', 'payment-gcash-amount'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    if (select) {
+      select.value = 'cash';
+      togglePaymentProofField(select);
+    }
+    showToast("No problem — come back to the Payment tab whenever you're ready.", 'success');
   }
 
   function previewGcashProof(input) {
     const preview = document.getElementById('payment-gcash-proof-preview');
     const removeBtn = document.getElementById('payment-gcash-proof-remove');
+    const filenameLabel = document.getElementById('payment-gcash-filename');
     const file = input.files && input.files[0];
-    if (!preview || !file) return;
+    if (!file) return;
+    if (filenameLabel) filenameLabel.textContent = file.name;
+    if (!preview) return;
     const reader = new FileReader();
     reader.onload = e => {
       preview.src = e.target.result;
@@ -857,10 +894,16 @@ const MemberModule = (() => {
   }
 
   /** Sends the just-picked GCash screenshot to the server to auto-read
-   *  the amount, reference number, date, and sender name off it, then
-   *  displays them and quietly fills in the Reference Number field so
-   *  the member doesn't have to retype it. Never blocks the flow —
-   *  on any failure it just hides the box and the member types as before. */
+   *  the amount, reference number, date, and time off it, then displays
+   *  them and quietly fills in the matching form fields (Payment Date,
+   *  Payment Time, Reference Number, Amount Paid) so the member doesn't
+   *  have to retype them. Sender/Account Name is always typed by the
+   *  member by hand — never auto-filled, even if OCR happens to read a
+   *  name off the receipt (it's only shown for reference below, not
+   *  written into the field). Never blocks the flow — on any failure it
+   *  just hides the box and the member fills the form in manually like
+   *  before, and it never overwrites a field the member has already
+   *  typed something into. */
   function _runGcashReceiptOCR(file) {
     const box = document.getElementById('payment-gcash-ocr-box');
     if (!box) return;
@@ -878,19 +921,19 @@ const MemberModule = (() => {
           return;
         }
         const d = data.detected;
-        if (!d.amount && !d.reference && !d.date && !d.name) {
-          box.innerHTML = '<div class="gcash-ocr-status">Couldn\'t auto-read this receipt — please fill in the reference number below.</div>';
+        if (!d.amount && !d.reference && !d.date && !d.time) {
+          box.innerHTML = '<div class="gcash-ocr-status">Couldn\'t auto-read this receipt — please fill in the details below.</div>';
           return;
         }
 
         const rows = [];
-        if (d.name)      rows.push(['Name', d.name]);
         if (d.date)      rows.push(['Date', d.date]);
+        if (d.time)      rows.push(['Time', d.time]);
         if (d.amount)    rows.push(['Amount', `₱${d.amount}`]);
         if (d.reference) rows.push(['Reference No.', d.reference]);
 
         box.innerHTML =
-          '<div class="gcash-ocr-status gcash-ocr-status-ok">✓ Detected from your receipt — please double-check against the screenshot:</div>' +
+          '<div class="gcash-ocr-status gcash-ocr-status-ok">✓ Detected from your receipt — auto-filled below, please double-check against the screenshot:</div>' +
           '<div class="gcash-ocr-fields">' +
           rows.map(([label, value]) => `
             <div class="gcash-ocr-field">
@@ -899,11 +942,36 @@ const MemberModule = (() => {
             </div>`).join('') +
           '</div>';
 
-        // Auto-fill the reference field only if the member hasn't
-        // already typed one in — never stomp on a manual correction.
+        // Auto-fill each matching field, but only if the member hasn't
+        // already typed something in — never stomp on a manual edit.
+        // (Sender/Account Name is intentionally excluded — the member
+        // always types that one themselves.)
         const refInput = document.getElementById('payment-gcash-reference');
         if (refInput && d.reference && !refInput.value.trim()) {
           refInput.value = d.reference;
+        }
+        const dateInput = document.getElementById('payment-gcash-date');
+        if (dateInput && d.date_iso && !dateInput.value) {
+          dateInput.value = d.date_iso;
+        }
+        const timeInput = document.getElementById('payment-gcash-time');
+        if (timeInput && d.time_24h && !timeInput.value) {
+          timeInput.value = d.time_24h;
+        }
+        const amountInput = document.getElementById('payment-gcash-amount');
+        if (amountInput && d.amount && !amountInput.value.trim()) {
+          amountInput.value = d.amount;
+        }
+
+        // Flag it (without blocking) if what the receipt shows doesn't
+        // match the amount actually required for this plan — the member
+        // can still submit, but it's worth a second look before they do.
+        if (amountInput && d.amount) {
+          const required = parseFloat(amountInput.dataset.required || '');
+          const detected = parseFloat(d.amount.replace(/,/g, ''));
+          if (!isNaN(required) && !isNaN(detected) && Math.abs(required - detected) > 0.01) {
+            box.innerHTML += `<div class="gcash-ocr-status gcash-ocr-status-warn">⚠ Receipt shows ₱${d.amount}, but ₱${required.toFixed(2)} is due — please make sure this is the right receipt.</div>`;
+          }
         }
       })
       .catch(() => {
@@ -923,10 +991,12 @@ const MemberModule = (() => {
     const preview = document.getElementById('payment-gcash-proof-preview');
     const removeBtn = document.getElementById('payment-gcash-proof-remove');
     const ocrBox = document.getElementById('payment-gcash-ocr-box');
+    const filenameLabel = document.getElementById('payment-gcash-filename');
     if (input) input.value = '';
     if (preview) { preview.src = ''; preview.style.display = 'none'; }
     if (removeBtn) removeBtn.style.display = 'none';
     if (ocrBox) { ocrBox.style.display = 'none'; ocrBox.innerHTML = ''; }
+    if (filenameLabel) filenameLabel.textContent = 'No file selected';
   }
 
   /* ════════════════════════════════════════════════
@@ -1035,6 +1105,18 @@ const MemberModule = (() => {
       }
       formData.append('gcash_reference', reference);
       formData.append('gcash_proof', proofFile);
+
+      // Optional context fields — helpful for admin verification, but never
+      // block submission if the member left one blank.
+      const sender = document.getElementById('payment-gcash-sender')?.value.trim() || '';
+      const payDate = document.getElementById('payment-gcash-date')?.value || '';
+      const payTime = document.getElementById('payment-gcash-time')?.value || '';
+      const amountPaid = document.getElementById('payment-gcash-amount')?.value.trim() || '';
+      if (sender)     formData.append('gcash_sender_name', sender);
+      if (payDate)    formData.append('gcash_paid_date', payDate);
+      if (payTime)    formData.append('gcash_paid_time', payTime);
+      if (amountPaid) formData.append('gcash_amount_paid', amountPaid);
+
       confirmText = 'Are you sure you want to submit this GCash payment for verification?';
     }
 
@@ -1557,6 +1639,7 @@ const MemberModule = (() => {
     closePlanApprovedModal, goToPaymentFromApproval, closePaymentApprovedModal,
     closePlanDeclinedModal, withdrawPlanRequest, cancelWithdrawRequest, confirmWithdrawRequest,
     togglePaymentProofField, previewGcashProof, removeGcashProof, submitPaymentMethod,
+    copyGcashNumber, deferPaymentMethod,
     cancelSubmitPayment, confirmSubmitPayment, closePaymentSubmitSuccessModal,
     changeProfilePicture,
     changeAttendanceMonth, openServiceModal, openEquipmentModal, openExerciseInstructionsModal,
@@ -1605,6 +1688,8 @@ document.addEventListener('DOMContentLoaded', () => {
   window.previewGcashProof       = (input) => MemberModule.previewGcashProof(input);
   window.removeGcashProof        = () => MemberModule.removeGcashProof();
   window.submitPaymentMethod     = () => MemberModule.submitPaymentMethod();
+  window.copyGcashNumber         = (btn) => MemberModule.copyGcashNumber(btn);
+  window.deferPaymentMethod      = () => MemberModule.deferPaymentMethod();
   window.cancelSubmitPayment     = () => MemberModule.cancelSubmitPayment();
   window.confirmSubmitPayment    = () => MemberModule.confirmSubmitPayment();
   window.closePaymentSubmitSuccessModal = () => MemberModule.closePaymentSubmitSuccessModal();

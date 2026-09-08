@@ -47,9 +47,7 @@ from datetime import datetime, timezone, date, timedelta
 #                                          e.g. apt install tesseract-ocr)
 try:
     import cv2
-    _FACE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-    _EYE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
-    print(f"[school-id-check] opencv {cv2.__version__} loaded OK — face/card-shape checks ENABLED")
+    print(f"[school-id-check] opencv {cv2.__version__} loaded OK")
 except Exception as e:
     # Broad except on purpose: a missing OS shared library (e.g. libGL.so.1),
     # which is a very common issue for opencv-python-headless on minimal
@@ -57,16 +55,68 @@ except Exception as e:
     # silently, this whole safeguard goes quiet with nobody noticing. Print
     # loudly instead so a broken install shows up in the server logs.
     cv2 = None
+    print(f"[school-id-check] opencv NOT available ({type(e).__name__}: {e}) — face/card-shape "
+          f"checks AND GCash receipt OCR both DISABLED (both need cv2 to read images)")
+
+# Loading the Haar cascade files is kept separate from the cv2 import above
+# on purpose: if this fails (missing/mismatched cascade XML files — seen on
+# some opencv-python-headless installs, e.g. Windows), it should only turn
+# off the face/card-shape checks below, not cv2 itself. cv2 is also used by
+# the (unrelated) GCash receipt OCR reader further down, which only needs
+# cv2.imread/cvtColor/resize — no cascades at all — so it must keep working
+# even when this block fails.
+if cv2 is not None:
+    try:
+        _FACE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        _EYE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
+        if _FACE_CASCADE.empty() or _EYE_CASCADE.empty():
+            raise RuntimeError('cascade XML file(s) failed to load (empty classifier)')
+        print("[school-id-check] Haar cascades loaded OK — face/card-shape checks ENABLED")
+    except Exception as e:
+        _FACE_CASCADE = None
+        _EYE_CASCADE = None
+        print(f"[school-id-check] Haar cascades NOT available ({type(e).__name__}: {e}) — "
+              f"face/card-shape checks DISABLED, uploads will only reach staff's manual review "
+              f"(GCash receipt OCR is unaffected by this)")
+else:
     _FACE_CASCADE = None
     _EYE_CASCADE = None
-    print(f"[school-id-check] opencv NOT available ({type(e).__name__}: {e}) — face/card-shape "
-          f"checks DISABLED, uploads will only reach staff's manual review")
 
 try:
     import pytesseract
-    pytesseract.get_tesseract_version()  # raises if the pip package is installed but the
-                                          # system 'tesseract-ocr' binary itself is missing
-    print("[school-id-check] pytesseract + tesseract binary found — text check ENABLED")
+
+    # On Windows, `pip install pytesseract` only installs the Python
+    # wrapper — the actual OCR engine (the 'tesseract-ocr' system package)
+    # has no official pip distribution and must be installed separately
+    # (see https://github.com/UB-Mannheim/tesseract/wiki), then normally
+    # found via PATH. In practice PATH updates are easy to get wrong on
+    # Windows (a terminal/IDE opened before the PATH change won't see it,
+    # a venv can be launched from a stale shell, etc.), so as a fallback
+    # — if the plain PATH lookup below fails — also check the standard
+    # install locations directly. Set TESSERACT_CMD in your .env file to
+    # override this if you installed it somewhere else.
+    _tess_override = os.environ.get('TESSERACT_CMD')
+    if _tess_override and os.path.isfile(_tess_override):
+        pytesseract.pytesseract.tesseract_cmd = _tess_override
+
+    try:
+        pytesseract.get_tesseract_version()  # raises if the pip package is installed but the
+                                              # system 'tesseract-ocr' binary itself is missing
+    except Exception:
+        if not _tess_override:
+            _windows_fallback_paths = [
+                r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+                r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+                os.path.expandvars(r'%LOCALAPPDATA%\Programs\Tesseract-OCR\tesseract.exe'),
+            ]
+            for _candidate in _windows_fallback_paths:
+                if os.path.isfile(_candidate):
+                    pytesseract.pytesseract.tesseract_cmd = _candidate
+                    break
+        pytesseract.get_tesseract_version()  # try again — raises for real now if still not found
+
+    print(f"[school-id-check] pytesseract + tesseract binary found "
+          f"({pytesseract.pytesseract.tesseract_cmd}) — text check ENABLED")
 except ImportError as e:
     pytesseract = None
     print(f"[school-id-check] pytesseract NOT installed ({e}) — text check DISABLED")
@@ -74,7 +124,9 @@ except Exception as e:
     pytesseract = None
     print(f"[school-id-check] pytesseract installed but the 'tesseract-ocr' system binary "
           f"wasn't found/working ({type(e).__name__}: {e}) — text check DISABLED. "
-          f"Install it with: apt install tesseract-ocr")
+          f"Install it with: apt install tesseract-ocr (Linux) or the Windows installer at "
+          f"https://github.com/UB-Mannheim/tesseract/wiki, then either add it to PATH and "
+          f"restart your terminal/IDE, or set TESSERACT_CMD in your .env to its tesseract.exe path.")
 
 
 def _image_has_face(file_path):
@@ -170,13 +222,82 @@ _GCASH_DATE_RE   = re.compile(
     re.IGNORECASE,
 )
 _GCASH_NAME_RE   = re.compile(r'(?:sent to|sender|from|to)\s*[:\-]?\s*([A-Za-z][A-Za-z.\-\' ]{2,40})', re.IGNORECASE)
+_GCASH_TIME_RE   = re.compile(r'\b(\d{1,2}:\d{2}\s?[APap]\.?[Mm]\.?|\d{1,2}:\d{2})\b')
+
+_GCASH_MONTHS = {
+    'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+    'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12,
+}
+
+
+def _parse_gcash_date(raw):
+    """Best-effort conversion of an OCR-matched date string (several
+    possible formats — see _GCASH_DATE_RE) into 'YYYY-MM-DD' so it can be
+    dropped straight into an <input type="date">. Returns None if the
+    format isn't recognized or the date isn't valid."""
+    if not raw:
+        return None
+    raw = raw.strip()
+
+    m = re.match(r'^(\d{4})-(\d{2})-(\d{2})$', raw)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3))).isoformat()
+        except ValueError:
+            return None
+
+    m = re.match(r'^([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})$', raw)
+    if m:
+        mo = _GCASH_MONTHS.get(m.group(1)[:3].lower())
+        if mo:
+            try:
+                return date(int(m.group(3)), mo, int(m.group(2))).isoformat()
+            except ValueError:
+                return None
+        return None
+
+    m = re.match(r'^(\d{1,2})/(\d{1,2})/(\d{2,4})$', raw)
+    if m:
+        mo, d, y = int(m.group(1)), int(m.group(2)), m.group(3)
+        y = int(y) if len(y) == 4 else 2000 + int(y)
+        if mo > 12 and d <= 12:
+            mo, d = d, mo
+        try:
+            return date(y, mo, d).isoformat()
+        except ValueError:
+            return None
+
+    return None
+
+
+def _parse_gcash_time(raw):
+    """Best-effort conversion of an OCR-matched time string ('6:13 PM',
+    '18:13', ...) into 24-hour 'HH:MM' for an <input type="time">.
+    Returns None if it doesn't look like a valid time."""
+    if not raw:
+        return None
+    cleaned = raw.strip().upper().replace(' ', '').replace('.', '')
+    m = re.match(r'^(\d{1,2}):(\d{2})(AM|PM)?$', cleaned)
+    if not m:
+        return None
+    h, mi, ap = int(m.group(1)), int(m.group(2)), m.group(3)
+    if mi > 59:
+        return None
+    if ap == 'PM' and h != 12:
+        h += 12
+    elif ap == 'AM' and h == 12:
+        h = 0
+    if h > 23:
+        return None
+    return f'{h:02d}:{mi:02d}'
 
 
 def _extract_gcash_receipt_fields(file_path):
     """Best-effort OCR read of a GCash proof-of-payment screenshot.
-    Returns a dict with amount/reference/date/name keys (each a string
-    or None), or None entirely if OCR can't run at all (pytesseract or
-    opencv missing, unreadable image)."""
+    Returns a dict with amount/reference/date/time/name keys (each a
+    string or None) plus normalized date_iso/time_24h keys ready to drop
+    straight into the date/time <input> fields, or None entirely if OCR
+    can't run at all (pytesseract or opencv missing, unreadable image)."""
     if pytesseract is None or cv2 is None:
         return None
     img = cv2.imread(file_path)
@@ -194,7 +315,12 @@ def _extract_gcash_receipt_fields(file_path):
     except Exception:
         return None
 
-    result = {'amount': None, 'reference': None, 'date': None, 'name': None}
+    result = {
+        'amount': None, 'reference': None,
+        'date': None, 'date_iso': None,
+        'time': None, 'time_24h': None,
+        'name': None,
+    }
 
     m = _GCASH_AMOUNT_RE.search(text_out)
     if m:
@@ -209,6 +335,12 @@ def _extract_gcash_receipt_fields(file_path):
     m = _GCASH_DATE_RE.search(text_out)
     if m:
         result['date'] = m.group(1)
+        result['date_iso'] = _parse_gcash_date(m.group(1))
+
+    m = _GCASH_TIME_RE.search(text_out)
+    if m:
+        result['time'] = m.group(1).strip()
+        result['time_24h'] = _parse_gcash_time(m.group(1))
 
     m = _GCASH_NAME_RE.search(text_out)
     if m:
@@ -3610,9 +3742,9 @@ def member_cancel_plan_request():
 def member_ocr_gcash_proof():
     """Reads the GCash screenshot the member just picked (before they hit
     submit) and tries to auto-detect the amount, reference number, date,
-    and sender name printed on it, so the member doesn't have to retype
-    them. This is a preview-only pass — the file isn't saved here; the
-    real save happens in /member/submit-payment-method on final submit."""
+    time, and sender name printed on it, so the member doesn't have to
+    retype them. This is a preview-only pass — the file isn't saved here;
+    the real save happens in /member/submit-payment-method on final submit."""
     if session.get('role') != 'member':
         return jsonify(success=False, error='Unauthorized.'), 403
 
@@ -3707,6 +3839,26 @@ def member_submit_payment_method():
         payment.method            = 'GCash'
         payment.reference_number  = gcash_reference
         payment.proof_image_path  = proof_relative_path
+
+        # Optional context the member filled in on the payment card (sender
+        # name, the date/time they say they paid, and the amount they say
+        # they paid) — not required, but useful for staff/admin
+        # cross-checking against the screenshot. There's no dedicated
+        # column for these, so they ride along in the existing free-text
+        # `notes` field.
+        sender_name = (data.get('gcash_sender_name') or '').strip()
+        paid_date   = (data.get('gcash_paid_date')   or '').strip()
+        paid_time   = (data.get('gcash_paid_time')   or '').strip()
+        amount_paid = (data.get('gcash_amount_paid')  or '').strip()
+        note_parts = []
+        if sender_name:
+            note_parts.append(f"GCash sender: {sender_name}")
+        if paid_date or paid_time:
+            note_parts.append(f"Member-reported payment time: {paid_date} {paid_time}".strip())
+        if amount_paid:
+            note_parts.append(f"Member-reported amount paid: ₱{amount_paid}")
+        if note_parts:
+            payment.notes = ' | '.join(note_parts)
     else:
         payment.method            = 'Cash'
         payment.reference_number  = None

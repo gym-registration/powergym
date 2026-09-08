@@ -420,55 +420,122 @@
               </select>
             </div>
             <div class="form-group" id="payment-gcash-fields" style="display:none;">
-              <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">
-                <div style="flex:0 0 260px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:16px;text-align:center;">
-                  {% if gcash_settings and gcash_settings.gcash_qr_path %}
-                  <div style="font-size:13px;color:var(--muted);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:8px;">Scan to pay</div>
-                  <img src="{{ url_for('static', filename=gcash_settings.gcash_qr_path) }}" alt="GCash QR code"
-                       onclick="openModal('gcash-qr-view-modal')"
-                       style="width:100%;max-width:180px;background:#fff;border-radius:8px;padding:10px;cursor:zoom-in;">
-                  <div style="font-size:12px;color:var(--muted);margin-top:6px;">Tap to enlarge</div>
-                  <div style="height:1px;background:rgba(255,255,255,0.1);margin:12px auto;max-width:180px;"></div>
-                  {% else %}
-                  <div style="font-size:13px;color:var(--muted);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:6px;">Send GCash payment to</div>
-                  {% endif %}
-                  <div style="font-family:'Bebas Neue';font-size:22px;color:var(--white);letter-spacing:1px;">{{ gcash_settings.gcash_number if gcash_settings else '0945 397 0594' }}</div>
-                  <div style="font-size:14px;color:var(--muted);margin-top:2px;">{{ gcash_settings.gcash_account_name if gcash_settings else 'LYDIA M. EMATA' }}</div>
+              <div class="gcash-pay-card">
+                <div class="gcash-pay-header">
+                  <div class="gcash-pay-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="14" y1="14" x2="14" y2="14.01"/><line x1="18" y1="14" x2="18" y2="18"/><line x1="14" y1="18" x2="17" y2="18"/><line x1="14" y1="21" x2="21" y2="21"/><line x1="21" y1="14" x2="21" y2="17"/></svg>
+                  </div>
+                  <div class="gcash-pay-title">Pay via GCash</div>
+                  <div class="gcash-pay-subtitle">
+                    Scan the QR code or send payment manually to the number below, then upload your receipt so we can confirm it.
+                  </div>
                 </div>
-                <div style="flex:1 1 240px;min-width:220px;">
-                  <label class="form-label">Proof of Payment (screenshot)</label>
-                  <input class="form-input" type="file" id="payment-gcash-proof" accept="image/*"
-                         onchange="previewGcashProof(this)">
-                  <div style="font-size:15px;color:var(--muted);margin-top:4px;">
-                    Upload a screenshot of your GCash payment confirmation. Admin will verify it
-                    before your membership is activated.
-                  </div>
-                  <div class="proof-preview-wrap">
-                    <img id="payment-gcash-proof-preview" class="proof-preview" alt="GCash proof preview" style="display:none;">
-                    <button type="button" id="payment-gcash-proof-remove" class="proof-remove-btn"
-                            style="display:none;" onclick="removeGcashProof()">✕ Remove &amp; replace</button>
+
+                <div class="gcash-pay-body">
+                  <div class="gcash-pay-left">
+                    <div class="gcash-qr-box">
+                      {% if gcash_settings and gcash_settings.gcash_qr_path %}
+                      <img src="{{ url_for('static', filename=gcash_settings.gcash_qr_path) }}" alt="GCash QR code"
+                           onclick="openModal('gcash-qr-view-modal')" class="gcash-qr-img">
+                      <div class="gcash-qr-tap-hint">Tap to enlarge</div>
+                      <div class="gcash-qr-divider"></div>
+                      {% else %}
+                      <div class="gcash-qr-placeholder">QR code not yet uploaded — send payment manually to the number below.</div>
+                      {% endif %}
+                      <div class="gcash-detail-row">
+                        <span class="gcash-detail-label">GCash Number</span>
+                        <span class="gcash-detail-value">
+                          {{ gcash_settings.gcash_number if gcash_settings else '0945 397 0594' }}
+                          <button type="button" class="gcash-copy-btn" title="Copy number"
+                                  data-copy="{{ gcash_settings.gcash_number if gcash_settings else '0945 397 0594' }}"
+                                  onclick="copyGcashNumber(this)">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                          </button>
+                        </span>
+                      </div>
+                      <div class="gcash-detail-row">
+                        <span class="gcash-detail-label">Account Name</span>
+                        <span class="gcash-detail-value">{{ gcash_settings.gcash_account_name if gcash_settings else 'LYDIA M. EMATA' }}</span>
+                      </div>
+                    </div>
+                    <button type="button" class="gcash-reminder-btn" onclick="openModal('gcash-payment-reminder-modal')">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                      View Payment Reminder
+                    </button>
                   </div>
 
-                  <!-- Auto-filled from the uploaded screenshot via OCR (see
-                       previewGcashProof -> _runGcashReceiptOCR in tr-member.js).
-                       Hidden until a file is picked / OCR responds. -->
-                  <div id="payment-gcash-ocr-box" class="gcash-ocr-box" style="display:none;"></div>
+                  <div class="gcash-pay-right">
+                    <div class="form-group">
+                      <label class="form-label">Upload Receipt Screenshot</label>
+                      <div class="gcash-upload-row">
+                        <label class="gcash-upload-btn" for="payment-gcash-proof">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                          Choose Screenshot
+                        </label>
+                        <input class="visually-hidden" type="file" id="payment-gcash-proof" accept="image/*"
+                               onchange="previewGcashProof(this)">
+                        <span class="gcash-upload-filename" id="payment-gcash-filename">No file selected</span>
+                      </div>
+                      <div class="proof-preview-wrap">
+                        <img id="payment-gcash-proof-preview" class="proof-preview" alt="GCash proof preview" style="display:none;">
+                        <button type="button" id="payment-gcash-proof-remove" class="proof-remove-btn"
+                                style="display:none;" onclick="removeGcashProof()">✕ Remove &amp; replace</button>
+                      </div>
 
-                  <label class="form-label" style="margin-top:14px;">GCash Reference Number</label>
-                  <input class="form-input" id="payment-gcash-reference" placeholder="e.g. 1234567890123">
-                  <div style="font-size:12px;color:var(--muted);margin-top:4px;">
-                    Auto-filled from your receipt when we can read it — double-check it matches before submitting.
+                      <!-- Auto-filled from the uploaded screenshot via OCR (see
+                           previewGcashProof -> _runGcashReceiptOCR in tr-member.js).
+                           Hidden until a file is picked / OCR responds. -->
+                      <div id="payment-gcash-ocr-box" class="gcash-ocr-box" style="display:none;"></div>
+                    </div>
+
+                    <div class="form-group">
+                      <label class="form-label">Sender / Account Name</label>
+                      <input class="form-input" id="payment-gcash-sender" placeholder="e.g. Juan Dela Cruz">
+                    </div>
+
+                    <div class="form-row">
+                      <div class="form-group">
+                        <label class="form-label">Payment Date</label>
+                        <input class="form-input" type="date" id="payment-gcash-date">
+                      </div>
+                      <div class="form-group">
+                        <label class="form-label">Payment Time</label>
+                        <input class="form-input" type="time" id="payment-gcash-time">
+                      </div>
+                    </div>
+
+                    <div class="form-group">
+                      <label class="form-label">GCash Reference Number</label>
+                      <input class="form-input" id="payment-gcash-reference" placeholder="e.g. 1234567890123">
+                      <div style="font-size:12px;color:var(--muted);margin-top:4px;">
+                        Auto-filled from your receipt when we can read it — double-check it matches before submitting.
+                      </div>
+                    </div>
+
+                    <div class="form-group">
+                      <label class="form-label">Amount Paid</label>
+                      <input class="form-input gcash-amount-input" type="text" inputmode="decimal"
+                             id="payment-gcash-amount" data-required="{{ pending_payment.amount }}"
+                             placeholder="e.g. {{ pending_payment.amount }}">
+                      <div style="font-size:12px;color:var(--muted);margin-top:4px;">
+                        Amount required: <strong style="color:var(--white);">₱{{ pending_payment.amount }}</strong> ·
+                        auto-filled from your receipt when we can read it — double-check it matches before submitting.
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-            <div style="font-size:15px;color:var(--muted);margin-top:4px;margin-bottom:4px;line-height:1.6;">
+            <div style="font-size:15px;color:var(--muted);margin-top:4px;margin-bottom:4px;line-height:1.6;" id="payment-cash-note">
               If paying by Cash, settle payment at the front desk with staff. If paying by GCash,
               attach your reference number and proof of payment above.
             </div>
-            <button class="btn btn-red" id="payment-submit-btn" style="margin-top:16px;width:100%;" onclick="submitPaymentMethod()">
-              PROCEED TO FRONT DESK
-            </button>
+            <div class="gcash-pay-actions" id="payment-actions-row">
+              <button type="button" class="btn btn-outline" id="payment-later-btn" onclick="deferPaymentMethod()">I'll pay later</button>
+              <button class="btn btn-red" id="payment-submit-btn" onclick="submitPaymentMethod()">
+                PROCEED TO FRONT DESK
+              </button>
+            </div>
           </div>
           {% else %}
           <div style="font-size:15px;color:var(--muted);line-height:1.6;">
@@ -1334,6 +1401,22 @@
   </div>
 </div>
 {% endif %}
+
+<!-- Payment reminder — opened from the "View Payment Reminder" button on
+     the GCash payment card. -->
+<div class="modal-overlay" id="gcash-payment-reminder-modal">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="closeModal('gcash-payment-reminder-modal')">✕</button>
+    <div class="modal-title" style="margin-bottom:14px;">PAYMENT REMINDER</div>
+    <ul class="gcash-reminder-list">
+      <li>Send the <strong style="color:var(--white);">exact amount</strong> shown for your plan — partial payments can't be verified automatically.</li>
+      <li>Double-check the GCash number and account name before sending.</li>
+      <li>Keep your receipt screenshot clear and uncropped, showing the reference number and amount.</li>
+      <li>Your membership activates only after admin verifies the payment — this usually takes up to 24 hours.</li>
+    </ul>
+    <button class="btn btn-red" style="width:100%;justify-content:center;margin-top:8px;" onclick="closeModal('gcash-payment-reminder-modal')">GOT IT</button>
+  </div>
+</div>
 
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>

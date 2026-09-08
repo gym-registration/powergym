@@ -1593,6 +1593,7 @@ select.form-input option:focus {
 .gcash-ocr-box { margin-top: 12px; padding: 12px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 8px; }
 .gcash-ocr-status { font-size: 13px; color: var(--muted); }
 .gcash-ocr-status-ok { color: var(--green); margin-bottom: 8px; }
+.gcash-ocr-status-warn { color: #ffb020; margin-top: 8px; }
 .gcash-ocr-fields { display: flex; flex-direction: column; gap: 6px; }
 .gcash-ocr-field { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; padding: 4px 0; border-bottom: 1px dashed rgba(255,255,255,0.08); }
 .gcash-ocr-field:last-child { border-bottom: none; }
@@ -1611,6 +1612,172 @@ select.form-input option:focus {
   transition: background 0.2s, color 0.2s;
 }
 .proof-remove-btn:hover { background: var(--red); color: var(--white); }
+
+/* ── GCash "Pay via GCash" card (Payment tab) ──
+   Same red/gold/dark palette as the rest of the system — QR + gym GCash
+   details on the left, receipt upload + reference fields on the right. */
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.gcash-pay-card {
+  background: var(--dark);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 28px;
+}
+
+.gcash-pay-header { text-align: center; margin-bottom: 24px; }
+.gcash-pay-icon {
+  width: 44px; height: 44px;
+  margin: 0 auto 12px;
+  border-radius: 50%;
+  background: rgba(230, 30, 37, 0.12);
+  color: var(--red);
+  display: flex; align-items: center; justify-content: center;
+}
+.gcash-pay-icon svg { width: 22px; height: 22px; }
+.gcash-pay-title {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 28px;
+  letter-spacing: 1.5px;
+  color: var(--white);
+  margin-bottom: 8px;
+}
+.gcash-pay-subtitle {
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.6;
+  max-width: 440px;
+  margin: 0 auto;
+}
+
+.gcash-pay-body { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
+.gcash-pay-left { flex: 0 0 320px; }
+.gcash-pay-right { flex: 1 1 260px; min-width: 240px; }
+
+.gcash-qr-box {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 24px;
+  text-align: center;
+  margin-bottom: 14px;
+}
+.gcash-qr-img {
+  width: 100%; max-width: 240px;
+  background: #fff;
+  border-radius: 8px;
+  padding: 14px;
+  cursor: zoom-in;
+  transition: transform 0.15s;
+}
+.gcash-qr-img:hover { transform: scale(1.02); }
+.gcash-qr-tap-hint { font-size: 13px; color: var(--muted); margin-top: 8px; }
+.gcash-qr-divider { height: 1px; background: var(--border); margin: 16px auto; max-width: 220px; }
+.gcash-qr-placeholder {
+  font-size: 14px;
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 22px 14px;
+  margin-bottom: 14px;
+}
+.gcash-detail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 0;
+  border-bottom: 1px dashed var(--border);
+  text-align: left;
+}
+.gcash-detail-row:last-child { border-bottom: none; }
+.gcash-detail-label { font-size: 13px; letter-spacing: 0.5px; color: var(--muted); text-transform: uppercase; }
+.gcash-detail-value {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 23px;
+  letter-spacing: 0.5px;
+  color: var(--white);
+  display: flex; align-items: center; gap: 8px;
+}
+.gcash-copy-btn {
+  background: rgba(230, 30, 37, 0.1);
+  border: 1px solid rgba(230, 30, 37, 0.25);
+  color: var(--red);
+  width: 30px; height: 30px;
+  border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+  flex-shrink: 0;
+}
+.gcash-copy-btn svg { width: 15px; height: 15px; }
+.gcash-copy-btn:hover { background: var(--red); color: var(--white); }
+
+.gcash-reminder-btn {
+  width: 100%;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  background: rgba(255, 171, 64, 0.1);
+  border: 1px solid rgba(255, 171, 64, 0.3);
+  color: var(--gold);
+  font-family: 'Barlow', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s, box-shadow 0.2s;
+}
+.gcash-reminder-btn svg { width: 15px; height: 15px; flex-shrink: 0; }
+.gcash-reminder-btn:hover { background: rgba(255, 171, 64, 0.18); box-shadow: 0 0 12px rgba(255, 171, 64, 0.2); }
+
+.gcash-upload-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.gcash-upload-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: linear-gradient(135deg, var(--red) 0%, var(--red-dark) 100%);
+  color: #fff;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 11px 20px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: filter 0.2s, box-shadow 0.2s;
+  white-space: nowrap;
+}
+.gcash-upload-btn svg { width: 15px; height: 15px; }
+.gcash-upload-btn:hover { filter: brightness(1.1); box-shadow: 0 0 14px var(--red-glow); }
+.gcash-upload-filename { font-size: 13px; color: var(--muted); word-break: break-all; }
+
+.gcash-amount-input {
+  background: rgba(230, 30, 37, 0.06);
+  border-color: rgba(230, 30, 37, 0.25);
+  color: var(--red);
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 20px;
+  letter-spacing: 0.5px;
+}
+
+.gcash-pay-actions { display: flex; gap: 12px; margin-top: 20px; flex-wrap: wrap; }
+.gcash-pay-actions .btn { flex: 1 1 160px; justify-content: center; }
+#payment-later-btn { flex-grow: 0.6; }
+
+.gcash-reminder-list { padding-left: 20px; margin: 0 0 4px; color: var(--muted); font-size: 14px; line-height: 1.8; }
+.gcash-reminder-list li::marker { color: var(--red); }
+
+@media (max-width: 640px) {
+  .gcash-pay-card { padding: 20px; }
+  .gcash-pay-left { flex: 1 1 100%; }
+}
 
 .upload-zone {
   border: 2px dashed var(--border);
