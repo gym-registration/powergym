@@ -1585,7 +1585,13 @@ select.form-input option:focus {
   border-color: rgba(142, 184, 255, 0.35);
   box-shadow: 0 0 14px rgba(61, 125, 212, 0.22);
 }
-.proof-preview { width: 170px; max-width: 100%; border: 1px solid var(--border); border-radius: 6px; object-fit: cover; display: block; }
+.proof-preview {
+  width: 170px; max-width: 100%; border: 1px solid var(--border); border-radius: 6px;
+  object-fit: cover; display: block;
+  cursor: zoom-in;
+  transition: transform 0.15s;
+}
+.proof-preview:hover { transform: scale(1.02); }
 .proof-upload-box { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
 .proof-preview-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 6px; }
 
@@ -1612,6 +1618,64 @@ select.form-input option:focus {
   transition: background 0.2s, color 0.2s;
 }
 .proof-remove-btn:hover { background: var(--red); color: var(--white); }
+
+/* ── Admin/Staff verification card — payment facts + member-reported box ──
+   Mirrors the .gcash-ocr-field pattern above (label left, value right) so
+   every payment fact gets its own full-width row instead of being run
+   together on one crowded line or squeezed into a narrow grid column
+   (which was wrapping long reference numbers and amounts mid-digit). */
+.payment-fact-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+}
+.payment-fact {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 14px;
+  font-size: 13px;
+  padding: 4px 0;
+  border-bottom: 1px dashed rgba(255,255,255,0.08);
+}
+.payment-fact:last-child { border-bottom: none; }
+.payment-fact-label { color: var(--muted); flex-shrink: 0; }
+.payment-fact-value { color: var(--white); font-weight: 600; text-align: right; }
+
+.member-reported-box {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.member-reported-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.member-reported-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  padding: 4px 0;
+  border-bottom: 1px dashed rgba(255,255,255,0.08);
+}
+.member-reported-row:last-child { border-bottom: none; }
+.member-reported-label { color: var(--muted); flex-shrink: 0; }
+.member-reported-value { color: var(--white); font-weight: 600; text-align: right; }
+.member-reported-row.mismatch .member-reported-value { color: var(--red); }
+.member-reported-mismatch-note {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--red);
+  font-weight: 600;
+}
 
 /* ── GCash "Pay via GCash" card (Payment tab) ──
    Same red/gold/dark palette as the rest of the system — QR + gym GCash
@@ -1759,13 +1823,50 @@ select.form-input option:focus {
 .gcash-upload-filename { font-size: 13px; color: var(--muted); word-break: break-all; }
 
 .gcash-amount-input {
-  background: rgba(230, 30, 37, 0.06);
-  border-color: rgba(230, 30, 37, 0.25);
-  color: var(--red);
   font-family: 'Bebas Neue', sans-serif;
   font-size: 20px;
   letter-spacing: 0.5px;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
+
+/* Wraps the input so a ₱ symbol can sit fixed inside the field's left
+   edge, the way a currency input normally looks — the input itself gets
+   left padding so typed digits never overlap the symbol. */
+.gcash-amount-input-wrap { position: relative; }
+.gcash-amount-input-wrap .gcash-amount-prefix {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 20px;
+  letter-spacing: 0.5px;
+  color: inherit;
+  pointer-events: none;
+}
+.gcash-amount-input-wrap .gcash-amount-input { padding-left: 32px; width: 100%; }
+
+/* Amount typed/detected is less than what's actually required for the plan. */
+.gcash-amount-input-insufficient {
+  background: rgba(230, 30, 37, 0.06);
+  border-color: rgba(230, 30, 37, 0.35);
+  color: var(--red);
+}
+/* Amount typed/detected meets (or exceeds) the required amount. */
+.gcash-amount-input-match {
+  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(34, 197, 94, 0.4);
+  color: #22c55e;
+}
+/* The prefix symbol follows the same red/green state as the input next
+   to it (set directly via JS, not :has(), so it works on older browsers
+   too) so it reads as one unit instead of a mismatched color. */
+.gcash-amount-prefix.status-insufficient { color: var(--red); }
+.gcash-amount-prefix.status-match { color: #22c55e; }
+
+#payment-gcash-amount-status { display: block; margin-top: 4px; font-weight: 600; }
+#payment-gcash-amount-status.status-insufficient { color: var(--red); }
+#payment-gcash-amount-status.status-match { color: #22c55e; }
 
 .gcash-pay-actions { display: flex; gap: 12px; margin-top: 20px; flex-wrap: wrap; }
 .gcash-pay-actions .btn { flex: 1 1 160px; justify-content: center; }

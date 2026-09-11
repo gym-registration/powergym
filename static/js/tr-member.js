@@ -63,6 +63,13 @@ const MemberModule = (() => {
     _bindModalBackdrops();
     Navigation.activateTab('member', 'overview', document.getElementById('nav-member-overview'));
 
+    // Live-validate the Amount Paid field (red = short, green = meets the
+    // required amount) as the member types, not just right after OCR fills it.
+    const _gcashAmountInput = document.getElementById('payment-gcash-amount');
+    if (_gcashAmountInput) {
+      _gcashAmountInput.addEventListener('input', _validateGcashAmountPaid);
+    }
+
     const dashData = _parseJSON('member-dashboard-data');
 
     // Attendance calendar (initial render uses the server-provided current month)
@@ -867,6 +874,7 @@ const MemberModule = (() => {
       const el = document.getElementById(id);
       if (el) el.value = '';
     });
+    _validateGcashAmountPaid(); // reset the red/green amount styling too
     if (select) {
       select.value = 'cash';
       togglePaymentProofField(select);
@@ -877,6 +885,7 @@ const MemberModule = (() => {
   function previewGcashProof(input) {
     const preview = document.getElementById('payment-gcash-proof-preview');
     const removeBtn = document.getElementById('payment-gcash-proof-remove');
+    const tapHint = document.getElementById('payment-gcash-proof-tap-hint');
     const filenameLabel = document.getElementById('payment-gcash-filename');
     const file = input.files && input.files[0];
     if (!file) return;
@@ -887,60 +896,50 @@ const MemberModule = (() => {
       preview.src = e.target.result;
       preview.style.display = 'block';
       if (removeBtn) removeBtn.style.display = 'inline-block';
+      if (tapHint) tapHint.style.display = 'block';
     };
     reader.readAsDataURL(file);
 
     _runGcashReceiptOCR(file);
   }
 
-  /** Sends the just-picked GCash screenshot to the server to auto-read
-   *  the amount, reference number, date, and time off it, then displays
-   *  them and quietly fills in the matching form fields (Payment Date,
-   *  Payment Time, Reference Number, Amount Paid) so the member doesn't
-   *  have to retype them. Sender/Account Name is always typed by the
-   *  member by hand — never auto-filled, even if OCR happens to read a
-   *  name off the receipt (it's only shown for reference below, not
-   *  written into the field). Never blocks the flow — on any failure it
-   *  just hides the box and the member fills the form in manually like
-   *  before, and it never overwrites a field the member has already
-   *  typed something into. */
-  function _runGcashReceiptOCR(file) {
-    const box = document.getElementById('payment-gcash-ocr-box');
-    if (!box) return;
+  /** Opens the just-uploaded receipt in a bigger modal view — same "tap
+   *  to enlarge" idea as the GCash QR code thumbnail. The image itself
+   *  is whatever the member picked (a data: URL from previewGcashProof
+   *  above), so it's copied over to the modal's <img> right here rather
+   *  than being known ahead of time like the QR code's fixed file path. */
+  function openGcashProofPreview() {
+    const preview = document.getElementById('payment-gcash-proof-preview');
+    const modalImg = document.getElementById('gcash-proof-view-img');
+    if (!preview || !preview.src || !modalImg) return;
+    modalImg.src = preview.src;
+    openModal('gcash-proof-view-modal');
+  }
 
-    box.style.display = 'block';
-    box.innerHTML = '<div class="gcash-ocr-status">🔎 Reading your receipt…</div>';
+  /** Sends the just-picked GCash screenshot to the server to auto-read
+   *  the amount, reference number, date, and time off it, then silently
+   *  fills in the matching form fields (Payment Date, Payment Time,
+   *  Reference Number, Amount Paid) — no separate "detected" summary is
+   *  shown, the values just land directly in the fields the member would
+   *  otherwise type into. Sender/Account Name is always typed by the
+   *  member by hand — never auto-filled, even if OCR happens to read a
+   *  name off the receipt. Never blocks the flow — on any failure it
+   *  just leaves the fields as they were and the member fills the form
+   *  in manually like before, and it never overwrites a field the member
+   *  has already typed something into. */
+  function _runGcashReceiptOCR(file) {
+    // Older builds showed a "Detected from your receipt" summary box here;
+    // keep it permanently hidden now that fields are filled silently.
+    const box = document.getElementById('payment-gcash-ocr-box');
+    if (box) box.style.display = 'none';
 
     const formData = new FormData();
     formData.append('gcash_proof', file);
 
     _apiForm('/member/ocr-gcash-proof', formData)
       .then(({ ok, data }) => {
-        if (!ok || !data.success || !data.ocr_available || !data.detected) {
-          box.style.display = 'none';
-          return;
-        }
+        if (!ok || !data.success || !data.ocr_available || !data.detected) return;
         const d = data.detected;
-        if (!d.amount && !d.reference && !d.date && !d.time) {
-          box.innerHTML = '<div class="gcash-ocr-status">Couldn\'t auto-read this receipt — please fill in the details below.</div>';
-          return;
-        }
-
-        const rows = [];
-        if (d.date)      rows.push(['Date', d.date]);
-        if (d.time)      rows.push(['Time', d.time]);
-        if (d.amount)    rows.push(['Amount', `₱${d.amount}`]);
-        if (d.reference) rows.push(['Reference No.', d.reference]);
-
-        box.innerHTML =
-          '<div class="gcash-ocr-status gcash-ocr-status-ok">✓ Detected from your receipt — auto-filled below, please double-check against the screenshot:</div>' +
-          '<div class="gcash-ocr-fields">' +
-          rows.map(([label, value]) => `
-            <div class="gcash-ocr-field">
-              <span class="gcash-ocr-field-label">${label}</span>
-              <span class="gcash-ocr-field-value">${_escapeHtml(value)}</span>
-            </div>`).join('') +
-          '</div>';
 
         // Auto-fill each matching field, but only if the member hasn't
         // already typed something in — never stomp on a manual edit.
@@ -962,21 +961,51 @@ const MemberModule = (() => {
         if (amountInput && d.amount && !amountInput.value.trim()) {
           amountInput.value = d.amount;
         }
-
-        // Flag it (without blocking) if what the receipt shows doesn't
-        // match the amount actually required for this plan — the member
-        // can still submit, but it's worth a second look before they do.
-        if (amountInput && d.amount) {
-          const required = parseFloat(amountInput.dataset.required || '');
-          const detected = parseFloat(d.amount.replace(/,/g, ''));
-          if (!isNaN(required) && !isNaN(detected) && Math.abs(required - detected) > 0.01) {
-            box.innerHTML += `<div class="gcash-ocr-status gcash-ocr-status-warn">⚠ Receipt shows ₱${d.amount}, but ₱${required.toFixed(2)} is due — please make sure this is the right receipt.</div>`;
-          }
-        }
+        _validateGcashAmountPaid();
       })
-      .catch(() => {
-        box.style.display = 'none';
-      });
+      .catch(() => { /* OCR is best-effort — silently fall back to manual entry */ });
+  }
+
+  /** Colors the Amount Paid field and its helper note red when what's
+   *  typed/detected is less than the plan's required amount, green when
+   *  it meets or exceeds it, and back to neutral when the field is
+   *  empty. Called on every keystroke in that field and right after OCR
+   *  auto-fills it. */
+  function _validateGcashAmountPaid() {
+    const amountInput = document.getElementById('payment-gcash-amount');
+    const status = document.getElementById('payment-gcash-amount-status');
+    const prefix = document.getElementById('payment-gcash-amount-prefix');
+    if (!amountInput) return;
+
+    amountInput.classList.remove('gcash-amount-input-insufficient', 'gcash-amount-input-match');
+    if (status) {
+      status.classList.remove('status-insufficient', 'status-match');
+      status.textContent = '';
+    }
+    if (prefix) prefix.classList.remove('status-insufficient', 'status-match');
+
+    const raw = amountInput.value.trim();
+    if (!raw) return; // nothing typed yet — stay neutral
+
+    const required = parseFloat((amountInput.dataset.required || '').replace(/,/g, ''));
+    const paid = parseFloat(raw.replace(/,/g, ''));
+    if (isNaN(required) || isNaN(paid)) return;
+
+    if (paid + 0.01 < required) {
+      amountInput.classList.add('gcash-amount-input-insufficient');
+      if (prefix) prefix.classList.add('status-insufficient');
+      if (status) {
+        status.classList.add('status-insufficient');
+        status.textContent = `⚠ This is less than the ₱${required.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} required.`;
+      }
+    } else {
+      amountInput.classList.add('gcash-amount-input-match');
+      if (prefix) prefix.classList.add('status-match');
+      if (status) {
+        status.classList.add('status-match');
+        status.textContent = '✓ Amount meets what\'s required.';
+      }
+    }
   }
 
   function _escapeHtml(str) {
@@ -986,17 +1015,30 @@ const MemberModule = (() => {
   }
 
   /** Clears a wrongly-picked GCash proof file so the member can choose again. */
+  /** Clears the picked receipt file/preview AND every field OCR may have
+   *  auto-filled from it (Date, Time, Reference No., Amount Paid) — since
+   *  those values only make sense paired with that specific receipt.
+   *  Sender/Account Name is left alone: the member always types that by
+   *  hand, so it's not tied to any particular upload. */
   function removeGcashProof() {
     const input = document.getElementById('payment-gcash-proof');
     const preview = document.getElementById('payment-gcash-proof-preview');
     const removeBtn = document.getElementById('payment-gcash-proof-remove');
+    const tapHint = document.getElementById('payment-gcash-proof-tap-hint');
     const ocrBox = document.getElementById('payment-gcash-ocr-box');
     const filenameLabel = document.getElementById('payment-gcash-filename');
     if (input) input.value = '';
     if (preview) { preview.src = ''; preview.style.display = 'none'; }
     if (removeBtn) removeBtn.style.display = 'none';
+    if (tapHint) tapHint.style.display = 'none';
     if (ocrBox) { ocrBox.style.display = 'none'; ocrBox.innerHTML = ''; }
     if (filenameLabel) filenameLabel.textContent = 'No file selected';
+
+    ['payment-gcash-date', 'payment-gcash-time', 'payment-gcash-reference', 'payment-gcash-amount'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    _validateGcashAmountPaid(); // reset the red/green amount styling back to neutral
   }
 
   /* ════════════════════════════════════════════════
@@ -1638,7 +1680,7 @@ const MemberModule = (() => {
     cancelPlanRequest, confirmPlanRequest, closePlanSuccessModal,
     closePlanApprovedModal, goToPaymentFromApproval, closePaymentApprovedModal,
     closePlanDeclinedModal, withdrawPlanRequest, cancelWithdrawRequest, confirmWithdrawRequest,
-    togglePaymentProofField, previewGcashProof, removeGcashProof, submitPaymentMethod,
+    togglePaymentProofField, previewGcashProof, removeGcashProof, openGcashProofPreview, submitPaymentMethod,
     copyGcashNumber, deferPaymentMethod,
     cancelSubmitPayment, confirmSubmitPayment, closePaymentSubmitSuccessModal,
     changeProfilePicture,
@@ -1687,6 +1729,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.togglePaymentProofField = (el) => MemberModule.togglePaymentProofField(el);
   window.previewGcashProof       = (input) => MemberModule.previewGcashProof(input);
   window.removeGcashProof        = () => MemberModule.removeGcashProof();
+  window.openGcashProofPreview   = () => MemberModule.openGcashProofPreview();
   window.submitPaymentMethod     = () => MemberModule.submitPaymentMethod();
   window.copyGcashNumber         = (btn) => MemberModule.copyGcashNumber(btn);
   window.deferPaymentMethod      = () => MemberModule.deferPaymentMethod();

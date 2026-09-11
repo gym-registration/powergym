@@ -214,7 +214,20 @@ def _image_has_readable_text(file_path, min_chars=8):
 # deliberately loose (several keyword variants, tolerant spacing).
 _GCASH_REF_RE    = re.compile(r'(?:ref(?:erence)?\.?\s*(?:no\.?|number)?|txn\s*id)\s*[:\-]?\s*([0-9][0-9 ]{9,17}[0-9])', re.IGNORECASE)
 _GCASH_REF_BARE_RE = re.compile(r'\b(\d[\d ]{10,16}\d)\b')  # fallback: any long standalone digit run
-_GCASH_AMOUNT_RE = re.compile(r'(?:total amount|amount sent|amount)?\s*(?:php|₱)\s*([\d,]+\.\d{2})', re.IGNORECASE)
+
+# Tried in order, first match wins. The peso sign (₱) is one of the most
+# commonly *mis-OCR'd* characters on phone-screenshot receipts — Tesseract
+# frequently reads it as a bare "P", "B", or drops it entirely — so unlike
+# the currency-anchored approach that failed in practice, these anchor on
+# the amount LABEL instead and treat the currency symbol as optional.
+# "Total Amount Sent" (the final total, after any transfer fee) is tried
+# before a bare "Amount" line, since that's what the member actually paid.
+_GCASH_AMOUNT_PATTERNS = [
+    re.compile(r'total\s*amount\s*sent\s*[:\-]?\s*(?:php|₱|p|b)?\s*([\d,]+\.\d{2})', re.IGNORECASE),
+    re.compile(r'amount\s*sent\s*[:\-]?\s*(?:php|₱|p|b)?\s*([\d,]+\.\d{2})', re.IGNORECASE),
+    re.compile(r'\bamount\b\s*[:\-]?\s*(?:php|₱|p|b)?\s*([\d,]+\.\d{2})', re.IGNORECASE),
+    re.compile(r'(?:php|₱)\s*([\d,]+\.\d{2})', re.IGNORECASE),  # last resort: bare currency symbol anywhere
+]
 _GCASH_DATE_RE   = re.compile(
     r'\b((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}'
     r'|\d{4}-\d{2}-\d{2}'
@@ -322,9 +335,11 @@ def _extract_gcash_receipt_fields(file_path):
         'name': None,
     }
 
-    m = _GCASH_AMOUNT_RE.search(text_out)
-    if m:
-        result['amount'] = m.group(1)
+    for _amount_pattern in _GCASH_AMOUNT_PATTERNS:
+        m = _amount_pattern.search(text_out)
+        if m:
+            result['amount'] = m.group(1)
+            break
 
     m = _GCASH_REF_RE.search(text_out)
     if not m:
@@ -423,6 +438,46 @@ def _is_promo_payment(p):
     """True if a Payment record represents a promo request rather than a
     regular membership plan request — see _payment_display_plan above."""
     return bool(p and p.notes and p.notes.startswith('Promo request:'))
+
+
+def _member_reported_payment_details(notes):
+    """Pulls just the member-typed GCash context (sender/account name, when
+    they say they paid, how much they say they paid — see
+    /member/submit-payment-method) out of the Payment.notes free-text
+    field, for showing to staff/admin during verification. That same
+    column can also carry an unrelated 'Promo request: <plan>' marker
+    (see _is_promo_payment above), which is filtered out here since it's
+    already surfaced elsewhere as its own badge.
+
+    Returns a dict with keys 'sender', 'time', 'amount' (each omitted if
+    the member didn't fill in that field), split apart instead of one
+    run-on string, so callers can lay each piece out on its own line
+    instead of cramming everything into a single '·'-joined sentence.
+    Returns None if there's nothing member-reported to show."""
+    if not notes:
+        return None
+    parts = [seg.strip() for seg in notes.split('|')]
+    result = {}
+    for seg in parts:
+        if seg.startswith('GCash sender:'):
+            result['sender'] = seg[len('GCash sender:'):].strip()
+        elif seg.startswith('Member-reported payment time:'):
+            result['time'] = seg[len('Member-reported payment time:'):].strip()
+        elif seg.startswith('Member-reported amount paid:'):
+            result['amount'] = seg[len('Member-reported amount paid:'):].strip()
+    return result or None
+
+
+def _parse_peso_amount(s):
+    """Parses a '₱1,234.56'-style string (or plain '1234.56') into a float.
+    Returns None if it isn't parseable, so callers can skip comparisons
+    against a member-typed amount that wasn't a clean number."""
+    if not s:
+        return None
+    try:
+        return float(s.replace('₱', '').replace(',', '').strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def _payment_display_plan(p, fallback='—'):
@@ -3858,7 +3913,16 @@ def member_submit_payment_method():
         if amount_paid:
             note_parts.append(f"Member-reported amount paid: ₱{amount_paid}")
         if note_parts:
-            payment.notes = ' | '.join(note_parts)
+            new_notes = ' | '.join(note_parts)
+            # `notes` also carries the 'Promo request: <plan>' marker that
+            # the admin dashboard's promo badge depends on (see is_promo
+            # below) — overwriting it here would silently drop that badge
+            # the moment a member submits their GCash details. Append
+            # instead of replacing when that marker is already present.
+            if payment.notes and payment.notes.startswith('Promo request:'):
+                payment.notes = payment.notes + ' | ' + new_notes
+            else:
+                payment.notes = new_notes
     else:
         payment.method            = 'Cash'
         payment.reference_number  = None
@@ -6513,24 +6577,38 @@ def admin():
         .order_by(Payment.paid_at.desc())
         .all()
     )
-    pending_payments = [{
-        'id': p.id,
-        'txn': f'TXN-{9000 + p.id}',
-        'member_name': p.member.full_name,
-        'member_profile_picture': url_for('static', filename=p.member.profile_picture) if p.member.profile_picture else None,
-        'plan': _payment_display_plan(p),
-        'is_promo': bool(p.notes and p.notes.startswith('Promo request:')),
-        'method': p.method,
-        'reference': p.reference_number or '—',
-        'amount': f'{float(p.amount):,.2f}',
-        'proof_image_path': p.proof_image_path,
-        'is_student': p.is_student,
-        'student_id_image_path': p.student_id_image_path,
-        'wants_coach': p.wants_coach,
-        'coach_name': p.coach_name,
-        'stage': _payment_stage(p),
-        'staff_viewed': p.staff_viewed,
-    } for p in pending_payments_rows]
+    def _build_pending_payment(p):
+        member_reported = _member_reported_payment_details(p.notes)
+        reported_amount_val = _parse_peso_amount(member_reported.get('amount')) if member_reported else None
+        amount_mismatch = (
+            reported_amount_val is not None
+            and abs(reported_amount_val - float(p.amount)) > 0.01
+        )
+        return {
+            'id': p.id,
+            'txn': f'TXN-{9000 + p.id}',
+            'member_name': p.member.full_name,
+            'member_profile_picture': url_for('static', filename=p.member.profile_picture) if p.member.profile_picture else None,
+            'plan': _payment_display_plan(p),
+            'is_promo': bool(p.notes and p.notes.startswith('Promo request:')),
+            'method': p.method,
+            'reference': p.reference_number or '—',
+            'amount': f'{float(p.amount):,.2f}',
+            'proof_image_path': p.proof_image_path,
+            # Structured (not run-on) member-reported context, plus a flag
+            # so the template can call out a mismatch between what the
+            # member says they paid and the actual amount being charged.
+            'member_reported': member_reported,
+            'amount_mismatch': amount_mismatch,
+            'is_student': p.is_student,
+            'student_id_image_path': p.student_id_image_path,
+            'wants_coach': p.wants_coach,
+            'coach_name': p.coach_name,
+            'stage': _payment_stage(p),
+            'staff_viewed': p.staff_viewed,
+        }
+
+    pending_payments = [_build_pending_payment(p) for p in pending_payments_rows]
 
     # ── Payment history — approved only, same as staff's Recently Processed.
     #    A declined request just disappears from the list; it only shows up

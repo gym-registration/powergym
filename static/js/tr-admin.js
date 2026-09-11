@@ -575,11 +575,23 @@ const AdminModule = (() => {
   /** Show the uploaded payment proof (image or PDF) in a modal before approving/rejecting.
    *  `title` lets callers relabel the modal — e.g. "School ID Proof" vs the
    *  default "Payment Proof" — so the two don't look identical when opened. */
-  function viewPaymentProof(url, title) {
+  /** Opens the payment-proof modal with the receipt image (or a PDF link
+   *  for non-image proofs) and, when an `html` string is supplied (payment
+   *  verification calls it with the same member/plan/method/reference/
+   *  amount + member-reported markup shown on the verification card), an
+   *  info panel below the image showing that same structured breakdown —
+   *  so the admin can compare the screenshot against the submitted
+   *  details, mismatch warning included, without leaving the modal.
+   *  Other callers (profile picture, school ID) simply omit `html` and
+   *  get the old image-only view. The caller is responsible for building
+   *  trusted markup (it's rendered server-side from template data, not
+   *  raw user input), so it's inserted as-is rather than escaped. */
+  function viewPaymentProof(url, title, html) {
     const img     = document.getElementById('proof-modal-img');
     const pdfNote = document.getElementById('proof-modal-pdf-note');
     const pdfLink = document.getElementById('proof-modal-pdf-link');
     const titleEl = document.getElementById('proof-modal-title');
+    const details = document.getElementById('proof-modal-details');
     if (!img || !pdfNote || !pdfLink) return;
 
     if (titleEl) titleEl.textContent = (title || 'Payment Proof').toUpperCase();
@@ -595,6 +607,16 @@ const AdminModule = (() => {
       pdfNote.style.display = 'none';
       img.src = url;
       img.style.display = 'block';
+    }
+
+    if (details) {
+      if (html && html.trim()) {
+        details.innerHTML = html;
+        details.style.display = 'block';
+      } else {
+        details.innerHTML = '';
+        details.style.display = 'none';
+      }
     }
 
     openModal('view-proof-modal');

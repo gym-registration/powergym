@@ -124,6 +124,11 @@
                 <div style="font-size:13px;color:var(--muted);">
                   {% if p.stage == 'approval' %}New plan request{% else %}{{ p.method }} · Ref: {{ p.reference }}{% endif %} · Txn: #{{ p.txn }} · ₱{{ p.amount }}
                 </div>
+                {% if p.amount_mismatch %}
+                <div style="font-size:12px;color:var(--red);font-weight:600;margin-top:4px;">⚠️ Member-reported amount doesn't match — see View Proof for details</div>
+                {% elif p.member_reported %}
+                <div style="font-size:12px;color:var(--muted);margin-top:4px;">📝 Member-reported details available — see View Proof</div>
+                {% endif %}
                 <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
                   {% if p.is_promo %}<span class="badge badge-gold">🎁 Promo</span>{% endif %}
                   {% if p.stage == 'approval' %}
@@ -255,6 +260,11 @@
               <div style="font-size:13px;color:var(--muted);">
                 {% if p.stage == 'approval' %}New plan request{% else %}{{ p.method }} · Ref: {{ p.reference }}{% endif %} · Txn: #{{ p.txn }} · ₱{{ p.amount }}
               </div>
+              {% if p.amount_mismatch %}
+              <div style="font-size:12px;color:var(--red);font-weight:600;margin-top:4px;">⚠️ Member-reported amount doesn't match — see View Proof for details</div>
+              {% elif p.member_reported %}
+              <div style="font-size:12px;color:var(--muted);margin-top:4px;">📝 Member-reported details available — see View Proof</div>
+              {% endif %}
               <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
                 {% if p.is_promo %}<span class="badge badge-gold">🎁 Promo</span>{% endif %}
                 {% if p.stage == 'approval' %}
@@ -277,7 +287,39 @@
             </div>
             <div style="display:flex;gap:8px;">
               {% if p.proof_image_path %}
-              <button class="btn btn-sm btn-outline" data-proof-url="{{ url_for('static', filename=p.proof_image_path) }}" onclick="viewPaymentProof(this.dataset.proofUrl)">👁 View Proof</button>
+              {% set proof_html %}
+<div style='font-weight:600;margin-bottom:8px;font-size:15px;color:var(--white);'>{{ p.member_name }} — {{ p.plan }}</div>
+{% if p.stage == 'approval' %}
+<div style='font-size:13px;color:var(--muted);'>New plan request · Txn: #{{ p.txn }} · ₱{{ p.amount }}</div>
+{% else %}
+<div class='payment-fact-grid'>
+  <div class='payment-fact'><span class='payment-fact-label'>Method</span><span class='payment-fact-value'>{{ p.method }}</span></div>
+  <div class='payment-fact'><span class='payment-fact-label'>Reference</span><span class='payment-fact-value'>{{ p.reference }}</span></div>
+  <div class='payment-fact'><span class='payment-fact-label'>Txn ID</span><span class='payment-fact-value'>#{{ p.txn }}</span></div>
+  <div class='payment-fact'><span class='payment-fact-label'>Amount Charged</span><span class='payment-fact-value'>₱{{ p.amount }}</span></div>
+</div>
+{% endif %}
+{% if p.member_reported %}
+<div class='member-reported-box'>
+  <div class='member-reported-title'>📝 Member-Reported Details</div>
+  {% if p.member_reported.sender %}
+  <div class='member-reported-row'><span class='member-reported-label'>Sender Name</span><span class='member-reported-value'>{{ p.member_reported.sender }}</span></div>
+  {% endif %}
+  {% if p.member_reported.time %}
+  <div class='member-reported-row'><span class='member-reported-label'>Payment Time</span><span class='member-reported-value'>{{ p.member_reported.time }}</span></div>
+  {% endif %}
+  {% if p.member_reported.amount %}
+  <div class='member-reported-row{% if p.amount_mismatch %} mismatch{% endif %}'><span class='member-reported-label'>Amount Paid</span><span class='member-reported-value'>{{ p.member_reported.amount }}</span></div>
+  {% endif %}
+  {% if p.amount_mismatch %}
+  <div class='member-reported-mismatch-note'>⚠️ Reported amount doesn't match the ₱{{ p.amount }} being charged — double-check before confirming.</div>
+  {% endif %}
+</div>
+{% endif %}
+{% endset %}
+              <button class="btn btn-sm btn-outline" data-proof-url="{{ url_for('static', filename=p.proof_image_path) }}"
+                      data-proof-context="{{ proof_html }}"
+                      onclick="viewPaymentProof(this.dataset.proofUrl, 'Payment Proof', this.dataset.proofContext)">👁 View Proof</button>
               {% endif %}
               {% if p.is_student and p.student_id_image_path %}
               <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof')">🎓 View School ID</button>
@@ -875,6 +917,7 @@
         <p style="color:var(--muted);font-size:15px;margin-bottom:16px;">This proof was uploaded as a PDF file.</p>
         <a id="proof-modal-pdf-link" href="#" target="_blank" class="btn btn-red" style="display:inline-block;">OPEN PDF</a>
       </div>
+      <div id="proof-modal-details" style="display:none;text-align:left;font-size:14px;color:var(--muted);line-height:1.7;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:16px;"></div>
     </div>
   </div>
 </div>

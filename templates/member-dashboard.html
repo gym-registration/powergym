@@ -477,7 +477,9 @@
                         <span class="gcash-upload-filename" id="payment-gcash-filename">No file selected</span>
                       </div>
                       <div class="proof-preview-wrap">
-                        <img id="payment-gcash-proof-preview" class="proof-preview" alt="GCash proof preview" style="display:none;">
+                        <img id="payment-gcash-proof-preview" class="proof-preview" alt="GCash proof preview"
+                             style="display:none;" onclick="openGcashProofPreview()">
+                        <div class="gcash-qr-tap-hint" id="payment-gcash-proof-tap-hint" style="display:none;">Tap to enlarge</div>
                         <button type="button" id="payment-gcash-proof-remove" class="proof-remove-btn"
                                 style="display:none;" onclick="removeGcashProof()">✕ Remove &amp; replace</button>
                       </div>
@@ -514,12 +516,16 @@
 
                     <div class="form-group">
                       <label class="form-label">Amount Paid</label>
-                      <input class="form-input gcash-amount-input" type="text" inputmode="decimal"
-                             id="payment-gcash-amount" data-required="{{ pending_payment.amount }}"
-                             placeholder="e.g. {{ pending_payment.amount }}">
+                      <div class="gcash-amount-input-wrap">
+                        <span class="gcash-amount-prefix" id="payment-gcash-amount-prefix">₱</span>
+                        <input class="form-input gcash-amount-input" type="text" inputmode="decimal"
+                               id="payment-gcash-amount" data-required="{{ pending_payment.amount }}"
+                               placeholder="0.00">
+                      </div>
                       <div style="font-size:12px;color:var(--muted);margin-top:4px;">
                         Amount required: <strong style="color:var(--white);">₱{{ pending_payment.amount }}</strong> ·
                         auto-filled from your receipt when we can read it — double-check it matches before submitting.
+                        <span id="payment-gcash-amount-status"></span>
                       </div>
                     </div>
                   </div>
@@ -1401,6 +1407,20 @@
   </div>
 </div>
 {% endif %}
+
+<!-- Enlarged view of the receipt screenshot the member just uploaded,
+     opened by tapping the small preview thumbnail on the Payment tab.
+     Unlike the QR modal above, the image src isn't known at page-render
+     time (it's whatever file the member picks), so it's copied in by
+     openGcashProofPreview() in tr-member.js right before this opens. -->
+<div class="modal-overlay" id="gcash-proof-view-modal">
+  <div class="modal" style="max-width:340px;text-align:center;">
+    <button class="modal-close" onclick="closeModal('gcash-proof-view-modal')">✕</button>
+    <div class="modal-title" style="margin-bottom:14px;">YOUR RECEIPT</div>
+    <img id="gcash-proof-view-img" src="" alt="Uploaded GCash receipt"
+         style="width:100%;max-width:280px;border-radius:10px;">
+  </div>
+</div>
 
 <!-- Payment reminder — opened from the "View Payment Reminder" button on
      the GCash payment card. -->
