@@ -714,6 +714,14 @@
                 <div class="plan-name">BODY RECOMPOSITION</div>
                 <div class="fw-goal-desc">Work toward improving muscle mass while reducing body fat.</div>
               </div>
+              <div class="plan-card" data-goal="STRENGTH" onclick="selectFitnessGoal(this)">
+                <div class="plan-name">STRENGTH & PERFORMANCE</div>
+                <div class="fw-goal-desc">Focus on increasing strength and improving overall physical performance.</div>
+              </div>
+              <div class="plan-card" data-goal="ENDURANCE" onclick="selectFitnessGoal(this)">
+                <div class="plan-name">ENDURANCE & CONDITIONING</div>
+                <div class="fw-goal-desc">Improve stamina, cardiovascular endurance, and overall physical conditioning.</div>
+              </div>
             </div>
 
             <button class="btn btn-red" style="width:100%;margin-top:16px;" id="fw-step2-btn" onclick="submitFitnessStep2()" disabled>CONTINUE</button>
@@ -871,12 +879,16 @@
             <div class="fp-tab-panel" id="fp-panel-workouts" data-fp-panel="workouts" style="display:none;">
               <div style="font-size:13px;color:var(--muted);margin-bottom:14px;" id="fp-workout-frequency"></div>
 
-              <!-- Day 1–7 navigation, styled like the top-level plan tabs
-                   so it reads as "tabs within a tab" — only one day's
-                   content is shown at a time to avoid a long scroll. -->
-              <div class="fp-day-tabs" id="fp-day-tabs" role="tablist"></div>
+              <!-- Level 1: personalized workout day cards. Clicking a day
+                   reveals that day's exact exercises (Level 2) below. -->
+              <div class="fp-card-grid" id="fp-day-cards"></div>
 
-              <div id="fp-day-panels"></div>
+              <!-- Level 2: exercises for the selected day only. -->
+              <div id="fp-day-detail" style="display:none;">
+                <button type="button" class="btn btn-outline btn-sm" style="margin-bottom:14px;" onclick="backToWorkoutDays()">← BACK TO WORKOUT DAYS</button>
+                <div class="fp-day-focus" id="fp-day-detail-title"></div>
+                <div class="fp-card-grid" id="fp-day-detail-exercises"></div>
+              </div>
             </div>
 
             <!-- EQUIPMENT -->
@@ -1177,10 +1189,52 @@
 <div class="modal-overlay" id="exercise-instructions-modal">
   <div class="modal">
     <button class="modal-close" onclick="closeModal('exercise-instructions-modal')">✕</button>
-    <div class="modal-title" style="text-align:center;" id="exercise-instructions-modal-title">EXERCISE</div>
+
+    <div style="font-size:45px;text-align:center;margin-bottom:6px;" id="exercise-modal-icon">🏋️</div>
+    <div class="modal-title" style="text-align:center;margin-bottom:4px;" id="exercise-instructions-modal-title">EXERCISE</div>
     <div style="font-size:15px;color:var(--muted);text-align:center;margin-bottom:18px;" id="exercise-instructions-modal-subtitle"></div>
-    <div class="panel-title" style="margin-bottom:4px;">Step-by-step instructions</div>
-    <ol class="exercise-instructions-list" id="exercise-instructions-modal-steps"></ol>
+
+    <!-- Quick stats: Sets / Reps / Equipment -->
+    <div class="fp-summary-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px;">
+      <div class="stat-card red fp-stat-compact">
+        <div class="stat-value" id="exercise-modal-sets">—</div>
+        <div class="stat-label">Sets</div>
+      </div>
+      <div class="stat-card blue fp-stat-compact">
+        <div class="stat-value" id="exercise-modal-reps">—</div>
+        <div class="stat-label">Reps</div>
+      </div>
+      <div class="stat-card gold fp-stat-compact">
+        <div class="stat-value" id="exercise-modal-equipment">None</div>
+        <div class="stat-label">Equipment</div>
+      </div>
+    </div>
+
+    <!-- Muscle Focus / How to Do -->
+    <div class="fp-tabs" role="tablist" style="margin-bottom:14px;">
+      <button type="button" class="fp-tab-btn active" data-ex-tab="muscle" onclick="switchExerciseDetailTab('muscle', this)">MUSCLE FOCUS</button>
+      <button type="button" class="fp-tab-btn" data-ex-tab="howto" onclick="switchExerciseDetailTab('howto', this)">HOW TO DO</button>
+    </div>
+
+    <div class="fp-tab-panel" data-ex-panel="muscle">
+      <div class="goal-item">
+        <div class="goal-header"><span class="goal-label">Main Area</span><span class="goal-val red" id="exercise-modal-main-area">—</span></div>
+      </div>
+      <div class="goal-item" id="exercise-modal-subtarget-row">
+        <div class="goal-header"><span class="goal-label">Sub-target Muscle</span><span class="goal-val" id="exercise-modal-subtarget">—</span></div>
+      </div>
+      <div class="goal-item" id="exercise-modal-specific-row" style="display:none;">
+        <div class="goal-header"><span class="goal-label">Specific Target</span><span class="goal-val" id="exercise-modal-specific">—</span></div>
+      </div>
+      <div style="font-size:14px;color:var(--muted);line-height:1.6;" id="exercise-modal-purpose"></div>
+    </div>
+
+    <div class="fp-tab-panel" data-ex-panel="howto" style="display:none;">
+      <div class="panel-title" style="margin-bottom:4px;">Step-by-step instructions</div>
+      <ol class="exercise-instructions-list" id="exercise-instructions-modal-steps"></ol>
+    </div>
+
+    <button type="button" class="btn btn-red" style="width:100%;margin-top:8px;" onclick="closeModal('exercise-instructions-modal')">DONE</button>
   </div>
 </div>
 

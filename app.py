@@ -1060,7 +1060,7 @@ class FitnessProfile(db.Model):
     height_cm          = db.Column(db.Numeric(5, 2), nullable=False)
     sex                = db.Column(db.String(10), nullable=False)   # 'male' | 'female'
     activity_level     = db.Column(db.String(20), nullable=False)   # 'low_activity' | 'moderate_activity' | 'high_activity'
-    fitness_goal       = db.Column(db.String(10), nullable=True)    # 'CUT' | 'BULK' | 'MAINTAIN' | 'RECOMP' — NULL until Step 2 is completed
+    fitness_goal       = db.Column(db.String(10), nullable=True)    # 'CUT' | 'BULK' | 'MAINTAIN' | 'RECOMP' | 'STRENGTH' | 'ENDURANCE' — NULL until Step 2 is completed
     created_at         = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at         = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
                                     onupdate=lambda: datetime.now(timezone.utc))
@@ -2679,7 +2679,7 @@ FITNESS_HEIGHT_CM_MIN, FITNESS_HEIGHT_CM_MAX = 100.0, 250.0
 FITNESS_WEIGHT_KG_MIN, FITNESS_WEIGHT_KG_MAX = 20.0, 300.0
 FITNESS_VALID_SEXES           = {'male', 'female'}
 FITNESS_VALID_ACTIVITY_LEVELS = {'low_activity', 'moderate_activity', 'high_activity'}
-FITNESS_VALID_GOALS           = {'CUT', 'BULK', 'MAINTAIN', 'RECOMP'}
+FITNESS_VALID_GOALS           = {'CUT', 'BULK', 'MAINTAIN', 'RECOMP', 'STRENGTH', 'ENDURANCE'}
 
 
 def _valid_fitness_height(height_cm):
@@ -2715,10 +2715,12 @@ FITNESS_ACTIVITY_MULTIPLIERS = {
     'high_activity':     1.80,  # combines former Very Active (1.725) + Extra Active (1.90)
 }
 FITNESS_GOAL_CALORIE_OFFSETS = {
-    'CUT':      -500,
-    'BULK':      300,
-    'MAINTAIN':    0,
-    'RECOMP':   -200,
+    'CUT':        -500,
+    'BULK':        300,
+    'MAINTAIN':      0,
+    'RECOMP':     -200,
+    'STRENGTH':    200,  # modest surplus — enough fuel for progressive-overload training without full BULK-level mass gain
+    'ENDURANCE':     0,  # maintenance calories — conditioning/stamina focus, not a weight-change goal
 }
 FITNESS_MIN_CALORIES = {'male': 1500, 'female': 1200}
 FITNESS_PROTEIN_G_PER_KG = 1.6
@@ -2800,6 +2802,16 @@ FITNESS_GOAL_TIPS = {
         'Prioritize protein intake and resistance training to support muscle growth while in a modest deficit.',
         'Progress may be slower than a dedicated CUT or BULK — track trends over weeks, not days.',
         'Consistency with both training and nutrition matters more than perfection on any single day.',
+    ],
+    'STRENGTH': [
+        'Focus on progressive overload — gradually increasing weight, reps, or sets over time.',
+        'Prioritize compound lifts and allow adequate rest between sets for full effort on each one.',
+        'Eat enough to fuel your training and prioritize recovery, including sleep, between sessions.',
+    ],
+    'ENDURANCE': [
+        'Build up training volume and duration gradually to improve cardiovascular capacity safely.',
+        'Keep carbohydrate intake steady to fuel longer training sessions and support recovery.',
+        'Mix in some resistance training to support overall conditioning, not just cardio alone.',
     ],
 }
 
@@ -2945,14 +2957,33 @@ def _recommend_meal_plan(calorie_target, protein_target_g):
     }
 
 
+# Strength & Performance and Endurance & Conditioning were added as new
+# fitness goals, but the ~100+ row Exercise catalog's goal_tags column is
+# intentionally left untouched (existing workout taxonomy, per project
+# scope) rather than re-tagging every row. Instead, each new goal is
+# aliased to whichever existing tag family already matches its intent:
+#   - STRENGTH  -> BULK   (BULK-tagged rows are exclusively resistance/
+#                  compound-lift work, never cardio — a good fit for a
+#                  strength/performance focus)
+#   - ENDURANCE -> CUT    (every cardio-machine exercise in the catalog is
+#                  tagged CUT, and no cardio exercise is tagged BULK)
+# This keeps exercise selection fully functional for the new goals without
+# changing a single Exercise row, the schedule, reps, or equipment logic.
+FITNESS_GOAL_EXERCISE_TAG_ALIAS = {
+    'STRENGTH':  'BULK',
+    'ENDURANCE': 'CUT',
+}
+
+
 def _goal_tagged_exercises(goal):
     """All active Exercise rows tagged for this goal, in stable catalog
     order (by id). Single source of truth for "which exercises match a
     goal" — used by both the flat top-N Workouts list and the weekly
     routine generator below, so there is exactly one filtering rule."""
+    tag = FITNESS_GOAL_EXERCISE_TAG_ALIAS.get(goal, goal)
     return [
         e for e in Exercise.query.filter_by(is_active=True).order_by(Exercise.id).all()
-        if goal in (e.goal_tags or '').split(',')
+        if tag in (e.goal_tags or '').split(',')
     ]
 
 
@@ -3016,7 +3047,7 @@ def _pick_day_exercises(goal_exercises, primary_areas,
     return selected[:max_count]
 
 
-def _recommend_weekly_routine(goal, activity_level):
+def _recommend_weekly_routine(goal, activity_level, max_days=None):
     """Builds the 7-day training/rest schedule from the existing Exercise
     catalog only — no new table, no AI. The SCHEDULE itself (which days
     train, which day rests, and each day's muscle-group focus) is now
@@ -3030,17 +3061,30 @@ def _recommend_weekly_routine(goal, activity_level):
     never contain an exercise from an unrelated Main Area. activity_level
     now ONLY controls the displayed set count per exercise (see
     FITNESS_ACTIVITY_SET_TIER) — it never changes the schedule and never
-    changes reps (always Exercise.default_reps, verbatim). Returns
-    (routine_dict_for_json, all_exercise_objs_actually_used) — the second
-    value lets the caller compute equipment from exactly what's in the
-    routine, not a separate/stale list."""
+    changes reps (always Exercise.default_reps, verbatim).
+
+    max_days optionally caps how many days of the fixed schedule are
+    actually generated — used so a member's visible workout plan never
+    extends beyond their current membership's day count (e.g. a 1-day
+    Daily plan only ever shows Day 1, while a Monthly/Yearly plan's
+    duration comfortably covers the full 7-day cycle so nothing changes
+    for them). FITNESS_WEEKLY_SCHEDULE itself and _pick_day_exercises()
+    are completely unchanged — this only controls how many of the
+    schedule's fixed days get iterated over. None (the default) means no
+    cap, i.e. the existing full-week behavior.
+
+    Returns (routine_dict_for_json, all_exercise_objs_actually_used) — the
+    second value lets the caller compute equipment from exactly what's in
+    the routine, not a separate/stale list."""
     sets_count = FITNESS_ACTIVITY_SET_TIER.get(activity_level, 3)
     goal_exercises = _goal_tagged_exercises(goal)
+
+    schedule = FITNESS_WEEKLY_SCHEDULE if max_days is None else FITNESS_WEEKLY_SCHEDULE[:max(max_days, 0)]
 
     days = []
     used_exercises = []
 
-    for day_number, (day_type, focus_name, focus_areas) in enumerate(FITNESS_WEEKLY_SCHEDULE, start=1):
+    for day_number, (day_type, focus_name, focus_areas) in enumerate(schedule, start=1):
         if day_type == 'rest':
             days.append({
                 'day_number': day_number,
@@ -3076,8 +3120,8 @@ def _recommend_weekly_routine(goal, activity_level):
             ],
         })
 
-    training_days = sum(1 for day_type, _, _ in FITNESS_WEEKLY_SCHEDULE if day_type == 'train')
-    rest_days = sum(1 for day_type, _, _ in FITNESS_WEEKLY_SCHEDULE if day_type == 'rest')
+    training_days = sum(1 for day_type, _, _ in schedule if day_type == 'train')
+    rest_days = sum(1 for day_type, _, _ in schedule if day_type == 'rest')
 
     return {
         'training_days': training_days,
@@ -4789,9 +4833,10 @@ def member_fitness_save_profile():
 def member_fitness_save_goal():
     """Step 2 — Fitness Goal Selection.
     Requires Step 1 (FitnessProfile) to already exist. Stores the member's
-    chosen goal as one of CUT / BULK / MAINTAIN / RECOMP — no goal-history
-    table; this is always just the current active goal, same as how the
-    rest of the schema tracks a member's current Membership."""
+    chosen goal as one of CUT / BULK / MAINTAIN / RECOMP / STRENGTH /
+    ENDURANCE — no goal-history table; this is always just the current
+    active goal, same as how the rest of the schema tracks a member's
+    current Membership."""
     if 'user_id' not in session or session.get('role') != 'member':
         return jsonify(success=False, error='Not logged in.'), 401
 
@@ -4925,7 +4970,22 @@ def member_fitness_recommendations():
         protein_target_g=body_goal.protein_target_g,
     )
     workouts, _flat_exercise_objs = _recommend_workouts(profile.fitness_goal, profile.activity_level)
-    weekly_routine, routine_exercise_objs = _recommend_weekly_routine(profile.fitness_goal, profile.activity_level)
+
+    # Cap the visible workout schedule to the member's current membership
+    # plan's day count — e.g. a 1-day Daily plan only ever shows a Day 1
+    # workout card, while Monthly/Yearly plans comfortably cover the full
+    # 7-day cycle so nothing changes for them. Mirrors the exact same
+    # "days_total" calculation already used for the Days Left/Current Plan
+    # display elsewhere on the member dashboard, so this always agrees
+    # with what the member sees there.
+    membership = Membership.query.filter_by(member_id=user.id).first()
+    plan_days_total = None
+    if membership and membership.start_date and membership.expiry_date:
+        plan_days_total = max((membership.expiry_date - membership.start_date).days, 1)
+
+    weekly_routine, routine_exercise_objs = _recommend_weekly_routine(
+        profile.fitness_goal, profile.activity_level, max_days=plan_days_total
+    )
     # Equipment reflects exactly what's in the weekly routine the member
     # actually sees now, not the older flat top-N list.
     equipment = _recommend_equipment(routine_exercise_objs)

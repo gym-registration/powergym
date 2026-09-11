@@ -24,6 +24,7 @@ const MemberModule = (() => {
   let _servicesById   = {};   // id  -> {id,name,description,image_path,category,icon,equipment:[{name,icon}]}
   let _equipmentById  = {};   // id  -> {id,name,description,image_path,category,icon} — used by the machine "how-to-use" guide modal
   let _exercisesById  = {};   // id  -> exercise object (populated when the weekly routine renders)
+  let _routineDaysById = {};  // day_number -> day object {day_number,type,focus,note,exercises} (populated when the weekly routine renders)
 
   let _selectedPlanKey   = null;
   let _selectedPromoIndex = null; // index into _promosList of the currently-availed promo, or null
@@ -32,7 +33,7 @@ const MemberModule = (() => {
   let _pendingPaymentMethod = null; // { formData } staged between submitPaymentMethod() and confirmSubmitPayment()
   let _withdrawPaymentId = null;
 
-  let _fitnessGoal = null; // currently-selected goal in the Step 2 grid ('CUT'|'BULK'|'MAINTAIN'|'RECOMP')
+  let _fitnessGoal = null; // currently-selected goal in the Step 2 grid ('CUT'|'BULK'|'MAINTAIN'|'RECOMP'|'STRENGTH'|'ENDURANCE')
 
   // Attendance calendar month navigation state
   let _attYear = null;
@@ -47,10 +48,26 @@ const MemberModule = (() => {
   };
 
   const GOAL_LABELS = {
-    CUT:      'CUT',
-    BULK:     'BULK',
-    MAINTAIN: 'MAINTAIN',
-    RECOMP:   'BODY RECOMPOSITION',
+    CUT:        'CUT',
+    BULK:       'BULK',
+    MAINTAIN:   'MAINTAIN',
+    RECOMP:     'BODY RECOMPOSITION',
+    STRENGTH:   'STRENGTH & PERFORMANCE',
+    ENDURANCE:  'ENDURANCE & CONDITIONING',
+  };
+
+  // Purely decorative — keyed off the existing official target_area values
+  // only (Chest/Shoulders/Back/Arms/Legs/Core/Full Body). Falls back to a
+  // generic dumbbell icon for anything unrecognized, so this never blocks
+  // rendering if the taxonomy is extended later.
+  const TARGET_AREA_ICONS = {
+    Chest:       '🎽',
+    Shoulders:   '🤸',
+    Back:        '🦾',
+    Arms:        '💪',
+    Legs:        '🦵',
+    Core:        '🧱',
+    'Full Body': '🏃',
   };
 
   /* ── Init ─────────────────────────────────────────────── */
@@ -1314,10 +1331,30 @@ const MemberModule = (() => {
     const ex = _exercisesById[exerciseId];
     if (!ex) return;
 
+    document.getElementById('exercise-modal-icon').textContent = TARGET_AREA_ICONS[ex.target_area] || '🏋️';
     document.getElementById('exercise-instructions-modal-title').textContent = (ex.name || 'EXERCISE').toUpperCase();
     const subParts = [ex.target_area, ex.sub_target].filter(Boolean);
     document.getElementById('exercise-instructions-modal-subtitle').textContent = subParts.join(' · ');
 
+    // Quick stats
+    _setText('exercise-modal-sets', ex.sets || '—');
+    _setText('exercise-modal-reps', ex.reps || '—');
+    _setText('exercise-modal-equipment', ex.equipment_name || 'None');
+
+    // Muscle Focus tab — Main Area / Sub-target / Specific Target, per the
+    // existing official taxonomy on the exercise itself (never modified,
+    // only displayed).
+    _setText('exercise-modal-main-area', ex.target_area || '—');
+    const subRow = document.getElementById('exercise-modal-subtarget-row');
+    if (subRow) subRow.style.display = ex.sub_target ? '' : 'none';
+    _setText('exercise-modal-subtarget', ex.sub_target || '—');
+    const specificRow = document.getElementById('exercise-modal-specific-row');
+    if (specificRow) specificRow.style.display = ex.specific_target ? '' : 'none';
+    _setText('exercise-modal-specific', ex.specific_target || '—');
+    const purposeEl = document.getElementById('exercise-modal-purpose');
+    if (purposeEl) purposeEl.textContent = ex.purpose || '';
+
+    // How to Do tab
     const list = document.getElementById('exercise-instructions-modal-steps');
     if (list) {
       const steps = (ex.instructions || '').split('\n').map(s => s.trim()).filter(Boolean);
@@ -1326,7 +1363,18 @@ const MemberModule = (() => {
         : '<li>No detailed instructions available for this exercise yet.</li>';
     }
 
+    // Always open back on the Muscle Focus tab
+    switchExerciseDetailTab('muscle', document.querySelector('[data-ex-tab="muscle"]'));
+
     openModal('exercise-instructions-modal');
+  }
+
+  function switchExerciseDetailTab(tabName, btnEl) {
+    document.querySelectorAll('#exercise-instructions-modal [data-ex-tab]').forEach(b => b.classList.remove('active'));
+    if (btnEl) btnEl.classList.add('active');
+    document.querySelectorAll('#exercise-instructions-modal [data-ex-panel]').forEach(p => {
+      p.style.display = p.dataset.exPanel === tabName ? '' : 'none';
+    });
   }
 
   /* ════════════════════════════════════════════════
@@ -1534,7 +1582,7 @@ const MemberModule = (() => {
     _renderMealPlan(data.meal_plan);
 
     // Workouts (day-by-day)
-    _renderWeeklyRoutine(data.weekly_routine, data.workouts);
+    _renderWeeklyRoutine(data.weekly_routine, data.workouts, data.plan_days_note);
 
     // Equipment
     const eqList = document.getElementById('fp-equipment-list');
@@ -1607,7 +1655,7 @@ const MemberModule = (() => {
     }
   }
 
-  function _renderWeeklyRoutine(routine, workouts) {
+  function _renderWeeklyRoutine(routine, workouts, planDaysNote) {
     const freqEl = document.getElementById('fp-workout-frequency');
     if (freqEl) {
       freqEl.textContent = (workouts && workouts.frequency_note)
@@ -1615,55 +1663,95 @@ const MemberModule = (() => {
         : (routine ? `${routine.training_days} training day${routine.training_days == 1 ? '' : 's'}, ${routine.rest_days} rest day${routine.rest_days == 1 ? '' : 's'} per week.` : '');
     }
 
-    const tabsEl = document.getElementById('fp-day-tabs');
-    const panelsEl = document.getElementById('fp-day-panels');
-    if (!tabsEl || !panelsEl) return;
+    const planNoteEl = document.getElementById('fp-workout-plan-note');
+    if (planNoteEl) planNoteEl.textContent = planDaysNote || '';
+
+    const cardsEl = document.getElementById('fp-day-cards');
+    const detailEl = document.getElementById('fp-day-detail');
+    if (!cardsEl) return;
+
+    // Always land back on the day-cards view whenever the plan (re)loads —
+    // e.g. after switching goals — rather than staying on a stale day.
+    if (detailEl) detailEl.style.display = 'none';
+    cardsEl.style.display = '';
 
     if (!routine || !routine.days || !routine.days.length) {
-      tabsEl.innerHTML = '';
-      panelsEl.innerHTML = '<div style="color:var(--muted);">No workout routine available yet.</div>';
+      cardsEl.innerHTML = '<div style="color:var(--muted);">No workout routine available yet.</div>';
       return;
     }
 
     _exercisesById = {};
-    routine.days.forEach(day => (day.exercises || []).forEach(e => { _exercisesById[e.id] = e; }));
-
-    tabsEl.innerHTML = routine.days.map(day => `
-      <button type="button" class="fp-tab-btn${day.day_number === 1 ? ' active' : ''}" data-fp-day="${day.day_number}">
-        Day ${day.day_number}${day.type === 'rest' ? ' · Rest' : ''}
-      </button>`).join('');
-
-    panelsEl.innerHTML = routine.days.map(day => `
-      <div class="fp-day-panel" data-fp-day-panel="${day.day_number}" style="${day.day_number === 1 ? '' : 'display:none;'}">
-        <div class="panel-title" style="font-size:16px;margin-bottom:10px;">${_esc(day.focus)}</div>
-        ${day.type === 'rest'
-          ? `<div style="font-size:15px;color:var(--muted);">${_esc(day.note || '')}</div>`
-          : `<div class="fp-card-grid">${(day.exercises || []).map(e => `
-              <div class="fp-card" data-exercise-id="${e.id}">
-                <div class="fp-card-title">🏋️ ${_esc(e.name)}</div>
-                <div class="fp-card-note">${_esc(e.target_area || '')}${e.sub_target ? ' · ' + _esc(e.sub_target) : ''}</div>
-                <div class="fp-card-note">${_esc(e.sets)} sets × ${_esc(e.reps)} reps${e.equipment_name ? ' · ' + _esc(e.equipment_name) : ''}</div>
-                <button type="button" class="btn btn-outline btn-sm fp-view-instructions-btn" style="margin-top:8px;" data-exercise-id="${e.id}">VIEW INSTRUCTIONS</button>
-              </div>`).join('')}
-            </div>`}
-      </div>`).join('');
-
-    // Event delegation for the "View Instructions" buttons — avoids
-    // fragile inline-onclick string escaping for exercise data.
-    panelsEl.querySelectorAll('.fp-view-instructions-btn').forEach(btn => {
-      btn.addEventListener('click', () => openExerciseInstructionsModal(Number(btn.dataset.exerciseId)));
+    _routineDaysById = {};
+    routine.days.forEach(day => {
+      _routineDaysById[day.day_number] = day;
+      (day.exercises || []).forEach(e => { _exercisesById[e.id] = e; });
     });
 
-    tabsEl.querySelectorAll('[data-fp-day]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const dayNum = btn.dataset.fpDay;
-        tabsEl.querySelectorAll('[data-fp-day]').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        panelsEl.querySelectorAll('[data-fp-day-panel]').forEach(p => {
-          p.style.display = p.dataset.fpDayPanel === dayNum ? '' : 'none';
-        });
+    // Level 1 — personalized workout day cards, exactly as many as the
+    // fixed FITNESS_WEEKLY_SCHEDULE defines (7), each showing the day's
+    // focus and how many exercises it contains.
+    cardsEl.innerHTML = routine.days.map(day => {
+      const exerciseCount = (day.exercises || []).length;
+      return `
+      <div class="fp-card fp-day-card${day.type === 'rest' ? ' fp-day-card-rest' : ''}" data-day-number="${day.day_number}">
+        <div class="fp-day-card-number">DAY ${day.day_number}</div>
+        <div class="fp-day-card-focus">${day.type === 'rest' ? '😴' : '🏋️'} ${_esc(day.focus)}</div>
+        <div class="fp-day-card-meta">${day.type === 'rest' ? 'Rest Day' : `${exerciseCount} exercise${exerciseCount === 1 ? '' : 's'}`}</div>
+      </div>`;
+    }).join('');
+
+    cardsEl.querySelectorAll('.fp-day-card').forEach(card => {
+      card.addEventListener('click', () => openWorkoutDay(Number(card.dataset.dayNumber)));
+    });
+  }
+
+  // Level 2 — the exact exercises for one workout day, sourced only from
+  // that day's own routine data (already scoped by _pick_day_exercises()
+  // server-side to that day's Main Areas — nothing re-filtered here).
+  function openWorkoutDay(dayNumber) {
+    const day = _routineDaysById[dayNumber];
+    if (!day) return;
+
+    const cardsEl = document.getElementById('fp-day-cards');
+    const detailEl = document.getElementById('fp-day-detail');
+    const titleEl = document.getElementById('fp-day-detail-title');
+    const listEl = document.getElementById('fp-day-detail-exercises');
+    if (!detailEl || !listEl) return;
+
+    if (titleEl) titleEl.textContent = `Day ${day.day_number} — ${day.focus}`;
+
+    if (day.type === 'rest') {
+      listEl.innerHTML = `
+        <div class="fp-rest-card" style="grid-column:1/-1;">
+          <div class="fp-rest-label">😴 REST DAY</div>
+          <div class="fp-rest-note">${_esc(day.note || '')}</div>
+        </div>`;
+    } else {
+      listEl.innerHTML = (day.exercises || []).map(e => `
+        <div class="fp-card" data-exercise-id="${e.id}" style="cursor:pointer;">
+          <div class="fp-exercise-header">
+            <div class="fp-exercise-name">${TARGET_AREA_ICONS[e.target_area] || '🏋️'} ${_esc(e.name)}</div>
+            <span class="fp-exercise-area">${_esc(e.target_area || '')}</span>
+          </div>
+          ${e.sub_target ? `<div class="fp-exercise-subtarget">${_esc(e.sub_target)}</div>` : ''}
+          <div class="fp-exercise-sets">${_esc(e.sets)} sets × ${_esc(e.reps)}</div>
+          ${e.equipment_name ? `<div class="fp-exercise-equipment">🧰 ${_esc(e.equipment_name)}</div>` : ''}
+        </div>`).join('');
+
+      listEl.querySelectorAll('[data-exercise-id]').forEach(card => {
+        card.addEventListener('click', () => openExerciseInstructionsModal(Number(card.dataset.exerciseId)));
       });
-    });
+    }
+
+    if (cardsEl) cardsEl.style.display = 'none';
+    detailEl.style.display = '';
+  }
+
+  function backToWorkoutDays() {
+    const cardsEl = document.getElementById('fp-day-cards');
+    const detailEl = document.getElementById('fp-day-detail');
+    if (detailEl) detailEl.style.display = 'none';
+    if (cardsEl) cardsEl.style.display = '';
   }
 
   function switchFitnessPlanTab(tabName, btnEl) {
@@ -1687,6 +1775,7 @@ const MemberModule = (() => {
     changeAttendanceMonth, openServiceModal, openEquipmentModal, openExerciseInstructionsModal,
     submitFitnessStep1, selectFitnessGoal, fitnessWizardBack, submitFitnessStep2,
     retryFitnessCalculation, fitnessWizardEditGoal, switchFitnessPlanTab,
+    backToWorkoutDays, switchExerciseDetailTab,
     toggleNotificationPanel, openNotifItem,
   };
 })();
@@ -1747,6 +1836,8 @@ document.addEventListener('DOMContentLoaded', () => {
   window.retryFitnessCalculation = () => MemberModule.retryFitnessCalculation();
   window.fitnessWizardEditGoal   = () => MemberModule.fitnessWizardEditGoal();
   window.switchFitnessPlanTab    = (tabName, btnEl) => MemberModule.switchFitnessPlanTab(tabName, btnEl);
+  window.backToWorkoutDays       = () => MemberModule.backToWorkoutDays();
+  window.switchExerciseDetailTab = (tabName, btnEl) => MemberModule.switchExerciseDetailTab(tabName, btnEl);
   window.toggleNotificationPanel = () => MemberModule.toggleNotificationPanel();
 
   try {
