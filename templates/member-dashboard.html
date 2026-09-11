@@ -482,12 +482,36 @@
                                onchange="previewGcashProof(this, 1)">
                         <span class="gcash-upload-filename" id="payment-gcash-filename">No file selected</span>
                       </div>
-                      <div class="proof-preview-wrap">
-                        <img id="payment-gcash-proof-preview" class="proof-preview" alt="GCash proof preview"
-                             style="display:none;" onclick="openGcashProofPreview(1)">
-                        <div class="gcash-qr-tap-hint" id="payment-gcash-proof-tap-hint" style="display:none;">Tap to enlarge</div>
-                        <button type="button" id="payment-gcash-proof-remove" class="proof-remove-btn"
-                                style="display:none;" onclick="removeGcashProof(1)">✕ Remove &amp; replace</button>
+
+                      <!-- All 3 receipt previews live side-by-side in this row so every
+                           uploaded screenshot stays visible at once ([1][2][3]) instead of
+                           replacing one another. Slots 2/3's "Choose Screenshot" button and
+                           Amount field stay in their own slot section further down (only
+                           revealed via "+ Add another screenshot"); only their preview
+                           thumbnail is grouped up here — same element ids as before, so
+                           previewGcashProof / removeGcashProof / openGcashProofPreview in
+                           tr-member.js work unchanged regardless of where the preview
+                           element physically sits in the DOM. -->
+                      <div class="gcash-proof-row" id="payment-gcash-proof-row">
+                        <div class="proof-preview-wrap">
+                          <img id="payment-gcash-proof-preview" class="proof-preview" alt="GCash proof preview"
+                               style="display:none;" onclick="openGcashProofPreview(1)">
+                          <div class="gcash-qr-tap-hint" id="payment-gcash-proof-tap-hint" style="display:none;">Tap to enlarge</div>
+                          <button type="button" id="payment-gcash-proof-remove" class="proof-remove-btn"
+                                  style="display:none;" onclick="removeGcashProof(1)">✕ Remove &amp; replace</button>
+                        </div>
+                        <div class="proof-preview-wrap" id="payment-gcash-preview-wrap-2">
+                          <img id="payment-gcash-proof-preview-2" class="proof-preview" alt="GCash proof preview 2"
+                               style="display:none;" onclick="openGcashProofPreview(2)">
+                          <button type="button" id="payment-gcash-proof-remove-2" class="proof-remove-btn"
+                                  style="display:none;" onclick="removeGcashProof(2)">✕ Remove</button>
+                        </div>
+                        <div class="proof-preview-wrap" id="payment-gcash-preview-wrap-3">
+                          <img id="payment-gcash-proof-preview-3" class="proof-preview" alt="GCash proof preview 3"
+                               style="display:none;" onclick="openGcashProofPreview(3)">
+                          <button type="button" id="payment-gcash-proof-remove-3" class="proof-remove-btn"
+                                  style="display:none;" onclick="removeGcashProof(3)">✕ Remove</button>
+                        </div>
                       </div>
 
                       <div class="form-group" style="margin-top:10px;max-width:220px;">
@@ -516,12 +540,6 @@
                                  onchange="previewGcashProof(this, 2)">
                           <span class="gcash-upload-filename" id="payment-gcash-filename-2">No file selected</span>
                         </div>
-                        <div class="proof-preview-wrap">
-                          <img id="payment-gcash-proof-preview-2" class="proof-preview" alt="GCash proof preview 2"
-                               style="display:none;" onclick="openGcashProofPreview(2)">
-                          <button type="button" id="payment-gcash-proof-remove-2" class="proof-remove-btn"
-                                  style="display:none;" onclick="removeGcashProof(2)">✕ Remove</button>
-                        </div>
                         <div class="form-group" style="margin-top:10px;max-width:220px;">
                           <label class="form-label" style="font-size:12px;">Amount on This Screenshot</label>
                           <div class="gcash-amount-input-wrap">
@@ -543,12 +561,6 @@
                           <input class="visually-hidden" type="file" id="payment-gcash-proof-3" accept="image/*"
                                  onchange="previewGcashProof(this, 3)">
                           <span class="gcash-upload-filename" id="payment-gcash-filename-3">No file selected</span>
-                        </div>
-                        <div class="proof-preview-wrap">
-                          <img id="payment-gcash-proof-preview-3" class="proof-preview" alt="GCash proof preview 3"
-                               style="display:none;" onclick="openGcashProofPreview(3)">
-                          <button type="button" id="payment-gcash-proof-remove-3" class="proof-remove-btn"
-                                  style="display:none;" onclick="removeGcashProof(3)">✕ Remove</button>
                         </div>
                         <div class="form-group" style="margin-top:10px;max-width:220px;">
                           <label class="form-label" style="font-size:12px;">Amount on This Screenshot</label>

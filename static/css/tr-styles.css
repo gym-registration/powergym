@@ -1595,6 +1595,15 @@ select.form-input option:focus {
 .proof-upload-box { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
 .proof-preview-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 6px; }
 
+/* ── GCash payment: up to 3 receipt previews shown side-by-side
+   ([Receipt 1][Receipt 2][Receipt 3]) instead of stacked/replacing each
+   other. Wraps to a new line on narrow screens so all 3 stay visible
+   rather than overflowing. Scoped to this row only — doesn't touch
+   .proof-preview-wrap/.proof-preview used elsewhere (e.g. School ID). ── */
+.gcash-proof-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 14px; }
+.gcash-proof-row .proof-preview-wrap { margin-top: 6px; }
+.gcash-proof-row .proof-preview { width: 130px; }
+
 /* ── GCash receipt auto-read (OCR) box ── */
 .gcash-ocr-box { margin-top: 12px; padding: 12px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 8px; }
 .gcash-ocr-status { font-size: 13px; color: var(--muted); }
