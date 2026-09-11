@@ -466,28 +466,104 @@
 
                   <div class="gcash-pay-right">
                     <div class="form-group">
-                      <label class="form-label">Upload Receipt Screenshot</label>
+                      <label class="form-label">Upload Receipt Screenshot(s)</label>
+                      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">
+                        Attach 1 to 3 screenshots (e.g. if your payment was split across transfers).
+                        Only the first screenshot is auto-read — double-check the fields below regardless.
+                      </div>
+
+                      <!-- Screenshot 1 — required, the only one auto-read via OCR -->
                       <div class="gcash-upload-row">
                         <label class="gcash-upload-btn" for="payment-gcash-proof">
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                           Choose Screenshot
                         </label>
                         <input class="visually-hidden" type="file" id="payment-gcash-proof" accept="image/*"
-                               onchange="previewGcashProof(this)">
+                               onchange="previewGcashProof(this, 1)">
                         <span class="gcash-upload-filename" id="payment-gcash-filename">No file selected</span>
                       </div>
                       <div class="proof-preview-wrap">
                         <img id="payment-gcash-proof-preview" class="proof-preview" alt="GCash proof preview"
-                             style="display:none;" onclick="openGcashProofPreview()">
+                             style="display:none;" onclick="openGcashProofPreview(1)">
                         <div class="gcash-qr-tap-hint" id="payment-gcash-proof-tap-hint" style="display:none;">Tap to enlarge</div>
                         <button type="button" id="payment-gcash-proof-remove" class="proof-remove-btn"
-                                style="display:none;" onclick="removeGcashProof()">✕ Remove &amp; replace</button>
+                                style="display:none;" onclick="removeGcashProof(1)">✕ Remove &amp; replace</button>
+                      </div>
+
+                      <div class="form-group" style="margin-top:10px;max-width:220px;">
+                        <label class="form-label" style="font-size:12px;">Amount on This Screenshot</label>
+                        <div class="gcash-amount-input-wrap">
+                          <span class="gcash-amount-prefix">₱</span>
+                          <input class="form-input gcash-amount-input" type="text" inputmode="decimal"
+                                 id="payment-gcash-amount-1" placeholder="0.00" readonly>
+                        </div>
+                        <div style="font-size:11px;color:var(--muted);margin-top:4px;">Auto-read from this screenshot — not editable.</div>
                       </div>
 
                       <!-- Auto-filled from the uploaded screenshot via OCR (see
                            previewGcashProof -> _runGcashReceiptOCR in tr-member.js).
                            Hidden until a file is picked / OCR responds. -->
                       <div id="payment-gcash-ocr-box" class="gcash-ocr-box" style="display:none;"></div>
+
+                      <!-- Screenshot 2 — optional, revealed by the "add another" link -->
+                      <div id="payment-gcash-slot-2" style="display:none;margin-top:16px;padding-top:16px;border-top:1px dashed var(--border);">
+                        <div class="gcash-upload-row">
+                          <label class="gcash-upload-btn" for="payment-gcash-proof-2">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                            Choose Screenshot 2
+                          </label>
+                          <input class="visually-hidden" type="file" id="payment-gcash-proof-2" accept="image/*"
+                                 onchange="previewGcashProof(this, 2)">
+                          <span class="gcash-upload-filename" id="payment-gcash-filename-2">No file selected</span>
+                        </div>
+                        <div class="proof-preview-wrap">
+                          <img id="payment-gcash-proof-preview-2" class="proof-preview" alt="GCash proof preview 2"
+                               style="display:none;" onclick="openGcashProofPreview(2)">
+                          <button type="button" id="payment-gcash-proof-remove-2" class="proof-remove-btn"
+                                  style="display:none;" onclick="removeGcashProof(2)">✕ Remove</button>
+                        </div>
+                        <div class="form-group" style="margin-top:10px;max-width:220px;">
+                          <label class="form-label" style="font-size:12px;">Amount on This Screenshot</label>
+                          <div class="gcash-amount-input-wrap">
+                            <span class="gcash-amount-prefix">₱</span>
+                            <input class="form-input gcash-amount-input" type="text" inputmode="decimal"
+                                   id="payment-gcash-amount-2" placeholder="0.00" readonly>
+                          </div>
+                          <div style="font-size:11px;color:var(--muted);margin-top:4px;">Auto-read from this screenshot — not editable.</div>
+                        </div>
+                      </div>
+
+                      <!-- Screenshot 3 — optional, revealed by the "add another" link -->
+                      <div id="payment-gcash-slot-3" style="display:none;margin-top:16px;padding-top:16px;border-top:1px dashed var(--border);">
+                        <div class="gcash-upload-row">
+                          <label class="gcash-upload-btn" for="payment-gcash-proof-3">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                            Choose Screenshot 3
+                          </label>
+                          <input class="visually-hidden" type="file" id="payment-gcash-proof-3" accept="image/*"
+                                 onchange="previewGcashProof(this, 3)">
+                          <span class="gcash-upload-filename" id="payment-gcash-filename-3">No file selected</span>
+                        </div>
+                        <div class="proof-preview-wrap">
+                          <img id="payment-gcash-proof-preview-3" class="proof-preview" alt="GCash proof preview 3"
+                               style="display:none;" onclick="openGcashProofPreview(3)">
+                          <button type="button" id="payment-gcash-proof-remove-3" class="proof-remove-btn"
+                                  style="display:none;" onclick="removeGcashProof(3)">✕ Remove</button>
+                        </div>
+                        <div class="form-group" style="margin-top:10px;max-width:220px;">
+                          <label class="form-label" style="font-size:12px;">Amount on This Screenshot</label>
+                          <div class="gcash-amount-input-wrap">
+                            <span class="gcash-amount-prefix">₱</span>
+                            <input class="form-input gcash-amount-input" type="text" inputmode="decimal"
+                                   id="payment-gcash-amount-3" placeholder="0.00" readonly>
+                          </div>
+                          <div style="font-size:11px;color:var(--muted);margin-top:4px;">Auto-read from this screenshot — not editable.</div>
+                        </div>
+                      </div>
+
+                      <div style="margin-top:10px;">
+                        <span class="link-btn" id="payment-gcash-add-screenshot" onclick="addAnotherGcashScreenshot()">+ Add another screenshot (optional)</span>
+                      </div>
                     </div>
 
                     <div class="form-group">
@@ -515,16 +591,17 @@
                     </div>
 
                     <div class="form-group">
-                      <label class="form-label">Amount Paid</label>
+                      <label class="form-label">Amount Paid (Total)</label>
                       <div class="gcash-amount-input-wrap">
                         <span class="gcash-amount-prefix" id="payment-gcash-amount-prefix">₱</span>
                         <input class="form-input gcash-amount-input" type="text" inputmode="decimal"
                                id="payment-gcash-amount" data-required="{{ pending_payment.amount }}"
-                               placeholder="0.00">
+                               placeholder="0.00" readonly>
                       </div>
                       <div style="font-size:12px;color:var(--muted);margin-top:4px;">
                         Amount required: <strong style="color:var(--white);">₱{{ pending_payment.amount }}</strong> ·
-                        auto-filled from your receipt when we can read it — double-check it matches before submitting.
+                        automatically totaled from the "Amount on This Screenshot" field(s) above — enter each
+                        screenshot's amount there, this updates on its own.
                         <span id="payment-gcash-amount-status"></span>
                       </div>
                     </div>
@@ -714,14 +791,6 @@
                 <div class="plan-name">BODY RECOMPOSITION</div>
                 <div class="fw-goal-desc">Work toward improving muscle mass while reducing body fat.</div>
               </div>
-              <div class="plan-card" data-goal="STRENGTH" onclick="selectFitnessGoal(this)">
-                <div class="plan-name">STRENGTH & PERFORMANCE</div>
-                <div class="fw-goal-desc">Focus on increasing strength and improving overall physical performance.</div>
-              </div>
-              <div class="plan-card" data-goal="ENDURANCE" onclick="selectFitnessGoal(this)">
-                <div class="plan-name">ENDURANCE & CONDITIONING</div>
-                <div class="fw-goal-desc">Improve stamina, cardiovascular endurance, and overall physical conditioning.</div>
-              </div>
             </div>
 
             <button class="btn btn-red" style="width:100%;margin-top:16px;" id="fw-step2-btn" onclick="submitFitnessStep2()" disabled>CONTINUE</button>
@@ -879,16 +948,12 @@
             <div class="fp-tab-panel" id="fp-panel-workouts" data-fp-panel="workouts" style="display:none;">
               <div style="font-size:13px;color:var(--muted);margin-bottom:14px;" id="fp-workout-frequency"></div>
 
-              <!-- Level 1: personalized workout day cards. Clicking a day
-                   reveals that day's exact exercises (Level 2) below. -->
-              <div class="fp-card-grid" id="fp-day-cards"></div>
+              <!-- Day 1–7 navigation, styled like the top-level plan tabs
+                   so it reads as "tabs within a tab" — only one day's
+                   content is shown at a time to avoid a long scroll. -->
+              <div class="fp-day-tabs" id="fp-day-tabs" role="tablist"></div>
 
-              <!-- Level 2: exercises for the selected day only. -->
-              <div id="fp-day-detail" style="display:none;">
-                <button type="button" class="btn btn-outline btn-sm" style="margin-bottom:14px;" onclick="backToWorkoutDays()">← BACK TO WORKOUT DAYS</button>
-                <div class="fp-day-focus" id="fp-day-detail-title"></div>
-                <div class="fp-card-grid" id="fp-day-detail-exercises"></div>
-              </div>
+              <div id="fp-day-panels"></div>
             </div>
 
             <!-- EQUIPMENT -->
@@ -1189,52 +1254,10 @@
 <div class="modal-overlay" id="exercise-instructions-modal">
   <div class="modal">
     <button class="modal-close" onclick="closeModal('exercise-instructions-modal')">✕</button>
-
-    <div style="font-size:45px;text-align:center;margin-bottom:6px;" id="exercise-modal-icon">🏋️</div>
-    <div class="modal-title" style="text-align:center;margin-bottom:4px;" id="exercise-instructions-modal-title">EXERCISE</div>
+    <div class="modal-title" style="text-align:center;" id="exercise-instructions-modal-title">EXERCISE</div>
     <div style="font-size:15px;color:var(--muted);text-align:center;margin-bottom:18px;" id="exercise-instructions-modal-subtitle"></div>
-
-    <!-- Quick stats: Sets / Reps / Equipment -->
-    <div class="fp-summary-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px;">
-      <div class="stat-card red fp-stat-compact">
-        <div class="stat-value" id="exercise-modal-sets">—</div>
-        <div class="stat-label">Sets</div>
-      </div>
-      <div class="stat-card blue fp-stat-compact">
-        <div class="stat-value" id="exercise-modal-reps">—</div>
-        <div class="stat-label">Reps</div>
-      </div>
-      <div class="stat-card gold fp-stat-compact">
-        <div class="stat-value" id="exercise-modal-equipment">None</div>
-        <div class="stat-label">Equipment</div>
-      </div>
-    </div>
-
-    <!-- Muscle Focus / How to Do -->
-    <div class="fp-tabs" role="tablist" style="margin-bottom:14px;">
-      <button type="button" class="fp-tab-btn active" data-ex-tab="muscle" onclick="switchExerciseDetailTab('muscle', this)">MUSCLE FOCUS</button>
-      <button type="button" class="fp-tab-btn" data-ex-tab="howto" onclick="switchExerciseDetailTab('howto', this)">HOW TO DO</button>
-    </div>
-
-    <div class="fp-tab-panel" data-ex-panel="muscle">
-      <div class="goal-item">
-        <div class="goal-header"><span class="goal-label">Main Area</span><span class="goal-val red" id="exercise-modal-main-area">—</span></div>
-      </div>
-      <div class="goal-item" id="exercise-modal-subtarget-row">
-        <div class="goal-header"><span class="goal-label">Sub-target Muscle</span><span class="goal-val" id="exercise-modal-subtarget">—</span></div>
-      </div>
-      <div class="goal-item" id="exercise-modal-specific-row" style="display:none;">
-        <div class="goal-header"><span class="goal-label">Specific Target</span><span class="goal-val" id="exercise-modal-specific">—</span></div>
-      </div>
-      <div style="font-size:14px;color:var(--muted);line-height:1.6;" id="exercise-modal-purpose"></div>
-    </div>
-
-    <div class="fp-tab-panel" data-ex-panel="howto" style="display:none;">
-      <div class="panel-title" style="margin-bottom:4px;">Step-by-step instructions</div>
-      <ol class="exercise-instructions-list" id="exercise-instructions-modal-steps"></ol>
-    </div>
-
-    <button type="button" class="btn btn-red" style="width:100%;margin-top:8px;" onclick="closeModal('exercise-instructions-modal')">DONE</button>
+    <div class="panel-title" style="margin-bottom:4px;">Step-by-step instructions</div>
+    <ol class="exercise-instructions-list" id="exercise-instructions-modal-steps"></ol>
   </div>
 </div>
 

@@ -950,6 +950,13 @@ class Payment(db.Model):
     method           = db.Column(db.String(32), nullable=False)
     reference_number = db.Column(db.String(60), nullable=True)
     proof_image_path = db.Column(db.String(255), nullable=True)
+    # Members may attach up to 3 receipt screenshots total (e.g. when a
+    # single GCash transfer got split across screenshots) — the primary
+    # slot above plus these two optional extra ones. Only the primary slot
+    # is ever fed through OCR (see /member/ocr-gcash-proof); slots 2 and 3
+    # are for admin's manual review only.
+    proof_image_path_2 = db.Column(db.String(255), nullable=True)
+    proof_image_path_3 = db.Column(db.String(255), nullable=True)
     is_student            = db.Column(db.Boolean, nullable=False, default=False)
     student_id_image_path = db.Column(db.String(255), nullable=True)
     wants_coach           = db.Column(db.Boolean, nullable=False, default=False)
@@ -1060,7 +1067,7 @@ class FitnessProfile(db.Model):
     height_cm          = db.Column(db.Numeric(5, 2), nullable=False)
     sex                = db.Column(db.String(10), nullable=False)   # 'male' | 'female'
     activity_level     = db.Column(db.String(20), nullable=False)   # 'low_activity' | 'moderate_activity' | 'high_activity'
-    fitness_goal       = db.Column(db.String(10), nullable=True)    # 'CUT' | 'BULK' | 'MAINTAIN' | 'RECOMP' | 'STRENGTH' | 'ENDURANCE' — NULL until Step 2 is completed
+    fitness_goal       = db.Column(db.String(10), nullable=True)    # 'CUT' | 'BULK' | 'MAINTAIN' | 'RECOMP' — NULL until Step 2 is completed
     created_at         = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at         = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
                                     onupdate=lambda: datetime.now(timezone.utc))
@@ -2679,7 +2686,7 @@ FITNESS_HEIGHT_CM_MIN, FITNESS_HEIGHT_CM_MAX = 100.0, 250.0
 FITNESS_WEIGHT_KG_MIN, FITNESS_WEIGHT_KG_MAX = 20.0, 300.0
 FITNESS_VALID_SEXES           = {'male', 'female'}
 FITNESS_VALID_ACTIVITY_LEVELS = {'low_activity', 'moderate_activity', 'high_activity'}
-FITNESS_VALID_GOALS           = {'CUT', 'BULK', 'MAINTAIN', 'RECOMP', 'STRENGTH', 'ENDURANCE'}
+FITNESS_VALID_GOALS           = {'CUT', 'BULK', 'MAINTAIN', 'RECOMP'}
 
 
 def _valid_fitness_height(height_cm):
@@ -2715,12 +2722,10 @@ FITNESS_ACTIVITY_MULTIPLIERS = {
     'high_activity':     1.80,  # combines former Very Active (1.725) + Extra Active (1.90)
 }
 FITNESS_GOAL_CALORIE_OFFSETS = {
-    'CUT':        -500,
-    'BULK':        300,
-    'MAINTAIN':      0,
-    'RECOMP':     -200,
-    'STRENGTH':    200,  # modest surplus — enough fuel for progressive-overload training without full BULK-level mass gain
-    'ENDURANCE':     0,  # maintenance calories — conditioning/stamina focus, not a weight-change goal
+    'CUT':      -500,
+    'BULK':      300,
+    'MAINTAIN':    0,
+    'RECOMP':   -200,
 }
 FITNESS_MIN_CALORIES = {'male': 1500, 'female': 1200}
 FITNESS_PROTEIN_G_PER_KG = 1.6
@@ -2802,16 +2807,6 @@ FITNESS_GOAL_TIPS = {
         'Prioritize protein intake and resistance training to support muscle growth while in a modest deficit.',
         'Progress may be slower than a dedicated CUT or BULK — track trends over weeks, not days.',
         'Consistency with both training and nutrition matters more than perfection on any single day.',
-    ],
-    'STRENGTH': [
-        'Focus on progressive overload — gradually increasing weight, reps, or sets over time.',
-        'Prioritize compound lifts and allow adequate rest between sets for full effort on each one.',
-        'Eat enough to fuel your training and prioritize recovery, including sleep, between sessions.',
-    ],
-    'ENDURANCE': [
-        'Build up training volume and duration gradually to improve cardiovascular capacity safely.',
-        'Keep carbohydrate intake steady to fuel longer training sessions and support recovery.',
-        'Mix in some resistance training to support overall conditioning, not just cardio alone.',
     ],
 }
 
@@ -2957,33 +2952,14 @@ def _recommend_meal_plan(calorie_target, protein_target_g):
     }
 
 
-# Strength & Performance and Endurance & Conditioning were added as new
-# fitness goals, but the ~100+ row Exercise catalog's goal_tags column is
-# intentionally left untouched (existing workout taxonomy, per project
-# scope) rather than re-tagging every row. Instead, each new goal is
-# aliased to whichever existing tag family already matches its intent:
-#   - STRENGTH  -> BULK   (BULK-tagged rows are exclusively resistance/
-#                  compound-lift work, never cardio — a good fit for a
-#                  strength/performance focus)
-#   - ENDURANCE -> CUT    (every cardio-machine exercise in the catalog is
-#                  tagged CUT, and no cardio exercise is tagged BULK)
-# This keeps exercise selection fully functional for the new goals without
-# changing a single Exercise row, the schedule, reps, or equipment logic.
-FITNESS_GOAL_EXERCISE_TAG_ALIAS = {
-    'STRENGTH':  'BULK',
-    'ENDURANCE': 'CUT',
-}
-
-
 def _goal_tagged_exercises(goal):
     """All active Exercise rows tagged for this goal, in stable catalog
     order (by id). Single source of truth for "which exercises match a
     goal" — used by both the flat top-N Workouts list and the weekly
     routine generator below, so there is exactly one filtering rule."""
-    tag = FITNESS_GOAL_EXERCISE_TAG_ALIAS.get(goal, goal)
     return [
         e for e in Exercise.query.filter_by(is_active=True).order_by(Exercise.id).all()
-        if tag in (e.goal_tags or '').split(',')
+        if goal in (e.goal_tags or '').split(',')
     ]
 
 
@@ -3047,7 +3023,7 @@ def _pick_day_exercises(goal_exercises, primary_areas,
     return selected[:max_count]
 
 
-def _recommend_weekly_routine(goal, activity_level, max_days=None):
+def _recommend_weekly_routine(goal, activity_level):
     """Builds the 7-day training/rest schedule from the existing Exercise
     catalog only — no new table, no AI. The SCHEDULE itself (which days
     train, which day rests, and each day's muscle-group focus) is now
@@ -3061,30 +3037,17 @@ def _recommend_weekly_routine(goal, activity_level, max_days=None):
     never contain an exercise from an unrelated Main Area. activity_level
     now ONLY controls the displayed set count per exercise (see
     FITNESS_ACTIVITY_SET_TIER) — it never changes the schedule and never
-    changes reps (always Exercise.default_reps, verbatim).
-
-    max_days optionally caps how many days of the fixed schedule are
-    actually generated — used so a member's visible workout plan never
-    extends beyond their current membership's day count (e.g. a 1-day
-    Daily plan only ever shows Day 1, while a Monthly/Yearly plan's
-    duration comfortably covers the full 7-day cycle so nothing changes
-    for them). FITNESS_WEEKLY_SCHEDULE itself and _pick_day_exercises()
-    are completely unchanged — this only controls how many of the
-    schedule's fixed days get iterated over. None (the default) means no
-    cap, i.e. the existing full-week behavior.
-
-    Returns (routine_dict_for_json, all_exercise_objs_actually_used) — the
-    second value lets the caller compute equipment from exactly what's in
-    the routine, not a separate/stale list."""
+    changes reps (always Exercise.default_reps, verbatim). Returns
+    (routine_dict_for_json, all_exercise_objs_actually_used) — the second
+    value lets the caller compute equipment from exactly what's in the
+    routine, not a separate/stale list."""
     sets_count = FITNESS_ACTIVITY_SET_TIER.get(activity_level, 3)
     goal_exercises = _goal_tagged_exercises(goal)
-
-    schedule = FITNESS_WEEKLY_SCHEDULE if max_days is None else FITNESS_WEEKLY_SCHEDULE[:max(max_days, 0)]
 
     days = []
     used_exercises = []
 
-    for day_number, (day_type, focus_name, focus_areas) in enumerate(schedule, start=1):
+    for day_number, (day_type, focus_name, focus_areas) in enumerate(FITNESS_WEEKLY_SCHEDULE, start=1):
         if day_type == 'rest':
             days.append({
                 'day_number': day_number,
@@ -3120,8 +3083,8 @@ def _recommend_weekly_routine(goal, activity_level, max_days=None):
             ],
         })
 
-    training_days = sum(1 for day_type, _, _ in schedule if day_type == 'train')
-    rest_days = sum(1 for day_type, _, _ in schedule if day_type == 'rest')
+    training_days = sum(1 for day_type, _, _ in FITNESS_WEEKLY_SCHEDULE if day_type == 'train')
+    rest_days = sum(1 for day_type, _, _ in FITNESS_WEEKLY_SCHEDULE if day_type == 'rest')
 
     return {
         'training_days': training_days,
@@ -3921,34 +3884,65 @@ def member_submit_payment_method():
         if not gcash_proof_file or not gcash_proof_file.filename:
             return jsonify(success=False, error='Please attach a screenshot of your GCash proof of payment.'), 400
 
-        ext = gcash_proof_file.filename.rsplit('.', 1)[-1].lower() if '.' in gcash_proof_file.filename else ''
-        if ext not in PROOF_ALLOWED_EXT:
-            return jsonify(success=False, error='Proof of payment must be a PNG, JPG, or PDF file.'), 400
+        # The member can attach up to 3 receipt screenshots total (e.g. a
+        # payment that was split across two or three GCash transfers) — the
+        # primary one above is required, these two are optional. Only the
+        # primary screenshot is ever run through OCR; these extra ones are
+        # for admin's manual review only.
+        extra_proof_files = [
+            f for f in (request.files.get('gcash_proof_2'), request.files.get('gcash_proof_3'))
+            if f and f.filename
+        ]
 
-        gcash_proof_file.seek(0, os.SEEK_END)
-        size = gcash_proof_file.tell()
-        gcash_proof_file.seek(0)
-        if size > PROOF_MAX_BYTES:
-            return jsonify(success=False, error='Proof of payment file is too large (max 10MB).'), 400
+        amount_paid = (data.get('gcash_amount_paid') or '').strip()
+        if not amount_paid:
+            return jsonify(success=False, error='Please enter the amount you paid.'), 400
+        try:
+            amount_paid_val = float(amount_paid.replace(',', ''))
+        except ValueError:
+            return jsonify(success=False, error='Please enter a valid amount paid.'), 400
+        if amount_paid_val + 0.01 < float(payment.amount):
+            return jsonify(success=False, error=(
+                f'The amount paid (₱{amount_paid_val:,.2f}) is less than the ₱{float(payment.amount):,.2f} '
+                f'required for this plan/promo. Please attach enough receipts to cover the full amount before submitting.'
+            )), 400
 
-        safe_name = secure_filename(f"{secrets.token_hex(8)}_{gcash_proof_file.filename}")
-        gcash_proof_file.save(os.path.join(PROOF_UPLOAD_FOLDER, safe_name))
-        proof_relative_path = f"uploads/payment_proofs/{safe_name}"
+        for f in [gcash_proof_file, *extra_proof_files]:
+            ext = f.filename.rsplit('.', 1)[-1].lower() if '.' in f.filename else ''
+            if ext not in PROOF_ALLOWED_EXT:
+                return jsonify(success=False, error='Proof of payment must be a PNG, JPG, or PDF file.'), 400
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(0)
+            if size > PROOF_MAX_BYTES:
+                return jsonify(success=False, error='Proof of payment file is too large (max 10MB).'), 400
+
+        def _save_proof(f):
+            safe_name = secure_filename(f"{secrets.token_hex(8)}_{f.filename}")
+            f.save(os.path.join(PROOF_UPLOAD_FOLDER, safe_name))
+            return f"uploads/payment_proofs/{safe_name}"
+
+        proof_paths = [_save_proof(gcash_proof_file)] + [_save_proof(f) for f in extra_proof_files]
 
         payment.method            = 'GCash'
         payment.reference_number  = gcash_reference
-        payment.proof_image_path  = proof_relative_path
+        payment.proof_image_path  = proof_paths[0]
+        payment.proof_image_path_2 = proof_paths[1] if len(proof_paths) > 1 else None
+        payment.proof_image_path_3 = proof_paths[2] if len(proof_paths) > 2 else None
 
         # Optional context the member filled in on the payment card (sender
-        # name, the date/time they say they paid, and the amount they say
-        # they paid) — not required, but useful for staff/admin
-        # cross-checking against the screenshot. There's no dedicated
-        # column for these, so they ride along in the existing free-text
-        # `notes` field.
+        # name and the date/time they say they paid) — not required, but
+        # useful for staff/admin cross-checking against the screenshot(s).
+        # There's no dedicated column for these, so they ride along in the
+        # existing free-text `notes` field.
         sender_name = (data.get('gcash_sender_name') or '').strip()
         paid_date   = (data.get('gcash_paid_date')   or '').strip()
         paid_time   = (data.get('gcash_paid_time')   or '').strip()
-        amount_paid = (data.get('gcash_amount_paid')  or '').strip()
+        screenshot_amounts = [
+            (data.get('gcash_amount_screenshot_1') or '').strip(),
+            (data.get('gcash_amount_screenshot_2') or '').strip(),
+            (data.get('gcash_amount_screenshot_3') or '').strip(),
+        ]
         note_parts = []
         if sender_name:
             note_parts.append(f"GCash sender: {sender_name}")
@@ -3956,6 +3950,9 @@ def member_submit_payment_method():
             note_parts.append(f"Member-reported payment time: {paid_date} {paid_time}".strip())
         if amount_paid:
             note_parts.append(f"Member-reported amount paid: ₱{amount_paid}")
+        breakdown = [f"Screenshot {i+1}: ₱{amt}" for i, amt in enumerate(screenshot_amounts) if amt]
+        if len(breakdown) > 1:
+            note_parts.append("Per-screenshot breakdown — " + ', '.join(breakdown))
         if note_parts:
             new_notes = ' | '.join(note_parts)
             # `notes` also carries the 'Promo request: <plan>' marker that
@@ -4833,10 +4830,9 @@ def member_fitness_save_profile():
 def member_fitness_save_goal():
     """Step 2 — Fitness Goal Selection.
     Requires Step 1 (FitnessProfile) to already exist. Stores the member's
-    chosen goal as one of CUT / BULK / MAINTAIN / RECOMP / STRENGTH /
-    ENDURANCE — no goal-history table; this is always just the current
-    active goal, same as how the rest of the schema tracks a member's
-    current Membership."""
+    chosen goal as one of CUT / BULK / MAINTAIN / RECOMP — no goal-history
+    table; this is always just the current active goal, same as how the
+    rest of the schema tracks a member's current Membership."""
     if 'user_id' not in session or session.get('role') != 'member':
         return jsonify(success=False, error='Not logged in.'), 401
 
@@ -4970,22 +4966,7 @@ def member_fitness_recommendations():
         protein_target_g=body_goal.protein_target_g,
     )
     workouts, _flat_exercise_objs = _recommend_workouts(profile.fitness_goal, profile.activity_level)
-
-    # Cap the visible workout schedule to the member's current membership
-    # plan's day count — e.g. a 1-day Daily plan only ever shows a Day 1
-    # workout card, while Monthly/Yearly plans comfortably cover the full
-    # 7-day cycle so nothing changes for them. Mirrors the exact same
-    # "days_total" calculation already used for the Days Left/Current Plan
-    # display elsewhere on the member dashboard, so this always agrees
-    # with what the member sees there.
-    membership = Membership.query.filter_by(member_id=user.id).first()
-    plan_days_total = None
-    if membership and membership.start_date and membership.expiry_date:
-        plan_days_total = max((membership.expiry_date - membership.start_date).days, 1)
-
-    weekly_routine, routine_exercise_objs = _recommend_weekly_routine(
-        profile.fitness_goal, profile.activity_level, max_days=plan_days_total
-    )
+    weekly_routine, routine_exercise_objs = _recommend_weekly_routine(profile.fitness_goal, profile.activity_level)
     # Equipment reflects exactly what's in the weekly routine the member
     # actually sees now, not the older flat top-N list.
     equipment = _recommend_equipment(routine_exercise_objs)
@@ -6655,6 +6636,8 @@ def admin():
             'reference': p.reference_number or '—',
             'amount': f'{float(p.amount):,.2f}',
             'proof_image_path': p.proof_image_path,
+            'proof_image_path_2': p.proof_image_path_2,
+            'proof_image_path_3': p.proof_image_path_3,
             # Structured (not run-on) member-reported context, plus a flag
             # so the template can call out a mismatch between what the
             # member says they paid and the actual amount being charged.
@@ -7473,6 +7456,9 @@ def _run_startup_migrations():
         ('gym_settings', 'gcash_qr_path', "ALTER TABLE gym_settings ADD COLUMN gcash_qr_path VARCHAR(255) NULL"),
         # ── Notification bell (announcements + membership reminders) ──
         ('users', 'last_seen_notifications_at', "ALTER TABLE users ADD COLUMN last_seen_notifications_at DATETIME NULL"),
+        # ── Up to 3 GCash receipt screenshots per payment (was 1) ──
+        ('payments', 'proof_image_path_2', "ALTER TABLE payments ADD COLUMN proof_image_path_2 VARCHAR(255) NULL"),
+        ('payments', 'proof_image_path_3', "ALTER TABLE payments ADD COLUMN proof_image_path_3 VARCHAR(255) NULL"),
     ]
     with db.engine.connect() as conn:
         for table, column, ddl in migrations:

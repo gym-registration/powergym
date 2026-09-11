@@ -24,7 +24,6 @@ const MemberModule = (() => {
   let _servicesById   = {};   // id  -> {id,name,description,image_path,category,icon,equipment:[{name,icon}]}
   let _equipmentById  = {};   // id  -> {id,name,description,image_path,category,icon} — used by the machine "how-to-use" guide modal
   let _exercisesById  = {};   // id  -> exercise object (populated when the weekly routine renders)
-  let _routineDaysById = {};  // day_number -> day object {day_number,type,focus,note,exercises} (populated when the weekly routine renders)
 
   let _selectedPlanKey   = null;
   let _selectedPromoIndex = null; // index into _promosList of the currently-availed promo, or null
@@ -33,7 +32,7 @@ const MemberModule = (() => {
   let _pendingPaymentMethod = null; // { formData } staged between submitPaymentMethod() and confirmSubmitPayment()
   let _withdrawPaymentId = null;
 
-  let _fitnessGoal = null; // currently-selected goal in the Step 2 grid ('CUT'|'BULK'|'MAINTAIN'|'RECOMP'|'STRENGTH'|'ENDURANCE')
+  let _fitnessGoal = null; // currently-selected goal in the Step 2 grid ('CUT'|'BULK'|'MAINTAIN'|'RECOMP')
 
   // Attendance calendar month navigation state
   let _attYear = null;
@@ -48,26 +47,10 @@ const MemberModule = (() => {
   };
 
   const GOAL_LABELS = {
-    CUT:        'CUT',
-    BULK:       'BULK',
-    MAINTAIN:   'MAINTAIN',
-    RECOMP:     'BODY RECOMPOSITION',
-    STRENGTH:   'STRENGTH & PERFORMANCE',
-    ENDURANCE:  'ENDURANCE & CONDITIONING',
-  };
-
-  // Purely decorative — keyed off the existing official target_area values
-  // only (Chest/Shoulders/Back/Arms/Legs/Core/Full Body). Falls back to a
-  // generic dumbbell icon for anything unrecognized, so this never blocks
-  // rendering if the taxonomy is extended later.
-  const TARGET_AREA_ICONS = {
-    Chest:       '🎽',
-    Shoulders:   '🤸',
-    Back:        '🦾',
-    Arms:        '💪',
-    Legs:        '🦵',
-    Core:        '🧱',
-    'Full Body': '🏃',
+    CUT:      'CUT',
+    BULK:     'BULK',
+    MAINTAIN: 'MAINTAIN',
+    RECOMP:   'BODY RECOMPOSITION',
   };
 
   /* ── Init ─────────────────────────────────────────────── */
@@ -86,6 +69,11 @@ const MemberModule = (() => {
     if (_gcashAmountInput) {
       _gcashAmountInput.addEventListener('input', _validateGcashAmountPaid);
     }
+    const _gcashReferenceInput = document.getElementById('payment-gcash-reference');
+    if (_gcashReferenceInput) {
+      _gcashReferenceInput.addEventListener('input', _updatePaymentSubmitState);
+    }
+    _updatePaymentSubmitState();
 
     const dashData = _parseJSON('member-dashboard-data');
 
@@ -864,6 +852,76 @@ const MemberModule = (() => {
 
     const submitBtn = document.getElementById('payment-submit-btn');
     if (submitBtn) submitBtn.textContent = isGcash ? 'SUBMIT PAYMENT' : 'PROCEED TO FRONT DESK';
+    _updatePaymentSubmitState();
+  }
+
+  /** Reveals the next optional screenshot slot (2nd, then 3rd) when the
+   *  member wants to attach more than one receipt — e.g. a payment that
+   *  was split across two GCash transfers. Caps out at 3 total. */
+  function addAnotherGcashScreenshot() {
+    const slot2 = document.getElementById('payment-gcash-slot-2');
+    const slot3 = document.getElementById('payment-gcash-slot-3');
+    if (slot2 && slot2.style.display === 'none') {
+      slot2.style.display = '';
+    } else if (slot3 && slot3.style.display === 'none') {
+      slot3.style.display = '';
+    }
+    _updateAddScreenshotLinkVisibility();
+  }
+
+  /** Shows/hides the "+ Add another screenshot" link and updates its
+   *  wording depending on how many optional slots are already open. */
+  function _updateAddScreenshotLinkVisibility() {
+    const link = document.getElementById('payment-gcash-add-screenshot');
+    const slot2 = document.getElementById('payment-gcash-slot-2');
+    const slot3 = document.getElementById('payment-gcash-slot-3');
+    if (!link || !slot2 || !slot3) return;
+    const slot2Open = slot2.style.display !== 'none';
+    const slot3Open = slot3.style.display !== 'none';
+    if (!slot2Open) {
+      link.style.display = '';
+      link.textContent = '+ Add another screenshot (optional)';
+    } else if (!slot3Open) {
+      link.style.display = '';
+      link.textContent = '+ Add a third screenshot (optional)';
+    } else {
+      link.style.display = 'none';
+    }
+  }
+
+  /** Gates the payment submit button: Cash never needs gating (it's just
+   *  settled in person at the front desk), but GCash requires the primary
+   *  receipt screenshot, a reference number, and an Amount Paid that meets
+   *  or exceeds what's required for the plan/promo before it becomes
+   *  clickable — otherwise staff/admin would be stuck verifying a payment
+   *  that's visibly short. */
+  function _updatePaymentSubmitState() {
+    const submitBtn = document.getElementById('payment-submit-btn');
+    if (!submitBtn) return;
+    const select = document.getElementById('payment-method-select');
+    const method = select ? select.value : 'cash';
+
+    if (method !== 'gcash') {
+      submitBtn.disabled = false;
+      submitBtn.title = '';
+      return;
+    }
+
+    const proofInput = document.getElementById('payment-gcash-proof');
+    const hasProof = !!(proofInput && proofInput.files && proofInput.files[0]);
+    const reference = document.getElementById('payment-gcash-reference')?.value.trim() || '';
+
+    const amountInput = document.getElementById('payment-gcash-amount');
+    const raw = amountInput ? amountInput.value.trim() : '';
+    const required = amountInput ? parseFloat((amountInput.dataset.required || '').replace(/,/g, '')) : NaN;
+    const paid = raw ? parseFloat(raw.replace(/,/g, '')) : NaN;
+    const amountIsEnough = !isNaN(required) && !isNaN(paid) && (paid + 0.01 >= required);
+
+    const ready = hasProof && !!reference && amountIsEnough;
+    submitBtn.disabled = !ready;
+    submitBtn.title = ready
+      ? ''
+      : 'Attach your receipt screenshot, GCash reference number, and an amount that covers the required payment before submitting.';
   }
 
   /** Copies the gym's GCash number to the clipboard when the member taps
@@ -886,12 +944,14 @@ const MemberModule = (() => {
    *  any time from the Payment tab. */
   function deferPaymentMethod() {
     const select = document.getElementById('payment-method-select');
-    removeGcashProof();
-    ['payment-gcash-sender', 'payment-gcash-date', 'payment-gcash-time', 'payment-gcash-reference', 'payment-gcash-amount'].forEach(id => {
+    removeGcashProof(1);
+    removeGcashProof(2);
+    removeGcashProof(3);
+    ['payment-gcash-sender', 'payment-gcash-date', 'payment-gcash-time', 'payment-gcash-reference'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.value = '';
     });
-    _validateGcashAmountPaid(); // reset the red/green amount styling too
+    _recomputeGcashTotalAmount(); // clears the computed total and resets the red/green styling too
     if (select) {
       select.value = 'cash';
       togglePaymentProofField(select);
@@ -899,25 +959,35 @@ const MemberModule = (() => {
     showToast("No problem — come back to the Payment tab whenever you're ready.", 'success');
   }
 
-  function previewGcashProof(input) {
-    const preview = document.getElementById('payment-gcash-proof-preview');
-    const removeBtn = document.getElementById('payment-gcash-proof-remove');
-    const tapHint = document.getElementById('payment-gcash-proof-tap-hint');
-    const filenameLabel = document.getElementById('payment-gcash-filename');
+  /** slot is 1, 2, or 3 — 1 is the required/primary screenshot (ids have
+   *  no suffix for the file/preview elements), 2 and 3 are the optional
+   *  extra ones (ids end in "-2"/"-3"). Every attached screenshot gets
+   *  auto-read for its own Amount (that field is read-only — the member
+   *  never types it), but Date/Time/Reference Number are only ever taken
+   *  from screenshot 1, even when more are attached. */
+  function previewGcashProof(input, slot) {
+    slot = slot || 1;
+    const suffix = slot === 1 ? '' : '-' + slot;
+    const preview = document.getElementById('payment-gcash-proof-preview' + suffix);
+    const removeBtn = document.getElementById('payment-gcash-proof-remove' + suffix);
+    const tapHint = document.getElementById('payment-gcash-proof-tap-hint' + suffix);
+    const filenameLabel = document.getElementById('payment-gcash-filename' + suffix);
     const file = input.files && input.files[0];
     if (!file) return;
     if (filenameLabel) filenameLabel.textContent = file.name;
-    if (!preview) return;
-    const reader = new FileReader();
-    reader.onload = e => {
-      preview.src = e.target.result;
-      preview.style.display = 'block';
-      if (removeBtn) removeBtn.style.display = 'inline-block';
-      if (tapHint) tapHint.style.display = 'block';
-    };
-    reader.readAsDataURL(file);
+    if (preview) {
+      const reader = new FileReader();
+      reader.onload = e => {
+        preview.src = e.target.result;
+        preview.style.display = 'block';
+        if (removeBtn) removeBtn.style.display = 'inline-block';
+        if (tapHint) tapHint.style.display = 'block';
+      };
+      reader.readAsDataURL(file);
+    }
 
-    _runGcashReceiptOCR(file);
+    _runGcashReceiptOCR(file, slot);
+    _updatePaymentSubmitState();
   }
 
   /** Opens the just-uploaded receipt in a bigger modal view — same "tap
@@ -925,8 +995,10 @@ const MemberModule = (() => {
    *  is whatever the member picked (a data: URL from previewGcashProof
    *  above), so it's copied over to the modal's <img> right here rather
    *  than being known ahead of time like the QR code's fixed file path. */
-  function openGcashProofPreview() {
-    const preview = document.getElementById('payment-gcash-proof-preview');
+  function openGcashProofPreview(slot) {
+    slot = slot || 1;
+    const suffix = slot === 1 ? '' : '-' + slot;
+    const preview = document.getElementById('payment-gcash-proof-preview' + suffix);
     const modalImg = document.getElementById('gcash-proof-view-img');
     if (!preview || !preview.src || !modalImg) return;
     modalImg.src = preview.src;
@@ -936,15 +1008,19 @@ const MemberModule = (() => {
   /** Sends the just-picked GCash screenshot to the server to auto-read
    *  the amount, reference number, date, and time off it, then silently
    *  fills in the matching form fields (Payment Date, Payment Time,
-   *  Reference Number, Amount Paid) — no separate "detected" summary is
-   *  shown, the values just land directly in the fields the member would
-   *  otherwise type into. Sender/Account Name is always typed by the
-   *  member by hand — never auto-filled, even if OCR happens to read a
-   *  name off the receipt. Never blocks the flow — on any failure it
-   *  just leaves the fields as they were and the member fills the form
-   *  in manually like before, and it never overwrites a field the member
-   *  has already typed something into. */
-  function _runGcashReceiptOCR(file) {
+   *  Reference Number) from screenshot 1 only, plus the Amount field for
+   *  *whichever* screenshot was just uploaded (1, 2, or 3) — every
+   *  attached screenshot gets its own amount auto-read since that field is
+   *  read-only and never typed by the member. Sender/Account Name is
+   *  always typed by the member by hand — never auto-filled, even if OCR
+   *  happens to read a name off the receipt. Never blocks the flow — on
+   *  any failure it just leaves the amount field showing that it couldn't
+   *  be read, and the member can remove/re-upload that screenshot. */
+  function _runGcashReceiptOCR(file, slot) {
+    slot = slot || 1;
+    const amountInput = document.getElementById('payment-gcash-amount-' + slot);
+    if (amountInput) amountInput.placeholder = 'Reading receipt…';
+
     // Older builds showed a "Detected from your receipt" summary box here;
     // keep it permanently hidden now that fields are filled silently.
     const box = document.getElementById('payment-gcash-ocr-box');
@@ -955,32 +1031,80 @@ const MemberModule = (() => {
 
     _apiForm('/member/ocr-gcash-proof', formData)
       .then(({ ok, data }) => {
-        if (!ok || !data.success || !data.ocr_available || !data.detected) return;
+        if (!ok || !data.success || !data.ocr_available || !data.detected) {
+          if (amountInput) amountInput.placeholder = 'Could not auto-read — not counted yet';
+          _recomputeGcashTotalAmount();
+          return;
+        }
         const d = data.detected;
 
-        // Auto-fill each matching field, but only if the member hasn't
-        // already typed something in — never stomp on a manual edit.
-        // (Sender/Account Name is intentionally excluded — the member
-        // always types that one themselves.)
-        const refInput = document.getElementById('payment-gcash-reference');
-        if (refInput && d.reference && !refInput.value.trim()) {
-          refInput.value = d.reference;
+        // Date/Time/Reference Number are only ever taken from screenshot 1 —
+        // the system deliberately reads just one receipt for those fields
+        // even when 2 or 3 are attached. Auto-fill each, but only if the
+        // member hasn't already typed something in — never stomp on a
+        // manual edit. (Sender/Account Name is intentionally excluded —
+        // the member always types that one themselves.)
+        if (slot === 1) {
+          const refInput = document.getElementById('payment-gcash-reference');
+          if (refInput && d.reference && !refInput.value.trim()) {
+            refInput.value = d.reference;
+          }
+          const dateInput = document.getElementById('payment-gcash-date');
+          if (dateInput && d.date_iso && !dateInput.value) {
+            dateInput.value = d.date_iso;
+          }
+          const timeInput = document.getElementById('payment-gcash-time');
+          if (timeInput && d.time_24h && !timeInput.value) {
+            timeInput.value = d.time_24h;
+          }
         }
-        const dateInput = document.getElementById('payment-gcash-date');
-        if (dateInput && d.date_iso && !dateInput.value) {
-          dateInput.value = d.date_iso;
+
+        // Amount is auto-read onto *this screenshot's own* field — the
+        // member can never type it — and the computed total (see
+        // _recomputeGcashTotalAmount below) is the sum of every attached
+        // screenshot's auto-read amount.
+        if (amountInput) {
+          if (d.amount) {
+            amountInput.value = d.amount;
+            amountInput.placeholder = '0.00';
+          } else {
+            amountInput.placeholder = 'Could not auto-read — not counted yet';
+          }
         }
-        const timeInput = document.getElementById('payment-gcash-time');
-        if (timeInput && d.time_24h && !timeInput.value) {
-          timeInput.value = d.time_24h;
-        }
-        const amountInput = document.getElementById('payment-gcash-amount');
-        if (amountInput && d.amount && !amountInput.value.trim()) {
-          amountInput.value = d.amount;
-        }
-        _validateGcashAmountPaid();
+        _recomputeGcashTotalAmount();
       })
-      .catch(() => { /* OCR is best-effort — silently fall back to manual entry */ });
+      .catch(() => {
+        if (amountInput) amountInput.placeholder = 'Could not auto-read — not counted yet';
+        _recomputeGcashTotalAmount();
+      });
+  }
+
+  /** The Amount Paid (Total) field is never typed directly — it's the sum
+   *  of whichever per-screenshot "Amount on This Screenshot" fields are
+   *  currently in play (screenshot 1 is always counted; 2 and 3 only count
+   *  while their slot is actually open, so removing a screenshot also
+   *  drops its amount from the total). Recomputing re-triggers the
+   *  red/green required-amount check and the submit-button gate. */
+  function _recomputeGcashTotalAmount() {
+    const slotAmountIds = ['payment-gcash-amount-1', 'payment-gcash-amount-2', 'payment-gcash-amount-3'];
+    let sum = 0;
+    let anyEntered = false;
+    slotAmountIds.forEach((id, idx) => {
+      const slotNum = idx + 1;
+      if (slotNum > 1) {
+        const box = document.getElementById('payment-gcash-slot-' + slotNum);
+        if (!box || box.style.display === 'none') return; // slot not attached — don't count it
+      }
+      const el = document.getElementById(id);
+      const raw = el ? el.value.trim() : '';
+      if (!raw) return;
+      const val = parseFloat(raw.replace(/,/g, ''));
+      if (!isNaN(val)) { sum += val; anyEntered = true; }
+    });
+
+    const totalInput = document.getElementById('payment-gcash-amount');
+    if (totalInput) totalInput.value = anyEntered ? sum.toFixed(2) : '';
+    _validateGcashAmountPaid();
   }
 
   /** Colors the Amount Paid field and its helper note red when what's
@@ -1002,11 +1126,11 @@ const MemberModule = (() => {
     if (prefix) prefix.classList.remove('status-insufficient', 'status-match');
 
     const raw = amountInput.value.trim();
-    if (!raw) return; // nothing typed yet — stay neutral
+    if (!raw) { _updatePaymentSubmitState(); return; } // nothing typed yet — stay neutral
 
     const required = parseFloat((amountInput.dataset.required || '').replace(/,/g, ''));
     const paid = parseFloat(raw.replace(/,/g, ''));
-    if (isNaN(required) || isNaN(paid)) return;
+    if (isNaN(required) || isNaN(paid)) { _updatePaymentSubmitState(); return; }
 
     if (paid + 0.01 < required) {
       amountInput.classList.add('gcash-amount-input-insufficient');
@@ -1023,6 +1147,8 @@ const MemberModule = (() => {
         status.textContent = '✓ Amount meets what\'s required.';
       }
     }
+
+    _updatePaymentSubmitState();
   }
 
   function _escapeHtml(str) {
@@ -1031,31 +1157,49 @@ const MemberModule = (() => {
     return div.innerHTML;
   }
 
-  /** Clears a wrongly-picked GCash proof file so the member can choose again. */
-  /** Clears the picked receipt file/preview AND every field OCR may have
-   *  auto-filled from it (Date, Time, Reference No., Amount Paid) — since
-   *  those values only make sense paired with that specific receipt.
-   *  Sender/Account Name is left alone: the member always types that by
-   *  hand, so it's not tied to any particular upload. */
-  function removeGcashProof() {
-    const input = document.getElementById('payment-gcash-proof');
-    const preview = document.getElementById('payment-gcash-proof-preview');
-    const removeBtn = document.getElementById('payment-gcash-proof-remove');
-    const tapHint = document.getElementById('payment-gcash-proof-tap-hint');
-    const ocrBox = document.getElementById('payment-gcash-ocr-box');
-    const filenameLabel = document.getElementById('payment-gcash-filename');
+  /** Clears a wrongly-picked GCash proof file so the member can choose again.
+   *  slot 1 (default) is the required/primary screenshot — clearing it also
+   *  wipes every field OCR may have auto-filled from it (Date, Time,
+   *  Reference No., Amount Paid), since those values only make sense
+   *  paired with that specific receipt. Sender/Account Name is left alone:
+   *  the member always types that by hand, so it's not tied to any
+   *  particular upload. Slots 2 and 3 are the optional extra screenshots —
+   *  clearing one just collapses that slot back down so it can be
+   *  re-added via "+ Add another screenshot". */
+  function removeGcashProof(slot) {
+    slot = slot || 1;
+    const suffix = slot === 1 ? '' : '-' + slot;
+    const input = document.getElementById('payment-gcash-proof' + suffix);
+    const preview = document.getElementById('payment-gcash-proof-preview' + suffix);
+    const removeBtn = document.getElementById('payment-gcash-proof-remove' + suffix);
+    const filenameLabel = document.getElementById('payment-gcash-filename' + suffix);
     if (input) input.value = '';
     if (preview) { preview.src = ''; preview.style.display = 'none'; }
     if (removeBtn) removeBtn.style.display = 'none';
-    if (tapHint) tapHint.style.display = 'none';
-    if (ocrBox) { ocrBox.style.display = 'none'; ocrBox.innerHTML = ''; }
     if (filenameLabel) filenameLabel.textContent = 'No file selected';
 
-    ['payment-gcash-date', 'payment-gcash-time', 'payment-gcash-reference', 'payment-gcash-amount'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.value = '';
-    });
-    _validateGcashAmountPaid(); // reset the red/green amount styling back to neutral
+    if (slot === 1) {
+      const tapHint = document.getElementById('payment-gcash-proof-tap-hint');
+      const ocrBox = document.getElementById('payment-gcash-ocr-box');
+      if (tapHint) tapHint.style.display = 'none';
+      if (ocrBox) { ocrBox.style.display = 'none'; ocrBox.innerHTML = ''; }
+
+      ['payment-gcash-date', 'payment-gcash-time', 'payment-gcash-reference'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      const amountEl1 = document.getElementById('payment-gcash-amount-1');
+      if (amountEl1) { amountEl1.value = ''; amountEl1.placeholder = '0.00'; }
+      _recomputeGcashTotalAmount(); // clears/updates the computed total too, cascades to the submit gate
+    } else {
+      const box = document.getElementById('payment-gcash-slot-' + slot);
+      if (box) box.style.display = 'none';
+      const amountEl = document.getElementById('payment-gcash-amount-' + slot);
+      if (amountEl) { amountEl.value = ''; amountEl.placeholder = '0.00'; }
+      _updateAddScreenshotLinkVisibility();
+      _recomputeGcashTotalAmount();
+      _updatePaymentSubmitState();
+    }
   }
 
   /* ════════════════════════════════════════════════
@@ -1165,6 +1309,13 @@ const MemberModule = (() => {
       formData.append('gcash_reference', reference);
       formData.append('gcash_proof', proofFile);
 
+      // Up to 2 more optional screenshots (e.g. a payment split across
+      // transfers) — neither is required, and neither is OCR'd.
+      const proof2 = document.getElementById('payment-gcash-proof-2')?.files?.[0] || null;
+      const proof3 = document.getElementById('payment-gcash-proof-3')?.files?.[0] || null;
+      if (proof2) formData.append('gcash_proof_2', proof2);
+      if (proof3) formData.append('gcash_proof_3', proof3);
+
       // Optional context fields — helpful for admin verification, but never
       // block submission if the member left one blank.
       const sender = document.getElementById('payment-gcash-sender')?.value.trim() || '';
@@ -1175,6 +1326,29 @@ const MemberModule = (() => {
       if (payDate)    formData.append('gcash_paid_date', payDate);
       if (payTime)    formData.append('gcash_paid_time', payTime);
       if (amountPaid) formData.append('gcash_amount_paid', amountPaid);
+
+      // Per-screenshot amounts (whichever slots are actually attached) so
+      // admin can see how the computed total breaks down across receipts.
+      const amount1 = document.getElementById('payment-gcash-amount-1')?.value.trim() || '';
+      if (amount1) formData.append('gcash_amount_screenshot_1', amount1);
+      if (proof2) {
+        const amount2 = document.getElementById('payment-gcash-amount-2')?.value.trim() || '';
+        if (amount2) formData.append('gcash_amount_screenshot_2', amount2);
+      }
+      if (proof3) {
+        const amount3 = document.getElementById('payment-gcash-amount-3')?.value.trim() || '';
+        if (amount3) formData.append('gcash_amount_screenshot_3', amount3);
+      }
+
+      // Belt-and-suspenders: the Submit button is already disabled client-side
+      // until the amount covers the required total (see _updatePaymentSubmitState),
+      // but re-check here in case state got stale.
+      const requiredAmount = parseFloat((document.getElementById('payment-gcash-amount')?.dataset.required || '').replace(/,/g, ''));
+      const paidAmount = parseFloat(amountPaid.replace(/,/g, ''));
+      if (!amountPaid || isNaN(paidAmount) || (!isNaN(requiredAmount) && paidAmount + 0.01 < requiredAmount)) {
+        showToast('The amount paid must cover the full amount required for this plan/promo before you can submit.', 'error');
+        return;
+      }
 
       confirmText = 'Are you sure you want to submit this GCash payment for verification?';
     }
@@ -1331,30 +1505,10 @@ const MemberModule = (() => {
     const ex = _exercisesById[exerciseId];
     if (!ex) return;
 
-    document.getElementById('exercise-modal-icon').textContent = TARGET_AREA_ICONS[ex.target_area] || '🏋️';
     document.getElementById('exercise-instructions-modal-title').textContent = (ex.name || 'EXERCISE').toUpperCase();
     const subParts = [ex.target_area, ex.sub_target].filter(Boolean);
     document.getElementById('exercise-instructions-modal-subtitle').textContent = subParts.join(' · ');
 
-    // Quick stats
-    _setText('exercise-modal-sets', ex.sets || '—');
-    _setText('exercise-modal-reps', ex.reps || '—');
-    _setText('exercise-modal-equipment', ex.equipment_name || 'None');
-
-    // Muscle Focus tab — Main Area / Sub-target / Specific Target, per the
-    // existing official taxonomy on the exercise itself (never modified,
-    // only displayed).
-    _setText('exercise-modal-main-area', ex.target_area || '—');
-    const subRow = document.getElementById('exercise-modal-subtarget-row');
-    if (subRow) subRow.style.display = ex.sub_target ? '' : 'none';
-    _setText('exercise-modal-subtarget', ex.sub_target || '—');
-    const specificRow = document.getElementById('exercise-modal-specific-row');
-    if (specificRow) specificRow.style.display = ex.specific_target ? '' : 'none';
-    _setText('exercise-modal-specific', ex.specific_target || '—');
-    const purposeEl = document.getElementById('exercise-modal-purpose');
-    if (purposeEl) purposeEl.textContent = ex.purpose || '';
-
-    // How to Do tab
     const list = document.getElementById('exercise-instructions-modal-steps');
     if (list) {
       const steps = (ex.instructions || '').split('\n').map(s => s.trim()).filter(Boolean);
@@ -1363,18 +1517,7 @@ const MemberModule = (() => {
         : '<li>No detailed instructions available for this exercise yet.</li>';
     }
 
-    // Always open back on the Muscle Focus tab
-    switchExerciseDetailTab('muscle', document.querySelector('[data-ex-tab="muscle"]'));
-
     openModal('exercise-instructions-modal');
-  }
-
-  function switchExerciseDetailTab(tabName, btnEl) {
-    document.querySelectorAll('#exercise-instructions-modal [data-ex-tab]').forEach(b => b.classList.remove('active'));
-    if (btnEl) btnEl.classList.add('active');
-    document.querySelectorAll('#exercise-instructions-modal [data-ex-panel]').forEach(p => {
-      p.style.display = p.dataset.exPanel === tabName ? '' : 'none';
-    });
   }
 
   /* ════════════════════════════════════════════════
@@ -1582,7 +1725,7 @@ const MemberModule = (() => {
     _renderMealPlan(data.meal_plan);
 
     // Workouts (day-by-day)
-    _renderWeeklyRoutine(data.weekly_routine, data.workouts, data.plan_days_note);
+    _renderWeeklyRoutine(data.weekly_routine, data.workouts);
 
     // Equipment
     const eqList = document.getElementById('fp-equipment-list');
@@ -1655,7 +1798,7 @@ const MemberModule = (() => {
     }
   }
 
-  function _renderWeeklyRoutine(routine, workouts, planDaysNote) {
+  function _renderWeeklyRoutine(routine, workouts) {
     const freqEl = document.getElementById('fp-workout-frequency');
     if (freqEl) {
       freqEl.textContent = (workouts && workouts.frequency_note)
@@ -1663,95 +1806,55 @@ const MemberModule = (() => {
         : (routine ? `${routine.training_days} training day${routine.training_days == 1 ? '' : 's'}, ${routine.rest_days} rest day${routine.rest_days == 1 ? '' : 's'} per week.` : '');
     }
 
-    const planNoteEl = document.getElementById('fp-workout-plan-note');
-    if (planNoteEl) planNoteEl.textContent = planDaysNote || '';
-
-    const cardsEl = document.getElementById('fp-day-cards');
-    const detailEl = document.getElementById('fp-day-detail');
-    if (!cardsEl) return;
-
-    // Always land back on the day-cards view whenever the plan (re)loads —
-    // e.g. after switching goals — rather than staying on a stale day.
-    if (detailEl) detailEl.style.display = 'none';
-    cardsEl.style.display = '';
+    const tabsEl = document.getElementById('fp-day-tabs');
+    const panelsEl = document.getElementById('fp-day-panels');
+    if (!tabsEl || !panelsEl) return;
 
     if (!routine || !routine.days || !routine.days.length) {
-      cardsEl.innerHTML = '<div style="color:var(--muted);">No workout routine available yet.</div>';
+      tabsEl.innerHTML = '';
+      panelsEl.innerHTML = '<div style="color:var(--muted);">No workout routine available yet.</div>';
       return;
     }
 
     _exercisesById = {};
-    _routineDaysById = {};
-    routine.days.forEach(day => {
-      _routineDaysById[day.day_number] = day;
-      (day.exercises || []).forEach(e => { _exercisesById[e.id] = e; });
+    routine.days.forEach(day => (day.exercises || []).forEach(e => { _exercisesById[e.id] = e; }));
+
+    tabsEl.innerHTML = routine.days.map(day => `
+      <button type="button" class="fp-tab-btn${day.day_number === 1 ? ' active' : ''}" data-fp-day="${day.day_number}">
+        Day ${day.day_number}${day.type === 'rest' ? ' · Rest' : ''}
+      </button>`).join('');
+
+    panelsEl.innerHTML = routine.days.map(day => `
+      <div class="fp-day-panel" data-fp-day-panel="${day.day_number}" style="${day.day_number === 1 ? '' : 'display:none;'}">
+        <div class="panel-title" style="font-size:16px;margin-bottom:10px;">${_esc(day.focus)}</div>
+        ${day.type === 'rest'
+          ? `<div style="font-size:15px;color:var(--muted);">${_esc(day.note || '')}</div>`
+          : `<div class="fp-card-grid">${(day.exercises || []).map(e => `
+              <div class="fp-card" data-exercise-id="${e.id}">
+                <div class="fp-card-title">🏋️ ${_esc(e.name)}</div>
+                <div class="fp-card-note">${_esc(e.target_area || '')}${e.sub_target ? ' · ' + _esc(e.sub_target) : ''}</div>
+                <div class="fp-card-note">${_esc(e.sets)} sets × ${_esc(e.reps)} reps${e.equipment_name ? ' · ' + _esc(e.equipment_name) : ''}</div>
+                <button type="button" class="btn btn-outline btn-sm fp-view-instructions-btn" style="margin-top:8px;" data-exercise-id="${e.id}">VIEW INSTRUCTIONS</button>
+              </div>`).join('')}
+            </div>`}
+      </div>`).join('');
+
+    // Event delegation for the "View Instructions" buttons — avoids
+    // fragile inline-onclick string escaping for exercise data.
+    panelsEl.querySelectorAll('.fp-view-instructions-btn').forEach(btn => {
+      btn.addEventListener('click', () => openExerciseInstructionsModal(Number(btn.dataset.exerciseId)));
     });
 
-    // Level 1 — personalized workout day cards, exactly as many as the
-    // fixed FITNESS_WEEKLY_SCHEDULE defines (7), each showing the day's
-    // focus and how many exercises it contains.
-    cardsEl.innerHTML = routine.days.map(day => {
-      const exerciseCount = (day.exercises || []).length;
-      return `
-      <div class="fp-card fp-day-card${day.type === 'rest' ? ' fp-day-card-rest' : ''}" data-day-number="${day.day_number}">
-        <div class="fp-day-card-number">DAY ${day.day_number}</div>
-        <div class="fp-day-card-focus">${day.type === 'rest' ? '😴' : '🏋️'} ${_esc(day.focus)}</div>
-        <div class="fp-day-card-meta">${day.type === 'rest' ? 'Rest Day' : `${exerciseCount} exercise${exerciseCount === 1 ? '' : 's'}`}</div>
-      </div>`;
-    }).join('');
-
-    cardsEl.querySelectorAll('.fp-day-card').forEach(card => {
-      card.addEventListener('click', () => openWorkoutDay(Number(card.dataset.dayNumber)));
-    });
-  }
-
-  // Level 2 — the exact exercises for one workout day, sourced only from
-  // that day's own routine data (already scoped by _pick_day_exercises()
-  // server-side to that day's Main Areas — nothing re-filtered here).
-  function openWorkoutDay(dayNumber) {
-    const day = _routineDaysById[dayNumber];
-    if (!day) return;
-
-    const cardsEl = document.getElementById('fp-day-cards');
-    const detailEl = document.getElementById('fp-day-detail');
-    const titleEl = document.getElementById('fp-day-detail-title');
-    const listEl = document.getElementById('fp-day-detail-exercises');
-    if (!detailEl || !listEl) return;
-
-    if (titleEl) titleEl.textContent = `Day ${day.day_number} — ${day.focus}`;
-
-    if (day.type === 'rest') {
-      listEl.innerHTML = `
-        <div class="fp-rest-card" style="grid-column:1/-1;">
-          <div class="fp-rest-label">😴 REST DAY</div>
-          <div class="fp-rest-note">${_esc(day.note || '')}</div>
-        </div>`;
-    } else {
-      listEl.innerHTML = (day.exercises || []).map(e => `
-        <div class="fp-card" data-exercise-id="${e.id}" style="cursor:pointer;">
-          <div class="fp-exercise-header">
-            <div class="fp-exercise-name">${TARGET_AREA_ICONS[e.target_area] || '🏋️'} ${_esc(e.name)}</div>
-            <span class="fp-exercise-area">${_esc(e.target_area || '')}</span>
-          </div>
-          ${e.sub_target ? `<div class="fp-exercise-subtarget">${_esc(e.sub_target)}</div>` : ''}
-          <div class="fp-exercise-sets">${_esc(e.sets)} sets × ${_esc(e.reps)}</div>
-          ${e.equipment_name ? `<div class="fp-exercise-equipment">🧰 ${_esc(e.equipment_name)}</div>` : ''}
-        </div>`).join('');
-
-      listEl.querySelectorAll('[data-exercise-id]').forEach(card => {
-        card.addEventListener('click', () => openExerciseInstructionsModal(Number(card.dataset.exerciseId)));
+    tabsEl.querySelectorAll('[data-fp-day]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const dayNum = btn.dataset.fpDay;
+        tabsEl.querySelectorAll('[data-fp-day]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        panelsEl.querySelectorAll('[data-fp-day-panel]').forEach(p => {
+          p.style.display = p.dataset.fpDayPanel === dayNum ? '' : 'none';
+        });
       });
-    }
-
-    if (cardsEl) cardsEl.style.display = 'none';
-    detailEl.style.display = '';
-  }
-
-  function backToWorkoutDays() {
-    const cardsEl = document.getElementById('fp-day-cards');
-    const detailEl = document.getElementById('fp-day-detail');
-    if (detailEl) detailEl.style.display = 'none';
-    if (cardsEl) cardsEl.style.display = '';
+    });
   }
 
   function switchFitnessPlanTab(tabName, btnEl) {
@@ -1769,13 +1872,13 @@ const MemberModule = (() => {
     closePlanApprovedModal, goToPaymentFromApproval, closePaymentApprovedModal,
     closePlanDeclinedModal, withdrawPlanRequest, cancelWithdrawRequest, confirmWithdrawRequest,
     togglePaymentProofField, previewGcashProof, removeGcashProof, openGcashProofPreview, submitPaymentMethod,
+    addAnotherGcashScreenshot,
     copyGcashNumber, deferPaymentMethod,
     cancelSubmitPayment, confirmSubmitPayment, closePaymentSubmitSuccessModal,
     changeProfilePicture,
     changeAttendanceMonth, openServiceModal, openEquipmentModal, openExerciseInstructionsModal,
     submitFitnessStep1, selectFitnessGoal, fitnessWizardBack, submitFitnessStep2,
     retryFitnessCalculation, fitnessWizardEditGoal, switchFitnessPlanTab,
-    backToWorkoutDays, switchExerciseDetailTab,
     toggleNotificationPanel, openNotifItem,
   };
 })();
@@ -1816,9 +1919,10 @@ document.addEventListener('DOMContentLoaded', () => {
   window.cancelWithdrawRequest   = () => MemberModule.cancelWithdrawRequest();
   window.confirmWithdrawRequest  = () => MemberModule.confirmWithdrawRequest();
   window.togglePaymentProofField = (el) => MemberModule.togglePaymentProofField(el);
-  window.previewGcashProof       = (input) => MemberModule.previewGcashProof(input);
-  window.removeGcashProof        = () => MemberModule.removeGcashProof();
-  window.openGcashProofPreview   = () => MemberModule.openGcashProofPreview();
+  window.previewGcashProof       = (input, slot) => MemberModule.previewGcashProof(input, slot);
+  window.removeGcashProof        = (slot) => MemberModule.removeGcashProof(slot);
+  window.openGcashProofPreview   = (slot) => MemberModule.openGcashProofPreview(slot);
+  window.addAnotherGcashScreenshot = () => MemberModule.addAnotherGcashScreenshot();
   window.submitPaymentMethod     = () => MemberModule.submitPaymentMethod();
   window.copyGcashNumber         = (btn) => MemberModule.copyGcashNumber(btn);
   window.deferPaymentMethod      = () => MemberModule.deferPaymentMethod();
@@ -1836,8 +1940,6 @@ document.addEventListener('DOMContentLoaded', () => {
   window.retryFitnessCalculation = () => MemberModule.retryFitnessCalculation();
   window.fitnessWizardEditGoal   = () => MemberModule.fitnessWizardEditGoal();
   window.switchFitnessPlanTab    = (tabName, btnEl) => MemberModule.switchFitnessPlanTab(tabName, btnEl);
-  window.backToWorkoutDays       = () => MemberModule.backToWorkoutDays();
-  window.switchExerciseDetailTab = (tabName, btnEl) => MemberModule.switchExerciseDetailTab(tabName, btnEl);
   window.toggleNotificationPanel = () => MemberModule.toggleNotificationPanel();
 
   try {

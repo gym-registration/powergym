@@ -319,7 +319,17 @@
 {% endset %}
               <button class="btn btn-sm btn-outline" data-proof-url="{{ url_for('static', filename=p.proof_image_path) }}"
                       data-proof-context="{{ proof_html }}"
-                      onclick="viewPaymentProof(this.dataset.proofUrl, 'Payment Proof', this.dataset.proofContext)">👁 View Proof</button>
+                      onclick="viewPaymentProof(this.dataset.proofUrl, 'Payment Proof — Screenshot 1', this.dataset.proofContext)">👁 View Proof{% if p.proof_image_path_2 or p.proof_image_path_3 %} 1{% endif %}</button>
+              {% if p.proof_image_path_2 %}
+              <button class="btn btn-sm btn-outline" data-proof-url-2="{{ url_for('static', filename=p.proof_image_path_2) }}"
+                      data-proof-context="{{ proof_html }}"
+                      onclick="viewPaymentProof(this.dataset.proofUrl2, 'Payment Proof — Screenshot 2', this.dataset.proofContext)">👁 View Proof 2</button>
+              {% endif %}
+              {% if p.proof_image_path_3 %}
+              <button class="btn btn-sm btn-outline" data-proof-url-3="{{ url_for('static', filename=p.proof_image_path_3) }}"
+                      data-proof-context="{{ proof_html }}"
+                      onclick="viewPaymentProof(this.dataset.proofUrl3, 'Payment Proof — Screenshot 3', this.dataset.proofContext)">👁 View Proof 3</button>
+              {% endif %}
               {% endif %}
               {% if p.is_student and p.student_id_image_path %}
               <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof')">🎓 View School ID</button>
