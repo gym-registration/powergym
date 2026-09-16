@@ -616,32 +616,17 @@ function previewProfilePicture(input) {
   });
 }
 
-/** Members must be 14+ to join. Returns age in whole years, or null if
- *  the date string is missing/invalid — mirrors the server-side check in
- *  the /register route, which is the one that actually enforces this. */
-function _ageFromBirthday(birthdayStr) {
-  if (!birthdayStr) return null;
-  const bday = new Date(birthdayStr + 'T00:00:00');
-  if (isNaN(bday.getTime())) return null;
-  const today = new Date();
-  let age = today.getFullYear() - bday.getFullYear();
-  const monthDayNotReached = (today.getMonth() < bday.getMonth()) ||
-    (today.getMonth() === bday.getMonth() && today.getDate() < bday.getDate());
-  if (monthDayNotReached) age--;
-  return age;
-}
-
 /** Single source of truth for what makes a birthday acceptable — shared
  *  by the live field validation below and the submit-time check in
  *  completeRegistration(), so the rules can never drift apart. Returns
- *  an error string, or null if the birthday is fine. */
+ *  an error string, or null if the birthday is fine.
+ *  No minimum age is enforced — this mirrors the server-side /register
+ *  check, which only rejects a missing, invalid, or future date. */
 function _birthdayErrorMessage(birthdayStr) {
   if (!birthdayStr) return 'Please enter your birthday.';
   const bday = new Date(birthdayStr + 'T00:00:00');
   if (isNaN(bday.getTime())) return 'Please enter a valid birthday.';
   if (bday > new Date()) return 'Birthday cannot be in the future.';
-  const age = _ageFromBirthday(birthdayStr);
-  if (age === null || age < 14) return 'You must be at least 14 years old to join Power Gym.';
   return null;
 }
 
@@ -662,20 +647,9 @@ function validateBirthdayField() {
     return false;
   }
   input.classList.remove('field-error');
-  if (hint) { hint.textContent = 'You must be at least 14 years old to join.'; hint.style.color = 'var(--muted)'; }
+  if (hint) { hint.textContent = ''; }
   if (submitBtn) submitBtn.disabled = false;
   return true;
-}
-
-/** Stops the birthday date picker from offering days less than 14 years
- *  ago, so most people never even see the "too young" error. */
-function _initBirthdayLimit() {
-  const bdayInput = document.getElementById('reg-bday');
-  if (!bdayInput) return;
-  const limit = new Date();
-  limit.setFullYear(limit.getFullYear() - 14);
-  bdayInput.max = limit.toISOString().slice(0, 10);
-  bdayInput.addEventListener('blur', validateBirthdayField);
 }
 
 /** Submit the member self-registration form (used by trmem.html's
@@ -895,7 +869,6 @@ function closeAnnouncementNoticeModal() {
 ════════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', () => {
   _initTermsGateGuard();
-  _initBirthdayLimit();
   window.openModal     = openModal;
   window.closeModal    = closeModal;
   window.openTermsModal = openTermsModal;

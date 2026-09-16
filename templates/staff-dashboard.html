@@ -237,7 +237,7 @@
               <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof')">🎓 View School ID</button>
               {% endif %}
               {% if p.stage == 'approval' %}
-              {% if p.plan in ('Half Month', 'Monthly', 'Yearly') and p.is_student and p.student_id_image_path %}
+              {% if p.has_student_rate and p.is_student and p.student_id_image_path %}
               <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);align-self:center;cursor:pointer;">
                 <input type="checkbox" class="verify-student-check" checked>
                 Confirm student discount
@@ -1061,6 +1061,11 @@
         <input class="form-input" type="number" min="1" id="cf-duration" placeholder="30">
       </div>
     </div>
+    <div class="form-group" id="cf-student-price-wrap" style="display:none;">
+      <label class="form-label">Student Price (₱, optional)</label>
+      <input class="form-input" type="number" min="0" step="0.01" id="cf-student-price" placeholder="e.g. 800">
+      <div style="font-size:12px;color:var(--muted);margin-top:4px;">Charged instead of the regular price when staff confirm a member's school ID. Leave blank if this plan has no student discount.</div>
+    </div>
 
     <div class="form-row" id="cf-promo-fields" style="display:none;">
       <div class="form-group">
@@ -1071,6 +1076,11 @@
         <label class="form-label">Period Label</label>
         <input class="form-input" id="cf-period" placeholder="Limited-time offer">
       </div>
+    </div>
+    <div class="form-group" id="cf-promo-duration-wrap" style="display:none;">
+      <label class="form-label">Access Duration (days)</label>
+      <input class="form-input" type="number" min="1" id="cf-promo-duration" placeholder="30">
+      <div style="font-size:12px;color:var(--muted);margin-top:4px;">How long a member's access lasts once this promo is activated. Defaults to 30 days if left blank.</div>
     </div>
     <div class="form-group" id="cf-valid-until-wrap" style="display:none;">
       <label class="form-label">Valid Until (optional)</label>

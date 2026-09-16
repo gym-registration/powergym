@@ -7,6 +7,8 @@ import csv
 import io
 import tempfile
 import time
+import numpy as np
+import cv2
 from collections import OrderedDict
 from dotenv import load_dotenv
 load_dotenv()  # Reads variables from a .env file in the project root, if present
@@ -497,14 +499,74 @@ def _payment_display_plan(p, fallback='—'):
     return fallback
 
 
+def _plan_is_calendar_month(plan):
+    """True for any month-length plan — the stock 'Monthly' plan, but also
+    a newly added one like '1 Month Pass' — so they all track real calendar
+    months instead of a flat 30 days. 'Half Month' is excluded: it's a
+    14-day plan, not a month."""
+    if not plan or not plan.name:
+        return False
+    name = plan.name.strip().lower()
+    if 'half' in name:
+        return False
+    return 'month' in name and 28 <= (plan.duration_days or 0) <= 31
+
+
 def _plan_expiry(plan, start_date):
     """Compute a plan's expiry date from its start date. Monthly plans track
     real calendar months (28-31 days) instead of a flat 30 days, so 'Feb 1 to
-    Mar 1' and 'Jan 1 to Feb 1' both count as one full month."""
-    if plan and plan.name == 'Monthly':
+    Mar 1' and 'Jan 1 to Feb 1' both count as one full month. Every other
+    plan — including any plan admin/staff add later — simply uses its own
+    duration_days, so nothing here needs updating per plan."""
+    if _plan_is_calendar_month(plan):
         return _add_calendar_month(start_date, 1)
     duration_days = plan.duration_days if plan else 30
     return start_date + timedelta(days=duration_days)
+
+
+def _promo_duration_days(promo):
+    """A promo's access length in days, falling back to 30 for older promo
+    rows saved before the duration field existed."""
+    days = getattr(promo, 'duration_days', None)
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        days = 0
+    return days if days > 0 else 30
+
+
+def _promo_expiry(promo, start_date):
+    """Expiry date for a promo, computed from the promo's own duration —
+    so a promo added from Manage Content schedules itself correctly
+    without depending on any particular membership plan existing."""
+    return start_date + timedelta(days=_promo_duration_days(promo))
+
+
+def _payment_promo(p):
+    """The GymPromo behind a promo Payment, looked up by the title tagged
+    into `notes` at request time. Returns None for regular plan payments,
+    or if the promo has since been deleted/renamed."""
+    if not _is_promo_payment(p):
+        return None
+    title = p.notes[len('Promo request:'):].split('—')[0].strip()
+    if not title:
+        return None
+    return GymPromo.query.filter_by(title=title).first()
+
+
+def _payment_expiry(payment, plan, base_date):
+    """Expiry date to give a membership when `payment` is approved. Promo
+    payments run for the promo's own duration; everything else runs for the
+    plan's. Keeps approval in sync with the preview the member saw when
+    they submitted the request."""
+    promo = _payment_promo(payment)
+    if promo is not None:
+        return _promo_expiry(promo, base_date)
+    if _is_promo_payment(payment):
+        # Promo row is gone — fall back to the 30-day default rather than
+        # silently granting the anchor plan's (possibly yearly) duration.
+        return base_date + timedelta(days=30)
+    return _plan_expiry(plan, base_date)
 
 
 # Per-plan wording for the automated expiry reminder (Send Reminder button
@@ -567,13 +629,80 @@ WALKIN_COACH_FEE = 350.0
 WALKIN_BOXING_FEE = 350.0
 
 
+# Plans that exist as real MembershipPlan rows but are NOT a membership a
+# member signs up for themselves — 'Daily' is a walk-in day pass recorded
+# by staff from the Walk In tab. Matched case-insensitively. Every other
+# plan in the table, including any admin/staff add later, is offered to
+# members automatically.
+MEMBER_HIDDEN_PLAN_NAMES = {'daily'}
+
+
+def _member_selectable_plans():
+    """Every active plan a member is allowed to request, newest content
+    changes included. This is the single source of truth behind the member's
+    plan cards AND the server-side validation of what they picked, so a plan
+    added in Manage Content is immediately choosable with nothing else to
+    update."""
+    plans = (MembershipPlan.query
+             .filter_by(is_active=True)
+             .order_by(MembershipPlan.sort_order, MembershipPlan.id)
+             .all())
+    return [p for p in plans
+            if (p.name or '').strip().lower() not in MEMBER_HIDDEN_PLAN_NAMES]
+
+
+def _find_plan_by_key(key, plans=None):
+    """Resolve the plan key sent by the member's plan card (the plan name,
+    lowercased) back to its MembershipPlan row. Case- and whitespace-
+    insensitive so names like 'Student Pass' or '3 Months' work as-is."""
+    key = (key or '').strip().lower()
+    if not key:
+        return None
+    for p in (plans if plans is not None else _member_selectable_plans()):
+        if (p.name or '').strip().lower() == key:
+            return p
+    return None
+
+
+def _student_price(plan):
+    """A plan's student rate: the one admin/staff set on the plan itself if
+    present, otherwise the legacy built-in table, otherwise the normal
+    price (i.e. no discount)."""
+    if not plan:
+        return 0.0
+    if plan.student_price is not None:
+        return float(plan.student_price)
+    if plan.name in STUDENT_PLAN_PRICES:
+        return STUDENT_PLAN_PRICES[plan.name]
+    return float(plan.price)
+
+
 def _plan_amount(plan, is_student):
     """The amount to actually charge for a plan, applying the student
     discount when applicable. Falls back to the plan's normal price for
-    plans with no listed student rate (e.g. Daily) or for non-students."""
-    if plan and is_student and plan.name in STUDENT_PLAN_PRICES:
-        return STUDENT_PLAN_PRICES[plan.name]
+    plans with no student rate set (e.g. Daily) or for non-students."""
+    if plan and is_student:
+        return _student_price(plan)
     return plan.price if plan else 0.0
+
+
+def _plan_options_data(include_hidden=True):
+    """Plan dropdown data for the staff/admin forms (Record Payment, Add /
+    Edit Member). Driven straight off the plans table so new plans appear
+    in those dropdowns automatically."""
+    plans = (MembershipPlan.query
+             .filter_by(is_active=True)
+             .order_by(MembershipPlan.sort_order, MembershipPlan.id)
+             .all())
+    if not include_hidden:
+        plans = [p for p in plans
+                 if (p.name or '').strip().lower() not in MEMBER_HIDDEN_PLAN_NAMES]
+    return [{
+        'name':          p.name,
+        'price':         float(p.price),
+        'student_price': _student_price(p),
+        'duration_days': p.duration_days,
+    } for p in plans]
 
 
 def _coach_fee(coach_name):
@@ -746,6 +875,14 @@ PROFILE_MAX_BYTES     = 5 * 1024 * 1024  # 5MB
 PROFILE_PICTURE_COOLDOWN_DAYS = 7
 os.makedirs(PROFILE_UPLOAD_FOLDER, exist_ok=True)
 
+# Face detector for profile-picture uploads — rejects images with no
+# detectable face (e.g. screenshots, memes, scenery/blank photos) at
+# registration and on later profile-picture changes. Uses OpenCV's bundled
+# Haar cascade: runs locally, no external API or network call needed.
+_FACE_CASCADE = cv2.CascadeClassifier(
+    cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+)
+
 # ── Flask-Mail configuration ─────────────────────────────────
 # Set these as real environment variables (don't hardcode credentials here).
 # For Gmail: MAIL_USERNAME is your Gmail address, MAIL_PASSWORD is a 16-char
@@ -856,6 +993,12 @@ class MembershipPlan(db.Model):
     image_path    = db.Column(db.String(255), nullable=True)
     inclusions    = db.Column(db.Text, nullable=True)   # one inclusion per line
     sort_order    = db.Column(db.Integer, nullable=False, default=0)
+    # Optional discounted price for members with a verified school ID.
+    # NULL means "no student rate for this plan" — it then falls back to
+    # the legacy STUDENT_PLAN_PRICES table, and finally to the normal
+    # price. Set from Manage Content → Membership Plans, so a brand-new
+    # plan can carry a student rate without any code change.
+    student_price = db.Column(db.Float, nullable=True)
 
     memberships   = db.relationship('Membership', back_populates='plan')
     payments      = db.relationship('Payment', back_populates='plan')
@@ -881,6 +1024,11 @@ class GymPromo(db.Model):
     title        = db.Column(db.String(100), nullable=False)
     price        = db.Column(db.Float, nullable=False)
     period       = db.Column(db.String(100), nullable=True)   # e.g. "Limited-time offer"
+    # How long the promo's gym access lasts once activated. This is what
+    # the member's expiry_date is computed from, so a promo added from
+    # Manage Content schedules itself correctly instead of borrowing the
+    # Monthly plan's duration. Defaults to 30 days.
+    duration_days = db.Column(db.Integer, nullable=False, default=30)
     description  = db.Column(db.Text, nullable=True)
     inclusions   = db.Column(db.Text, nullable=True)          # one inclusion per line
     valid_until  = db.Column(db.Date, nullable=True)
@@ -1355,6 +1503,31 @@ def _save_content_image(file_storage, existing_path=None):
     return f'uploads/content/{safe_name}'
 
 
+def _image_contains_face(file_storage):
+    """Return True if at least one face is detectable in the uploaded image.
+    Reads the file into memory via OpenCV (no temp file needed) and leaves
+    file_storage's stream position reset to 0 for the caller. Returns False
+    (rather than raising) on anything that isn't a decodable image, since
+    that case is already caught separately by the extension/size checks."""
+    file_storage.seek(0)
+    file_bytes = np.frombuffer(file_storage.read(), dtype=np.uint8)
+    file_storage.seek(0)
+
+    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    if img is None:
+        return False
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # Slightly generous minSize relative to image dimensions so a
+    # close-up selfie and a smaller half-body photo both still qualify,
+    # while ignoring tiny false-positive specks.
+    min_dim = max(30, int(min(gray.shape[:2]) * 0.08))
+    faces = _FACE_CASCADE.detectMultiScale(
+        gray, scaleFactor=1.1, minNeighbors=5, minSize=(min_dim, min_dim)
+    )
+    return len(faces) > 0
+
+
 def _save_profile_picture(file_storage):
     """Save a member's self-registration profile picture to
     PROFILE_UPLOAD_FOLDER and return the web-relative path to store on
@@ -1362,7 +1535,7 @@ def _save_profile_picture(file_storage):
     here — callers must check for a non-empty file_storage themselves
     (registration hard-blocks account creation without one) — this
     function only validates the file itself once it's known to be present.
-    Raises ValueError on invalid file."""
+    Raises ValueError on invalid file, or if no face is detected in it."""
     ext = file_storage.filename.rsplit('.', 1)[-1].lower() if '.' in file_storage.filename else ''
     if ext not in PROFILE_ALLOWED_EXT:
         raise ValueError('Profile picture must be a PNG, JPG, JPEG, or WEBP file.')
@@ -1371,6 +1544,8 @@ def _save_profile_picture(file_storage):
     file_storage.seek(0)
     if size > PROFILE_MAX_BYTES:
         raise ValueError('Profile picture must be smaller than 5MB.')
+    if not _image_contains_face(file_storage):
+        raise ValueError('We couldn\u2019t detect a face in that photo. Please upload a clear photo of yourself.')
     safe_name = secure_filename(f"{secrets.token_hex(8)}.{ext}")
     file_storage.save(os.path.join(PROFILE_UPLOAD_FOLDER, safe_name))
     return f'uploads/profile_pictures/{safe_name}'
@@ -1394,6 +1569,7 @@ def _plan_to_dict(p):
         'price': p.price, 'is_active': p.is_active,
         'description': p.description or '', 'image_path': p.image_path or '',
         'inclusions': p.inclusions or '', 'sort_order': p.sort_order,
+        'student_price': '' if p.student_price is None else p.student_price,
     }
 
 
@@ -1404,7 +1580,7 @@ def _promo_to_dict(p):
     # the field name.
     return {
         'id': p.id, 'name': p.title, 'price': p.price, 'period': p.period or '',
-        'is_active': p.is_active, 'description': p.description or '',
+        'duration_days': _promo_duration_days(p), 'is_active': p.is_active, 'description': p.description or '',
         'image_path': p.image_path or '', 'inclusions': p.inclusions or '',
         'valid_until': p.valid_until.isoformat() if p.valid_until else '',
         'sort_order': p.sort_order,
@@ -1711,6 +1887,7 @@ def api_save_plan():
     name          = (request.form.get('name') or '').strip()
     duration_days = request.form.get('duration_days', '').strip()
     price         = request.form.get('price', '').strip()
+    student_price_raw = (request.form.get('student_price') or '').strip()
     description   = (request.form.get('description') or '').strip()
     inclusions    = (request.form.get('inclusions') or '').strip()
     sort_order    = request.form.get('sort_order', '0').strip()
@@ -1727,6 +1904,18 @@ def api_save_plan():
             raise ValueError()
     except ValueError:
         return jsonify(success=False, error='Duration and price must be valid positive numbers.'), 400
+
+    # Blank student price = this plan simply has no student rate.
+    student_price = None
+    if student_price_raw:
+        try:
+            student_price = float(student_price_raw)
+            if student_price < 0:
+                raise ValueError()
+        except ValueError:
+            return jsonify(success=False, error='Student price must be a valid positive number.'), 400
+        if student_price > price:
+            return jsonify(success=False, error='Student price cannot be higher than the regular price.'), 400
 
     if plan_id:
         plan = MembershipPlan.query.get(plan_id)
@@ -1756,6 +1945,7 @@ def api_save_plan():
     plan.name          = name
     plan.duration_days = duration_days
     plan.price         = price
+    plan.student_price = student_price
     plan.description   = description or None
     plan.inclusions    = inclusions or None
     plan.image_path    = image_path
@@ -1806,6 +1996,7 @@ def api_save_promo():
     title        = (request.form.get('name') or '').strip()
     price        = request.form.get('price', '').strip()
     period       = (request.form.get('period') or '').strip()
+    duration_raw = (request.form.get('duration_days') or '').strip()
     description  = (request.form.get('description') or '').strip()
     inclusions   = (request.form.get('inclusions') or '').strip()
     valid_until_raw = (request.form.get('valid_until') or '').strip()
@@ -1822,6 +2013,17 @@ def api_save_promo():
             raise ValueError()
     except ValueError:
         return jsonify(success=False, error='Price must be a valid positive number.'), 400
+
+    # How many days of access the promo grants once activated. Blank keeps
+    # the 30-day default so older promos and quick entries still work.
+    duration_days = 30
+    if duration_raw:
+        try:
+            duration_days = int(duration_raw)
+            if duration_days <= 0:
+                raise ValueError()
+        except ValueError:
+            return jsonify(success=False, error='Promo duration must be a whole number of days greater than 0.'), 400
 
     valid_until = None
     if valid_until_raw:
@@ -1853,6 +2055,7 @@ def api_save_promo():
     promo.title       = title
     promo.price       = price
     promo.period      = period or None
+    promo.duration_days = duration_days
     promo.description = description or None
     promo.inclusions  = inclusions or None
     promo.valid_until = valid_until
@@ -2602,9 +2805,9 @@ def register():
     if not _valid_phone(phone):
         return jsonify(success=False, error='Phone number must start with 09 and be exactly 11 digits.'), 400
 
-    # ── Age gate: members must be 14 or older to join the gym. Birthday is
-    # required (not optional) specifically so this can be enforced — never
-    # trust a client-side date-input min/max alone. ──
+    # ── Birthday is required, and must be a real date that isn't in the
+    # future — never trust a client-side date-input max alone. No minimum
+    # age is enforced. ──
     if not birthday:
         return jsonify(success=False, error='Please enter your birthday.'), 400
     try:
@@ -2613,8 +2816,6 @@ def register():
         return jsonify(success=False, error='Please enter a valid birthday.'), 400
     if birthday_date > date.today():
         return jsonify(success=False, error='Birthday cannot be in the future.'), 400
-    if _calculate_age(birthday_date) < 14:
-        return jsonify(success=False, error='You must be at least 14 years old to join Power Gym.'), 400
 
     if User.query.filter_by(email=email).first() is not None:
         return jsonify(success=False, error='An account with this email already exists.'), 409
@@ -3437,7 +3638,7 @@ def admin_verify_payment(payment_id):
         base_date = requested_start if (requested_start and requested_start > today) else today
         membership.start_date = base_date
 
-    membership.expiry_date = _plan_expiry(plan, base_date)
+    membership.expiry_date = _payment_expiry(payment, plan, base_date)
     if plan is not None:
         membership.plan_id = plan.id
     membership.status = 'active'
@@ -3581,8 +3782,16 @@ def member_submit_payment():
             return jsonify(success=False, error=f'{coach.name} is currently at full capacity. Please choose another coach.'), 409
         wants_coach = True
 
-        anchor_plan = MembershipPlan.query.filter_by(name='Monthly').first()
-        expiry = _plan_expiry(anchor_plan, requested_start) if anchor_plan else requested_start + timedelta(days=30)
+        # The promo's access length comes from the promo itself now, so it
+        # no longer breaks if the Monthly plan is renamed, deactivated or
+        # deleted. An anchor plan is still attached to the Payment row
+        # purely so existing plan-based screens have something to join on —
+        # the promo's real name/price is what actually gets displayed
+        # (see _payment_display_plan).
+        anchor_plan = (MembershipPlan.query.filter_by(name='Monthly', is_active=True).first()
+                       or MembershipPlan.query.filter_by(is_active=True)
+                          .order_by(MembershipPlan.sort_order, MembershipPlan.id).first())
+        expiry = _promo_expiry(promo, requested_start)
         promo_price_text = f'{promo.price:,.0f}' if promo.price == int(promo.price) else f'{promo.price:,.2f}'
         # The coach is bundled into the promo price itself — no separate
         # fee is added on top (unlike the regular-plan path below, where
@@ -3629,18 +3838,16 @@ def member_submit_payment():
                                               f'{requested_start.strftime("%b %d, %Y")}. '
                                               f'Please wait for staff approval before proceeding to payment.')
 
-    plan_name_map = {
-        'daily': 'Daily',
-        'half month': 'Half Month',
-        'monthly': 'Monthly',
-        'yearly': 'Yearly',
-    }
-    if plan_key not in plan_name_map:
+    # The plan is resolved straight from the plans table rather than a fixed
+    # list of names, so any plan admin/staff add in Manage Content can be
+    # requested here the moment it's saved — no code change needed.
+    if not plan_key:
         return jsonify(success=False, error='Please select a membership plan.'), 400
 
-    plan = MembershipPlan.query.filter_by(name=plan_name_map[plan_key]).first()
+    plan = _find_plan_by_key(plan_key)
     if plan is None:
-        return jsonify(success=False, error='Selected plan is not available.'), 400
+        return jsonify(success=False, error='That plan is no longer available. '
+                                            'Please refresh the page and pick again.'), 400
 
     if wants_coach:
         coach = Coach.query.filter_by(name=coach_name, is_active=True).first()
@@ -4058,7 +4265,7 @@ def staff_record_payment():
 
     base_date = membership.expiry_date if was_active_with_time else today
     membership.plan_id     = plan.id
-    membership.expiry_date = _plan_expiry(plan, base_date)
+    membership.expiry_date = _payment_expiry(new_payment, plan, base_date)
     membership.status      = 'active'
     if member.status != 'active':
         member.status = 'active'
@@ -5391,10 +5598,7 @@ def member():
     # walk-in-only day pass (recorded by staff from the Walk In tab, never
     # a member's own membership). Half Month, Monthly, and Yearly are meant
     # to be chosen as a member's plan.
-    content_plans = [
-        p for p in MembershipPlan.query.filter_by(is_active=True).order_by(MembershipPlan.sort_order, MembershipPlan.id).all()
-        if p.name != 'Daily'
-    ]
+    content_plans = _member_selectable_plans()
     content_services  = GymService.query.filter_by(is_active=True).order_by(GymService.sort_order, GymService.id).all()
     content_equipment = GymEquipment.query.filter_by(is_active=True).order_by(GymEquipment.sort_order, GymEquipment.id).all()
     content_promos    = GymPromo.query.filter_by(is_active=True).order_by(GymPromo.sort_order, GymPromo.id).all()
@@ -5428,7 +5632,7 @@ def member():
         'key':            p.name.lower(),
         'name':           p.name,
         'price':          p.price,
-        'student_price':  STUDENT_PLAN_PRICES.get(p.name, p.price),
+        'student_price':  _student_price(p),
         'duration_days':  p.duration_days,
         'description':    p.description or '',
         'inclusions':     p.inclusions_list,
@@ -5444,6 +5648,7 @@ def member():
         'title':       p.title,
         'price':       p.price,
         'period':      p.period or 'Limited-time offer',
+        'duration_days': _promo_duration_days(p),
         'description': p.description or '',
         'inclusions':  p.inclusions_list,
         'valid_until': p.valid_until.strftime('%B %d, %Y') if p.valid_until else '',
@@ -5741,6 +5946,10 @@ def staff():
         'proof_image_path': p.proof_image_path,
         'is_student': p.is_student,
         'student_id_image_path': p.student_id_image_path,
+        # Whether this request's plan actually carries a student rate —
+        # computed from the plan itself, so the "confirm student discount"
+        # control appears for any plan that has one, including new ones.
+        'has_student_rate': bool(p.plan and _student_price(p.plan) < float(p.plan.price)),
         'wants_coach': p.wants_coach,
         'coach_name': p.coach_name,
         'stage': _payment_stage(p),
@@ -5913,6 +6122,11 @@ def staff():
         WALKIN_COACH_FEE=WALKIN_COACH_FEE,
         WALKIN_BOXING_FEE=WALKIN_BOXING_FEE,
         payment_members=payment_members,
+        # Plan dropdown for the Payment Record form — read live from the
+        # plans table, so a plan added in Manage Content is recordable here
+        # immediately. Walk-in-only plans (Daily) are included on purpose:
+        # staff do record those at the front desk.
+        payment_plan_options=_plan_options_data(),
         analytics=analytics,
         report_ranges=REPORT_RANGES,
         announcements=announcements,
@@ -6697,6 +6911,10 @@ def admin():
         announcements=announcements,
         current_user=admin_user,
         gcash_settings=_get_gym_settings(),
+        # Drives the Plan dropdowns in the Add Member / Edit Member modals
+        # so they list whatever plans currently exist, instead of a fixed
+        # four baked into the template.
+        plan_options=_plan_options_data(),
         coaches=coaches_data,
         coach_days=VALID_COACH_DAYS,
         picture_can_change=picture_can_change,
@@ -7424,6 +7642,8 @@ def _run_startup_migrations():
         ('membership_plans', 'image_path',  "ALTER TABLE membership_plans ADD COLUMN image_path VARCHAR(255) NULL"),
         ('membership_plans', 'inclusions',  "ALTER TABLE membership_plans ADD COLUMN inclusions TEXT NULL"),
         ('membership_plans', 'sort_order',  "ALTER TABLE membership_plans ADD COLUMN sort_order INT NOT NULL DEFAULT 0"),
+        ('membership_plans', 'student_price', "ALTER TABLE membership_plans ADD COLUMN student_price DECIMAL(10,2) NULL"),
+        ('gym_promos', 'duration_days', "ALTER TABLE gym_promos ADD COLUMN duration_days INT NOT NULL DEFAULT 30"),
         ('gym_services',   'category', "ALTER TABLE gym_services ADD COLUMN category VARCHAR(60) NULL"),
         ('gym_services',   'icon',     "ALTER TABLE gym_services ADD COLUMN icon VARCHAR(8) NULL"),
         ('gym_equipment',  'category', "ALTER TABLE gym_equipment ADD COLUMN category VARCHAR(60) NULL"),

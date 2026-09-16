@@ -886,7 +886,8 @@ const ContentManager = (() => {
       priceLine = `<div class="content-card-price">₱${Number(item.price).toLocaleString()} / ${item.duration_days} day${item.duration_days == 1 ? '' : 's'}</div>`;
     } else if (isPromo) {
       const periodTxt = item.period ? ` · ${_esc(item.period)}` : '';
-      priceLine = `<div class="content-card-price">₱${Number(item.price).toLocaleString()}${periodTxt}</div>`;
+      const days = Number(item.duration_days) || 30;
+      priceLine = `<div class="content-card-price">₱${Number(item.price).toLocaleString()} / ${days} day${days == 1 ? '' : 's'}${periodTxt}</div>`;
     }
     const categoryBadge = (!isPlan && !isPromo && item.category)
       ? `<div style="font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);">${_esc(item.category)}</div>`
@@ -965,12 +966,20 @@ const ContentManager = (() => {
     document.getElementById('cf-plan-fields').style.display = isPlan ? 'grid' : 'none';
     const promoFields = document.getElementById('cf-promo-fields');
     if (promoFields) promoFields.style.display = isPromo ? 'grid' : 'none';
+    // Student price (plans only) and access duration (promos only) — both
+    // optional, both read back by the member-facing pricing/expiry logic.
+    const studentPriceWrap = document.getElementById('cf-student-price-wrap');
+    if (studentPriceWrap) studentPriceWrap.style.display = isPlan ? 'block' : 'none';
+    const promoDurationWrap = document.getElementById('cf-promo-duration-wrap');
+    if (promoDurationWrap) promoDurationWrap.style.display = isPromo ? 'block' : 'none';
     const validUntilWrap = document.getElementById('cf-valid-until-wrap');
     if (validUntilWrap) validUntilWrap.style.display = isPromo ? 'block' : 'none';
     document.getElementById('cf-inclusions-wrap').style.display = (isPlan || isPromo) ? 'block' : 'none';
     if (isPlan) {
       document.getElementById('cf-price').value = item ? item.price : '';
       document.getElementById('cf-duration').value = item ? item.duration_days : '';
+      const studentPrice = document.getElementById('cf-student-price');
+      if (studentPrice) studentPrice.value = item ? (item.student_price === '' || item.student_price == null ? '' : item.student_price) : '';
     }
     if (isPromo) {
       const promoPrice = document.getElementById('cf-promo-price');
@@ -979,6 +988,8 @@ const ContentManager = (() => {
       if (promoPrice) promoPrice.value = item ? item.price : '';
       if (periodInput) periodInput.value = item ? (item.period || '') : '';
       if (validUntilInput) validUntilInput.value = item ? (item.valid_until || '') : '';
+      const promoDuration = document.getElementById('cf-promo-duration');
+      if (promoDuration) promoDuration.value = item ? (item.duration_days || '') : '';
     }
     if (isPlan || isPromo) {
       document.getElementById('cf-inclusions').value = item ? (item.inclusions || '') : '';
@@ -1391,6 +1402,17 @@ const ContentManager = (() => {
       if (!duration || Number(duration) <= 0) { showToast('Enter a valid duration in days.', 'error'); return; }
       fd.append('price', price);
       fd.append('duration_days', duration);
+      const studentPriceEl = document.getElementById('cf-student-price');
+      const studentPrice = studentPriceEl ? studentPriceEl.value.trim() : '';
+      if (studentPrice !== '') {
+        if (Number(studentPrice) < 0) { showToast('Enter a valid student price.', 'error'); return; }
+        if (Number(studentPrice) > Number(price)) {
+          showToast('Student price cannot be higher than the regular price.', 'error'); return;
+        }
+      }
+      // Sent even when blank, so clearing the box removes an existing
+      // student rate instead of silently keeping the old one.
+      fd.append('student_price', studentPrice);
       fd.append('inclusions', document.getElementById('cf-inclusions').value);
     }
 
@@ -1400,6 +1422,12 @@ const ContentManager = (() => {
       fd.append('price', price);
       const periodInput = document.getElementById('cf-period');
       fd.append('period', periodInput ? periodInput.value.trim() : '');
+      const promoDurationEl = document.getElementById('cf-promo-duration');
+      const promoDuration = promoDurationEl ? promoDurationEl.value.trim() : '';
+      if (promoDuration !== '' && Number(promoDuration) <= 0) {
+        showToast('Enter a valid promo duration in days.', 'error'); return;
+      }
+      fd.append('duration_days', promoDuration);
       const validUntilInput = document.getElementById('cf-valid-until');
       if (validUntilInput && validUntilInput.value) fd.append('valid_until', validUntilInput.value);
       fd.append('inclusions', document.getElementById('cf-inclusions').value);
