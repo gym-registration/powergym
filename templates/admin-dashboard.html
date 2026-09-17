@@ -151,7 +151,10 @@
               </div>
               <div style="display:flex;gap:8px;">
                 {% if p.is_student and p.student_id_image_path %}
-                <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof')">🎓 View School ID</button>
+                <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof — Front')">🎓 View ID (Front)</button>
+                {% endif %}
+                {% if p.is_student and p.student_id_back_image_path %}
+                <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_back_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof — Back')">🎓 View ID (Back)</button>
                 {% endif %}
                 {% if p.stage == 'approval' %}
                 <span class="badge badge-muted" style="align-self:center;">⏳ Awaiting staff approval</span>
@@ -332,7 +335,10 @@
               {% endif %}
               {% endif %}
               {% if p.is_student and p.student_id_image_path %}
-              <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof')">🎓 View School ID</button>
+              <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof — Front')">🎓 View ID (Front)</button>
+              {% endif %}
+              {% if p.is_student and p.student_id_back_image_path %}
+              <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_back_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof — Back')">🎓 View ID (Back)</button>
               {% endif %}
               {% if p.stage == 'approval' %}
               <span class="badge badge-muted" style="align-self:center;">⏳ Awaiting staff approval</span>
@@ -500,20 +506,27 @@
     <!-- ── Staff Accounts ──────────────────── -->
     <div id="admin-staffmgmt" class="sub-panel">
       <div class="page-header">
-        <div><div class="page-title">STAFF ACCOUNTS</div><div class="page-subtitle">Manage staff access and roles</div></div>
-        <button class="btn btn-red" onclick="showToast('Staff account creation coming soon','success')">+ ADD STAFF</button>
+        <div><div class="page-title">STAFF ACCOUNTS</div><div class="page-subtitle">Manage staff access — admin accounts aren't listed here</div></div>
+        <button class="btn btn-red" onclick="openModal('add-staff-modal')">+ ADD STAFF</button>
       </div>
       <div class="panel">
-        <table class="data-table">
+        <table class="data-table" id="staff-accounts-table">
           <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
-            <tr>
-              <td>Staff Member</td>
-              <td>staff@powergym.com</td>
-              <td><span class="badge badge-blue">Staff</span></td>
-              <td><span class="badge badge-green">Active</span></td>
-              <td><button class="btn btn-sm btn-outline" onclick="showToast('Edit coming soon','success')">Edit</button></td>
+            {% for s in staff_accounts %}
+            <tr data-id="{{ s.id }}" data-name="{{ s.name }}" data-email="{{ s.email }}" data-role="{{ s.role }}" data-status="{{ s.status }}">
+              <td>{{ s.name }}</td>
+              <td>{{ s.email }}</td>
+              <td><span class="badge {{ 'badge-red' if s.role == 'admin' else 'badge-blue' }}">{{ 'Admin' if s.role == 'admin' else 'Staff' }}</span></td>
+              <td><span class="badge {{ 'badge-green' if s.status == 'active' else 'badge-muted' }}">{{ 'Active' if s.status == 'active' else 'Suspended' }}</span></td>
+              <td>
+                <button class="btn btn-sm btn-outline" onclick="openEditStaffModal(this)">Edit</button>
+                <button class="btn btn-sm" style="background:rgba(230,30,37,0.1);color:var(--red);border:1px solid rgba(230,30,37,0.2);" onclick="promptDeleteStaff(this)">Delete</button>
+              </td>
             </tr>
+            {% else %}
+            <tr><td colspan="5" style="color:var(--muted);text-align:center;">No staff accounts yet — click "+ ADD STAFF" to create one.</td></tr>
+            {% endfor %}
           </tbody>
         </table>
       </div>
@@ -1231,6 +1244,58 @@
     </div>
     <div class="form-group"><label class="form-label">Expiry Date</label><input id="edit-member-expiry" class="form-input" type="date"></div>
     <button class="btn btn-red" style="width:100%;margin-top:8px;" onclick="saveEditMember()">SAVE CHANGES</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="add-staff-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('add-staff-modal')">✕</button>
+    <div class="modal-title">ADD STAFF ACCOUNT</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.6;">
+      Creates a Staff account — separate from a member account, and separate from
+      admin accounts (which aren't managed here). A temporary password is generated
+      automatically and emailed to them, along with a clear note that it's a staff
+      account, not a membership.
+    </div>
+    <div class="form-row-4" style="grid-template-columns:1fr 1fr;">
+      <div class="form-group"><label class="form-label">First Name</label><input id="add-staff-fname" class="form-input" placeholder="Juan"></div>
+      <div class="form-group"><label class="form-label">Last Name</label><input id="add-staff-lname" class="form-input" placeholder="Dela Cruz"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Email</label><input id="add-staff-email" class="form-input" type="email" placeholder="juan@powergym.com"></div>
+    <div class="form-group"><label class="form-label">Phone (optional)</label><input id="add-staff-phone" class="form-input" placeholder="09171234567" maxlength="11" inputmode="numeric" pattern="09\d{9}" oninput="this.value=this.value.replace(/\D/g,'').slice(0,11)"></div>
+    <button class="btn btn-red" style="width:100%;margin-top:8px;" onclick="AdminModule.addStaff()">CREATE ACCOUNT</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="edit-staff-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('edit-staff-modal')">✕</button>
+    <div class="modal-title">EDIT STAFF ACCOUNT</div>
+    <div class="form-group"><label class="form-label">Name</label><input id="edit-staff-name" class="form-input" disabled></div>
+    <div class="form-group"><label class="form-label">Email</label><input id="edit-staff-email" class="form-input" disabled></div>
+    <div class="form-group">
+      <label class="form-label">Status</label>
+      <select id="edit-staff-status" class="form-input">
+        <option value="active">Active</option>
+        <option value="suspended">Suspended</option>
+      </select>
+    </div>
+    <button class="btn btn-red" style="width:100%;margin-top:8px;" onclick="AdminModule.saveEditStaff()">SAVE CHANGES</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="delete-staff-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('delete-staff-modal')">✕</button>
+    <div class="modal-title">DELETE STAFF ACCOUNT</div>
+    <div style="font-size:14px;color:var(--white);margin-bottom:8px;line-height:1.6;" id="delete-staff-message"></div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:20px;line-height:1.6;">
+      This permanently removes their account and login access. This cannot be undone.
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button class="btn btn-outline" style="flex:1;" onclick="closeModal('delete-staff-modal')">CANCEL</button>
+      <button class="btn btn-red" style="flex:1;" onclick="AdminModule.confirmDeleteStaff()">DELETE</button>
+    </div>
   </div>
 </div>
 

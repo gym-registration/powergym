@@ -234,7 +234,10 @@
             </div>
             <div style="display:flex;gap:8px;">
               {% if p.is_student and p.student_id_image_path %}
-              <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof')">🎓 View School ID</button>
+              <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof — Front')">🎓 View ID (Front)</button>
+              {% endif %}
+              {% if p.is_student and p.student_id_back_image_path %}
+              <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_back_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof — Back')">🎓 View ID (Back)</button>
               {% endif %}
               {% if p.stage == 'approval' %}
               {% if p.has_student_rate and p.is_student and p.student_id_image_path %}

@@ -21,13 +21,13 @@
 
     <nav>
       <ul class="nav-links">
-        <li><a href="#top" class="active">Home</a></li>
-        <li><a href="#membership">Membership</a></li>
-        <li><a href="#programs">Programs</a></li>
-        <li><a href="#coaches">Coaches</a></li>
-        <li><a href="#schedule">Schedule</a></li>
-        <li><a href="#announcements">Announcements</a></li>
-        <li><a href="#contact">Contact</a></li>
+        <li><a href="#top" class="active" onclick="hideAuthScreen();">Home</a></li>
+        <li><a href="#membership" onclick="hideAuthScreen();">Membership</a></li>
+        <li><a href="#programs" onclick="hideAuthScreen();">Programs</a></li>
+        <li><a href="#coaches" onclick="hideAuthScreen();">Coaches</a></li>
+        <li><a href="#schedule" onclick="hideAuthScreen();">Schedule</a></li>
+        <li><a href="#announcements" onclick="hideAuthScreen();">Announcements</a></li>
+        <li><a href="#contact" onclick="hideAuthScreen();">Contact</a></li>
       </ul>
     </nav>
 
@@ -52,7 +52,7 @@
         </div>
       </div>
       <div class="login-role-tag" id="login-role-tag" style="min-height:18px;">&nbsp;</div>
-      <div class="login-title">MEMBER LOGIN</div>
+      <div class="login-title" id="login-title">MEMBER LOGIN</div>
     </div>
 
     <form action="{{ url_for('login') }}" method="post" class="login-form" onsubmit="completeLogin(); return false;">
@@ -555,6 +555,13 @@ function hideAuthScreen() {
   // stale the next time the overlay is opened.
   const loginFlash = document.getElementById('login-flash');
   if (loginFlash) loginFlash.innerHTML = '';
+  // Drop the ?screen=login/register param from the URL so a refresh (or
+  // sharing the link) doesn't silently reopen the overlay again.
+  if (window.location.search.includes('screen=')) {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('screen');
+    window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+  }
 }
 {% if open_screen %}
 document.addEventListener('DOMContentLoaded', () => showAuthScreen('{{ open_screen }}'));

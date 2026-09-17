@@ -32,6 +32,13 @@ const MemberModule = (() => {
   let _pendingPaymentMethod = null; // { formData } staged between submitPaymentMethod() and confirmSubmitPayment()
   let _withdrawPaymentId = null;
 
+  // The member's picked school-ID photos. Tracked here (not just read off
+  // the <input>) because choosing a file clears whatever was already in a
+  // native <input type="file">, so re-selecting to add/redo just one side
+  // would otherwise wipe the other. See previewStudentId() below.
+  let _studentIdFrontFile = null;
+  let _studentIdBackFile  = null;
+
   let _fitnessGoal = null; // currently-selected goal in the Step 2 grid ('CUT'|'BULK'|'MAINTAIN'|'RECOMP')
 
   // Attendance calendar month navigation state
@@ -53,6 +60,48 @@ const MemberModule = (() => {
     RECOMP:   'BODY RECOMPOSITION',
   };
 
+  /* ── "When do you want to start?" date guard ──────────────
+     Mirrors the birthday guard on registration: bounds the native date
+     picker so it can't offer, or silently accept, a bogus year (e.g. a
+     stray extra digit typed into the year segment — "20026" instead of
+     "2026"). Range is today .. +2 years: wide enough for any real future
+     start date, narrow enough to catch that kind of typo. */
+  function _todayStr() {
+    return new Date().toISOString().split('T')[0];
+  }
+
+  function _startDateMaxStr() {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() + 2);
+    return d.toISOString().split('T')[0];
+  }
+
+  function _setupStartDateGuard() {
+    const input = document.getElementById('member-renew-start');
+    if (!input) return;
+    input.min = _todayStr();
+    input.max = _startDateMaxStr();
+    validateStartDateField();
+  }
+
+  function isStartDateValid() {
+    const input = document.getElementById('member-renew-start');
+    if (!input || !input.value) return true; // emptiness is checked separately at submit time
+    return input.value >= _todayStr() && input.value <= _startDateMaxStr();
+  }
+
+  /** Renders the inline error note under the start-date field as the
+   *  member types/picks a value — same pattern as the registration
+   *  birthday field's renderBirthdayNote(). */
+  function validateStartDateField() {
+    const input = document.getElementById('member-renew-start');
+    const errNote = document.getElementById('member-renew-start-error');
+    if (!input) return;
+    const failedCheck = !!input.value && !isStartDateValid();
+    if (errNote) errNote.style.display = failedCheck ? 'block' : 'none';
+    input.style.borderColor = failedCheck ? '#ff4d4d' : '';
+  }
+
   /* ── Init ─────────────────────────────────────────────── */
   function init() {
     const session = Session.guardDashboard();
@@ -62,6 +111,8 @@ const MemberModule = (() => {
     document.body.classList.add('role-member');
     _bindModalBackdrops();
     Navigation.activateTab('member', 'overview', document.getElementById('nav-member-overview'));
+
+    _setupStartDateGuard();
 
     // Live-validate the Amount Paid field (red = short, green = meets the
     // required amount) as the member types, not just right after OCR fills it.
@@ -591,33 +642,83 @@ const MemberModule = (() => {
     if (card) selectPlan(card, key);
   }
 
+  /** Renders whatever's currently in _studentIdFrontFile / _studentIdBackFile
+   *  into the two previews. Single source of truth for what's on screen —
+   *  called after every add or remove instead of reading the native
+   *  <input> (which only ever reflects the most recent file dialog). */
+  function _renderStudentIdPreviews() {
+    const renderSlot = (file, previewId, removeBtnId) => {
+      const preview = document.getElementById(previewId);
+      const removeBtn = document.getElementById(removeBtnId);
+      if (!file) {
+        if (preview) { preview.src = ''; preview.style.display = 'none'; }
+        if (removeBtn) removeBtn.style.display = 'none';
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = e => {
+        if (preview) { preview.src = e.target.result; preview.style.display = 'block'; }
+      };
+      reader.readAsDataURL(file);
+      if (removeBtn) removeBtn.style.display = 'inline-block';
+    };
+    renderSlot(_studentIdFrontFile, 'member-student-id-front-preview', 'member-student-id-front-remove');
+    renderSlot(_studentIdBackFile, 'member-student-id-back-preview', 'member-student-id-back-remove');
+  }
+
   function toggleStudentIdField(selectEl) {
     const group = document.getElementById('member-student-id-group');
     if (group) group.style.display = selectEl.value === 'yes' ? '' : 'none';
   }
 
+  /** Adds photo(s) from the file picker into the front/back slots.
+   *  - Picking 2 files at once fills front + back together.
+   *  - Picking 1 file fills whichever slot is still empty (front first,
+   *    then back) — so a member can add them one at a time across two
+   *    separate picks instead of having to reselect both every time.
+   *  - If both slots are already filled and they pick 1 more file, it
+   *    replaces the front (the side that's re-taken most often) — they
+   *    can always hit "✕ Remove" under a preview first to clear just
+   *    that one slot instead.
+   *  The native input is cleared after each pick since the File objects
+   *  are already captured in module state — that's what lets a later
+   *  single-file pick be treated as "add the other side" instead of
+   *  wiping out the one already chosen. */
   function previewStudentId(input) {
-    const preview = document.getElementById('member-student-id-preview');
-    const removeBtn = document.getElementById('member-student-id-remove');
-    const file = input.files && input.files[0];
-    if (!preview || !file) return;
-    const reader = new FileReader();
-    reader.onload = e => {
-      preview.src = e.target.result;
-      preview.style.display = 'block';
-      if (removeBtn) removeBtn.style.display = 'inline-block';
-    };
-    reader.readAsDataURL(file);
+    const files = Array.from(input.files || []);
+    if (!files.length) return;
+
+    if (files.length > 2) {
+      showToast('Please select at most 2 photos — the front and the back of your school ID.', 'error');
+    } else if (files.length === 2) {
+      _studentIdFrontFile = files[0];
+      _studentIdBackFile = files[1];
+    } else { // files.length === 1
+      if (!_studentIdFrontFile) {
+        _studentIdFrontFile = files[0];
+        showToast('Front added. Now add the back the same way.', 'success');
+      } else if (!_studentIdBackFile) {
+        _studentIdBackFile = files[0];
+        showToast('Back added — both sides are in.', 'success');
+      } else {
+        _studentIdFrontFile = files[0];
+        showToast('Front photo replaced. Remove the back first if you meant to redo that one instead.', 'success');
+      }
+    }
+
+    input.value = ''; // safe to clear now — the File objects live in state above
+    _renderStudentIdPreviews();
   }
 
-  /** Clears a wrongly-picked school ID file so the member can choose again. */
-  function removeStudentId() {
-    const input = document.getElementById('member-student-id');
-    const preview = document.getElementById('member-student-id-preview');
-    const removeBtn = document.getElementById('member-student-id-remove');
-    if (input) input.value = '';
-    if (preview) { preview.src = ''; preview.style.display = 'none'; }
-    if (removeBtn) removeBtn.style.display = 'none';
+  /** Clears one side (front or back) of the school ID selection so the
+   *  member can re-pick just that one, without disturbing the other. */
+  function removeStudentId(side) {
+    if (side === 'back') {
+      _studentIdBackFile = null;
+    } else {
+      _studentIdFrontFile = null;
+    }
+    _renderStudentIdPreviews();
   }
 
   /** Validates the plan (or promo) request form, then shows the invoice
@@ -649,12 +750,19 @@ const MemberModule = (() => {
       showToast('Please choose a start date for your plan.', 'error');
       return;
     }
+    if (!isStartDateValid()) {
+      showToast('Please pick a valid start date — today or within the next 2 years.', 'error');
+      validateStartDateField();
+      return;
+    }
 
     const isStudent = document.getElementById('member-renew-student')?.value === 'yes';
-    const studentIdInput = document.getElementById('member-student-id');
-    const studentIdFile = studentIdInput?.files?.[0] || null;
-    if (isStudent && !studentIdFile) {
-      showToast('Please upload a photo of your school ID.', 'error');
+    if (isStudent && !_studentIdFrontFile) {
+      showToast('Please upload the FRONT photo of your school ID.', 'error');
+      return;
+    }
+    if (isStudent && !_studentIdBackFile) {
+      showToast('Please upload the BACK photo of your school ID.', 'error');
       return;
     }
 
@@ -668,7 +776,8 @@ const MemberModule = (() => {
     formData.append('start_date', startDate);
     formData.append('is_student', isStudent ? '1' : '0');
     formData.append('wants_coach', '0');
-    if (isStudent && studentIdFile) formData.append('student_id', studentIdFile);
+    if (isStudent && _studentIdFrontFile) formData.append('student_id_front', _studentIdFrontFile);
+    if (isStudent && _studentIdBackFile) formData.append('student_id_back', _studentIdBackFile);
     _pendingPlanRequest = { formData };
 
     // Populate the invoice confirmation modal — mirrors the server's
@@ -717,6 +826,11 @@ const MemberModule = (() => {
     const startDate = document.getElementById('member-renew-start')?.value || '';
     if (!startDate) {
       showToast('Please choose a start date for your plan.', 'error');
+      return;
+    }
+    if (!isStartDateValid()) {
+      showToast('Please pick a valid start date — today or within the next 2 years.', 'error');
+      validateStartDateField();
       return;
     }
 
@@ -1868,6 +1982,7 @@ const MemberModule = (() => {
   return {
     init, tab, selectPlan, selectPromo, openPlanModal, openPromoModal, selectPlanFromModal,
     toggleStudentIdField, previewStudentId, removeStudentId, submitRenewalPayment, updateCoachAvailabilityNote,
+    validateStartDateField,
     cancelPlanRequest, confirmPlanRequest, closePlanSuccessModal,
     closePlanApprovedModal, goToPaymentFromApproval, closePaymentApprovedModal,
     closePlanDeclinedModal, withdrawPlanRequest, cancelWithdrawRequest, confirmWithdrawRequest,
@@ -1905,8 +2020,9 @@ document.addEventListener('DOMContentLoaded', () => {
   window.selectPlanFromModal     = () => MemberModule.selectPlanFromModal();
   window.toggleStudentIdField    = (el) => MemberModule.toggleStudentIdField(el);
   window.updateCoachAvailabilityNote = () => MemberModule.updateCoachAvailabilityNote();
+  window.validateStartDateField      = () => MemberModule.validateStartDateField();
   window.previewStudentId        = (input) => MemberModule.previewStudentId(input);
-  window.removeStudentId         = () => MemberModule.removeStudentId();
+  window.removeStudentId         = (side) => MemberModule.removeStudentId(side);
   window.submitRenewalPayment    = () => MemberModule.submitRenewalPayment();
   window.cancelPlanRequest       = () => MemberModule.cancelPlanRequest();
   window.confirmPlanRequest      = () => MemberModule.confirmPlanRequest();

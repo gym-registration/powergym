@@ -266,9 +266,12 @@
             <div class="proof-upload-box">
               <div class="form-group">
                 <label class="form-label">When do you want to start?</label>
-                <input class="form-input" type="date" id="member-renew-start" onchange="updateCoachAvailabilityNote()">
+                <input class="form-input" type="date" id="member-renew-start" onchange="updateCoachAvailabilityNote()" oninput="validateStartDateField()">
                 <div style="font-size:15px;color:#c7c7cf;margin-top:4px;">
                   Pick today to start right away, or a future date if you'd rather begin later.
+                </div>
+                <div id="member-renew-start-error" role="alert" style="display:none;font-size:13px;font-weight:600;color:#ff4d4d;margin-top:6px;line-height:1.4;">
+                  ⚠ Please pick a valid date — today or a date within the next 2 years.
                 </div>
               </div>
               <div class="form-group" id="member-renew-student-group">
@@ -279,16 +282,27 @@
                 </select>
               </div>
               <div class="form-group" id="member-student-id-group" style="display:none;">
-                <label class="form-label">Upload School ID (front, photo or scan)</label>
-                <input class="form-input" type="file" id="member-student-id" accept="image/*"
+                <label class="form-label">Upload School ID — Front &amp; Back</label>
+                <input class="form-input" type="file" id="member-student-id" accept="image/*" multiple
                        onchange="previewStudentId(this)">
                 <div style="font-size:15px;color:#c7c7cf;margin-top:4px;">
-                  Required to verify student status. Admin will confirm before your plan is approved.
+                  Pick both at once (hold Ctrl/Cmd to select two files), or add them one at a time —
+                  whichever's easier. Both sides are required to verify student status. Admin will
+                  confirm before your plan is approved.
                 </div>
-                <div class="proof-preview-wrap">
-                  <img id="member-student-id-preview" class="proof-preview" alt="School ID preview" style="display:none;">
-                  <button type="button" id="member-student-id-remove" class="proof-remove-btn"
-                          style="display:none;" onclick="removeStudentId()">✕ Remove &amp; replace</button>
+                <div class="proof-preview-wrap" style="display:flex;gap:16px;flex-wrap:wrap;">
+                  <div>
+                    <div style="font-size:12px;color:#c7c7cf;margin-bottom:4px;">Front</div>
+                    <img id="member-student-id-front-preview" class="proof-preview" alt="School ID front preview" style="display:none;">
+                    <button type="button" id="member-student-id-front-remove" class="proof-remove-btn"
+                            style="display:none;margin-top:6px;" onclick="removeStudentId('front')">✕ Remove</button>
+                  </div>
+                  <div>
+                    <div style="font-size:12px;color:#c7c7cf;margin-bottom:4px;">Back</div>
+                    <img id="member-student-id-back-preview" class="proof-preview" alt="School ID back preview" style="display:none;">
+                    <button type="button" id="member-student-id-back-remove" class="proof-remove-btn"
+                            style="display:none;margin-top:6px;" onclick="removeStudentId('back')">✕ Remove</button>
+                  </div>
                 </div>
               </div>
               <div class="form-group" id="member-renew-coach-select-group" style="display:none;">

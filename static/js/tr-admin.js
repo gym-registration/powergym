@@ -1368,8 +1368,182 @@ const AdminModule = (() => {
       });
   }
 
+  /** Create a new Staff account from the "+ ADD STAFF" modal. Admin
+   *  accounts are not created here — this page only ever creates Staff.
+   *  The backend generates a random temp password and emails the new hire
+   *  a welcome message that explicitly says this is a staff account, never
+   *  a member account — this button doesn't do that part, it just triggers it. */
+  function addStaff() {
+    const firstName = _val('add-staff-fname');
+    const lastName  = _val('add-staff-lname');
+    const email     = _val('add-staff-email');
+    const phone     = _val('add-staff-phone');
+
+    if (!firstName || !lastName || !email) {
+      showToast('Please fill in first name, last name, and email.', 'error');
+      return;
+    }
+    if (phone && !/^09\d{9}$/.test(phone)) {
+      showToast('Phone number must start with 09 and be exactly 11 digits.', 'error');
+      return;
+    }
+
+    const addBtn = document.querySelector('#add-staff-modal .btn-red');
+    if (addBtn) { addBtn.disabled = true; addBtn.textContent = 'CREATING...'; }
+
+    fetch('/admin/add-staff', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ first_name: firstName, last_name: lastName, email, phone })
+    })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (addBtn) { addBtn.disabled = false; addBtn.textContent = 'CREATE ACCOUNT'; }
+        if (!ok || !data.success) {
+          showToast(data.error || 'Failed to create account.', 'error');
+          return;
+        }
+
+        const s = data.staff;
+        const tbody = document.querySelector('#staff-accounts-table tbody');
+        if (tbody) {
+          // Drop the "No staff accounts yet" placeholder row, if present.
+          const placeholder = tbody.querySelector('td[colspan="5"]');
+          if (placeholder) placeholder.closest('tr').remove();
+
+          const row = document.createElement('tr');
+          row.dataset.id     = s.id;
+          row.dataset.name   = s.name;
+          row.dataset.email  = s.email;
+          row.dataset.role   = s.role;
+          row.dataset.status = s.status;
+          row.innerHTML = `
+            <td>${s.name}</td>
+            <td>${s.email}</td>
+            <td><span class="badge badge-blue">Staff</span></td>
+            <td><span class="badge ${s.status === 'active' ? 'badge-green' : 'badge-muted'}">${s.status === 'active' ? 'Active' : 'Suspended'}</span></td>
+            <td>
+              <button class="btn btn-sm btn-outline" onclick="openEditStaffModal(this)">Edit</button>
+              <button class="btn btn-sm" style="background:rgba(230,30,37,0.1);color:var(--red);border:1px solid rgba(230,30,37,0.2);" onclick="promptDeleteStaff(this)">Delete</button>
+            </td>`;
+          tbody.prepend(row);
+        }
+
+        closeModal('add-staff-modal');
+        ['add-staff-fname', 'add-staff-lname', 'add-staff-email', 'add-staff-phone'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.value = '';
+        });
+
+        // The temp password is shown here once too (not just emailed) so
+        // the admin can hand it over directly if the new hire can't check
+        // their email right away.
+        showToast(`Staff account created! Temporary password: ${s.temp_password}`, 'success');
+      })
+      .catch(() => {
+        if (addBtn) { addBtn.disabled = false; addBtn.textContent = 'CREATE ACCOUNT'; }
+        showToast('Could not reach the server. Please try again.', 'error');
+      });
+  }
+
+  let editingStaffId = null;
+
+  /** Open the Edit Staff modal, pre-filled from the row's data */
+  function openEditStaffModal(btn) {
+    const row = btn.closest('tr');
+    if (!row) return;
+
+    editingStaffId = row.dataset.id;
+    document.getElementById('edit-staff-name').value  = row.dataset.name  || '';
+    document.getElementById('edit-staff-email').value = row.dataset.email || '';
+
+    const statusSelect = document.getElementById('edit-staff-status');
+    if (statusSelect) statusSelect.value = row.dataset.status || 'active';
+
+    openModal('edit-staff-modal');
+  }
+
+  /** Save status changes from the Edit Staff modal */
+  function saveEditStaff() {
+    if (!editingStaffId) return;
+    const status = document.getElementById('edit-staff-status')?.value || 'active';
+
+    fetch(`/admin/edit-staff/${editingStaffId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status })
+    })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok || !data.success) {
+          showToast(data.error || 'Failed to update account.', 'error');
+          return;
+        }
+
+        const s = data.staff;
+        const row = document.querySelector(`#staff-accounts-table tr[data-id="${s.id}"]`);
+        if (row) {
+          row.dataset.status = s.status;
+          const cells = row.querySelectorAll('td');
+          if (cells[3]) cells[3].innerHTML = `<span class="badge ${s.status === 'active' ? 'badge-green' : 'badge-muted'}">${s.status === 'active' ? 'Active' : 'Suspended'}</span>`;
+        }
+
+        closeModal('edit-staff-modal');
+        editingStaffId = null;
+        showToast(data.message || 'Staff account updated.', 'success');
+      })
+      .catch(() => showToast('Could not reach the server. Please try again.', 'error'));
+  }
+
+  let pendingDeleteStaffId = null;
+
+  /** "Delete" on a staff row — opens the confirmation modal rather than
+   *  deleting immediately, mirroring the confirm-before-destructive-action
+   *  pattern used for coaches/announcements elsewhere in this dashboard. */
+  function promptDeleteStaff(btn) {
+    const row = btn.closest('tr');
+    if (!row) return;
+    pendingDeleteStaffId = row.dataset.id;
+    const msgEl = document.getElementById('delete-staff-message');
+    if (msgEl) msgEl.textContent = `Delete ${row.dataset.name || 'this account'} (${row.dataset.email || ''})?`;
+    openModal('delete-staff-modal');
+  }
+
+  /** "DELETE" on the confirmation modal — actually sends the request. */
+  function confirmDeleteStaff() {
+    if (!pendingDeleteStaffId) return;
+    const id = pendingDeleteStaffId;
+
+    fetch(`/admin/delete-staff/${id}`, { method: 'POST' })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        closeModal('delete-staff-modal');
+        pendingDeleteStaffId = null;
+        if (!ok || !data.success) {
+          showToast(data.error || 'Failed to delete account.', 'error');
+          return;
+        }
+        const row = document.querySelector(`#staff-accounts-table tr[data-id="${id}"]`);
+        if (row) row.remove();
+
+        // If that was the last row, restore the "no accounts yet" placeholder.
+        const tbody = document.querySelector('#staff-accounts-table tbody');
+        if (tbody && !tbody.querySelector('tr')) {
+          tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted);text-align:center;">No staff accounts yet — click "+ ADD STAFF" to create one.</td></tr>';
+        }
+
+        showToast(data.message || 'Account deleted.', 'success');
+      })
+      .catch(() => {
+        closeModal('delete-staff-modal');
+        pendingDeleteStaffId = null;
+        showToast('Could not reach the server. Please try again.', 'error');
+      });
+  }
+
   return {
     init, tab, addMember, openEditMemberModal, saveEditMember, deleteMemberRow,
+    addStaff, openEditStaffModal, saveEditStaff, promptDeleteStaff, confirmDeleteStaff,
     generateAnalyticsReport, refreshCurrentReport, exportReportPDF, clearReportDateRange,
     viewPaymentProof, filterMembersByStatus, filterMembersTable, toggleMemberIdColumn,
     goToAdminMembers, goToAdminRevenue,
@@ -1430,4 +1604,6 @@ document.addEventListener('DOMContentLoaded', () => {
   window.promptDeleteCoach       = (coachId, coachName) => AdminModule.promptDeleteCoach(coachId, coachName);
   window.confirmDeleteCoach      = () => AdminModule.confirmDeleteCoach();
   window.changeProfilePicture    = (input) => AdminModule.changeProfilePicture(input);
+  window.openEditStaffModal      = AdminModule.openEditStaffModal;
+  window.promptDeleteStaff       = AdminModule.promptDeleteStaff;
 });

@@ -187,12 +187,24 @@ def _image_looks_like_a_card(file_path):
     return False
 
 
-def _image_has_readable_text(file_path, min_chars=8):
-    """Returns True/False, or None if the check can't be run (pytesseract/
-    tesseract not installed, opencv missing, or the file isn't a readable
-    image). A genuine ID card has printed text on it; a random selfie or
-    candid photo generally doesn't. `min_chars` is intentionally low — this
-    only needs to catch photos with *no* text, not judge OCR quality."""
+def _image_has_readable_text(extracted_text, min_chars=8):
+    """Returns True/False, or None if OCR couldn't be run on this image
+    (extracted_text is None — see _extract_id_text). A genuine ID card has
+    printed text on it; a random selfie or candid photo generally doesn't.
+    `min_chars` is intentionally low — this only needs to catch photos
+    with *no* text, not judge OCR quality."""
+    if extracted_text is None:
+        return None
+    alnum_only = ''.join(ch for ch in extracted_text if ch.isalnum())
+    return len(alnum_only) >= min_chars
+
+
+def _extract_id_text(file_path):
+    """Runs OCR once and returns the raw extracted text, or None if OCR
+    can't be run at all (pytesseract/tesseract not installed, opencv
+    missing, or the file isn't a readable image). Shared by the
+    readable-text and school-keyword checks below so a single upload only
+    gets OCR'd once."""
     if pytesseract is None or cv2 is None:
         return None
     img = cv2.imread(file_path)
@@ -200,11 +212,118 @@ def _image_has_readable_text(file_path, min_chars=8):
         return None
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     try:
-        extracted = pytesseract.image_to_string(gray)
+        return pytesseract.image_to_string(gray)
     except Exception:
         return None
-    alnum_only = ''.join(ch for ch in extracted if ch.isalnum())
-    return len(alnum_only) >= min_chars
+
+
+# Wording that commonly shows up on a school/student ID (front or back) —
+# this is what actually tells a *school* ID apart from some other card
+# (driver's license, company badge, national ID, gym membership card,
+# etc.) that might otherwise pass the generic card-shape + has-text checks.
+_SCHOOL_ID_KEYWORDS = (
+    'student', 'school', 'university', 'college', 'academy', 'institute',
+    'campus', 'academic year', 'school year', 's.y.', 'semester',
+    'enrolled', 'enrollment', 'registrar', 'matriculation', 'id no',
+    'id number', 'student no', 'student number', 'course', 'program',
+    'year level', 'department', 'faculty', 'freshman', 'sophomore',
+    'junior', 'senior', 'grade level', 'elementary', 'high school',
+    'senior high', 'junior high',
+)
+
+
+def _image_has_school_id_keywords(extracted_text):
+    """Returns True/False, or None if extracted_text is None or has too
+    little text to judge either way (same threshold as
+    _image_has_readable_text). True only if at least one bit of wording
+    typical of a school/student ID shows up in the OCR'd text."""
+    if extracted_text is None:
+        return None
+    alnum_only = ''.join(ch for ch in extracted_text if ch.isalnum())
+    if len(alnum_only) < 8:
+        return None
+    lowered = extracted_text.lower()
+    return any(keyword in lowered for keyword in _SCHOOL_ID_KEYWORDS)
+
+
+def _validate_and_save_id_photo(file_storage, *, side):
+    """Shared validation/save logic for a single side (front or back) of a
+    member's school ID upload. `side` is 'front' or 'back' — the face check
+    only applies to the front (ID backs are usually just text/barcode with
+    no photo), and error copy is worded per side.
+
+    Returns (relative_path, None) on success, or
+    (None, (json_response, status_code)) on validation failure. The caller
+    is responsible for checking that a file was actually provided."""
+    ext = file_storage.filename.rsplit('.', 1)[-1].lower() if '.' in file_storage.filename else ''
+    if ext not in PROOF_ALLOWED_EXT:
+        return None, (jsonify(success=False, error=f'School ID ({side}) must be a PNG, JPG, or PDF file.'), 400)
+
+    file_storage.seek(0, os.SEEK_END)
+    size = file_storage.tell()
+    file_storage.seek(0)
+    if size > PROOF_MAX_BYTES:
+        return None, (jsonify(success=False, error=f'School ID ({side}) file is too large (max 10MB).'), 400)
+
+    safe_name = secure_filename(f"{secrets.token_hex(8)}_{file_storage.filename}")
+    full_path = os.path.join(PROOF_UPLOAD_FOLDER, safe_name)
+    file_storage.save(full_path)
+
+    # ── Reject obvious non-ID uploads. Offline checks, applied in order —
+    #    each is skipped (returns None) for PDFs, or if its library isn't
+    #    installed, and those cases still go through to staff's manual
+    #    review rather than being blocked here. ──
+    if ext != 'pdf':
+        if side == 'front':
+            # 1) Must have a visible face at all (blank images, scenery, a
+            #    plain screenshot of a form, etc. get caught here). Only
+            #    checked on the front — the back of a school ID doesn't
+            #    normally carry a photo.
+            has_face = _image_has_face(full_path)
+            if has_face is False:
+                os.remove(full_path)
+                return None, (jsonify(
+                    success=False,
+                    error='We couldn\'t detect a face in that photo. Please upload a clear photo of the '
+                          'FRONT of your school ID with your photo visible on it.'
+                ), 400)
+
+        # 2) A face alone isn't enough (a random selfie has one too), and the
+        #    back has no face to check — so both sides fall back to this
+        #    card-shape + text check. Only reject if BOTH come back
+        #    definitively negative; if either is unavailable (None) or
+        #    positive, give the upload the benefit of the doubt and let
+        #    staff's manual review make the final call.
+        extracted_text = _extract_id_text(full_path)
+        looks_like_card = _image_looks_like_a_card(full_path)
+        has_text = _image_has_readable_text(extracted_text)
+        if looks_like_card is False and has_text is False:
+            os.remove(full_path)
+            return None, (jsonify(
+                success=False,
+                error=f'That doesn\'t look like a school ID card. Please upload a clear, well-lit photo '
+                      f'of the {side} of the ID itself — not a selfie — with its printed details visible.'
+            ), 400)
+
+        # 3) Being card-shaped with readable text isn't enough on its own
+        #    either — a driver's license, company badge, or any other kind
+        #    of card would pass that check too. This looks for wording
+        #    that's actually specific to a school/student ID. Only reject
+        #    when OCR extracted enough text to judge confidently but found
+        #    none of it school-related; if OCR is unavailable or the text
+        #    was too sparse to judge (None), give the benefit of the doubt
+        #    and let staff's manual review make the final call.
+        has_school_keywords = _image_has_school_id_keywords(extracted_text)
+        if has_school_keywords is False:
+            os.remove(full_path)
+            return None, (jsonify(
+                success=False,
+                error=f'That doesn\'t look like a school ID ({side}). Please upload a clear photo of your '
+                      f'actual school/student ID card — not another kind of ID or document — showing your '
+                      f'school name and ID number.'
+            ), 400)
+
+    return f"uploads/payment_proofs/{safe_name}", None
 
 
 # ── GCash receipt auto-read (pytesseract) ────────────────────
@@ -1107,6 +1226,10 @@ class Payment(db.Model):
     proof_image_path_3 = db.Column(db.String(255), nullable=True)
     is_student            = db.Column(db.Boolean, nullable=False, default=False)
     student_id_image_path = db.Column(db.String(255), nullable=True)
+    # Back-of-ID photo, added alongside the original front photo above —
+    # nullable so older rows (submitted before this existed) simply have
+    # it as NULL rather than breaking.
+    student_id_back_image_path = db.Column(db.String(255), nullable=True)
     wants_coach           = db.Column(db.Boolean, nullable=False, default=False)
     coach_name             = db.Column(db.String(60), nullable=True)
     requested_start_date  = db.Column(db.Date, nullable=True)
@@ -2614,6 +2737,158 @@ def _send_membership_activated_email(member, plan, start_date):
               f"{member.email} — plan={plan_name}, start={start_date}")
 
 
+def _staff_account_email_html(first_name, role, email, login_url, temp_password=None, role_changed=False):
+    """Styled HTML email sent when an admin creates a staff/admin account, or
+    changes an existing one's role. Deliberately looks and reads differently
+    from the member-facing '_membership_activated_email_html' (different
+    banner copy, an explicit 'not a member account' badge) so there's no
+    chance of confusing the two if someone has both in their inbox."""
+    role_label = 'ADMINISTRATOR' if role == 'admin' else 'STAFF'
+    accent      = '#e61e25' if role == 'admin' else '#1a478a'
+    accent_bg   = 'rgba(230,30,37,0.12)' if role == 'admin' else 'rgba(26,71,138,0.14)'
+    icon        = '🛡️' if role == 'admin' else '👥'
+    banner_tag  = f'{role_label} ACCOUNT UPDATED' if role_changed else f'{role_label} ACCOUNT CREATED'
+
+    if role_changed:
+        intro = f'Your account access level has been changed to <strong style="color:#141820;">{role_label}</strong>.'
+    else:
+        intro = f'An administrator has created a <strong style="color:#141820;">{role_label}</strong> account for you at Power Gym.'
+
+    credentials_block = ''
+    if temp_password:
+        credentials_block = f"""
+          <tr>
+            <td style="padding:10px 28px 4px 28px;">
+              <div style="background:#f2f3f6;border:1px solid #dcdfe6;border-radius:10px;padding:16px 18px;">
+                <div style="color:#6b7280;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Your Login Credentials</div>
+                <div style="color:#141820;font-size:14px;margin-bottom:4px;"><strong>Email:</strong> {email}</div>
+                <div style="color:#141820;font-size:14px;"><strong>Temporary Password:</strong> {temp_password}</div>
+              </div>
+              <div style="color:#9aa0b0;font-size:11px;line-height:1.6;margin-top:10px;text-align:center;">
+                For security, please sign in and change this password as soon as possible.
+              </div>
+            </td>
+          </tr>"""
+
+    return f"""\
+<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#c6c9d1;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#c6c9d1;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="420" cellpadding="0" cellspacing="0"
+               style="max-width:420px;width:100%;background:#ffffff;border:1px solid #e2e4ea;
+                      border-radius:14px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;
+                      box-shadow:0 4px 18px rgba(0,0,0,0.06);">
+          <tr>
+            <td style="background:linear-gradient(135deg,{accent},#141820);padding:22px 24px;text-align:center;">
+              <div style="color:#ffffff;font-size:20px;font-weight:800;letter-spacing:1px;">POWER GYM</div>
+              <div style="color:rgba(255,255,255,0.85);font-size:11px;letter-spacing:2px;margin-top:2px;">{banner_tag}</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px 28px 8px 28px;text-align:center;">
+              <div style="width:64px;height:64px;margin:0 auto 18px auto;background:{accent_bg};
+                          border-radius:50%;line-height:64px;font-size:28px;">{icon}</div>
+              <div style="color:#141820;font-size:19px;font-weight:800;margin-bottom:10px;">Hi {first_name},</div>
+              <div style="color:#3a3f4b;font-size:14px;line-height:1.7;margin-bottom:14px;">{intro}</div>
+              <div style="background:{accent_bg};color:{accent};font-size:12px;font-weight:700;letter-spacing:0.5px;
+                          text-transform:uppercase;display:inline-block;padding:8px 14px;border-radius:6px;">
+                This is a {role_label.title()} account — not a member account
+              </div>
+            </td>
+          </tr>
+          {credentials_block}
+          <tr>
+            <td style="padding:22px 28px 6px 28px;text-align:center;">
+              <a href="{login_url}" style="display:inline-block;background:{accent};color:#ffffff;text-decoration:none;
+                        font-size:13px;font-weight:700;letter-spacing:1px;padding:12px 26px;border-radius:8px;">SIGN IN</a>
+              <div style="color:#6b7280;font-size:12px;line-height:1.6;margin-top:14px;">
+                Use the same sign-in page as everyone else — Power Gym recognizes your account by
+                email and takes you straight to the {role_label.title()} Dashboard.
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 28px 28px 28px;text-align:center;">
+              <div style="height:1px;background:#e2e4ea;margin-bottom:16px;"></div>
+              <div style="color:#9aa0b0;font-size:11px;line-height:1.6;">
+                If you believe this was a mistake, please contact your gym administrator.
+              </div>
+            </td>
+          </tr>
+        </table>
+        <div style="color:#9aa0b0;font-size:11px;margin-top:18px;font-family:Arial,Helvetica,sans-serif;">
+          © Power Gym. This is an automated message, please do not reply.
+        </div>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+"""
+
+
+def _send_staff_account_email(user, temp_password=None, role_changed=False):
+    """Best-effort notification sent whenever an admin creates a new staff/admin
+    account, or changes an existing staff/admin account's role. This is the
+    actual mechanism for "how does the system notify that it's a staff
+    account, not a member account" — the sign-in page looks identical for
+    every role until someone actually types their email, so the welcome
+    email is what spells the distinction out for the new hire up front,
+    along with their credentials and a direct sign-in link. Mirrors the
+    dev-mode fallback used by the OTP/membership-activated emails: if SMTP
+    isn't configured, or sending fails, we log it and move on rather than
+    blocking account creation itself — the account is already saved either way."""
+    if not user or not user.email:
+        return
+    role = user.role
+    role_label = 'Administrator' if role == 'admin' else 'Staff'
+    login_url = url_for('login', _external=True)
+    subject = (
+        f'POWER GYM — Your Role Is Now {role_label}' if role_changed
+        else f'POWER GYM — Your {role_label} Account Has Been Created'
+    )
+    if role_changed:
+        text_body = (
+            f"Hi {user.first_name},\n\n"
+            f"Your account access level at Power Gym has been changed to {role_label}.\n"
+            f"This is a {role_label} account — not a member account.\n\n"
+            f"Sign in at: {login_url}\n\n"
+            f"If you believe this was a mistake, please contact your gym administrator."
+        )
+    else:
+        text_body = (
+            f"Hi {user.first_name},\n\n"
+            f"An administrator has created a {role_label} account for you at Power Gym.\n"
+            f"This is a {role_label} account — not a member account.\n\n"
+            f"Your login credentials:\n"
+            f"Email: {user.email}\n"
+            f"Temporary Password: {temp_password}\n\n"
+            f"For security, please sign in and change this password as soon as possible.\n\n"
+            f"Sign in at: {login_url}\n\n"
+            f"If you believe this was a mistake, please contact your gym administrator."
+        )
+    if app.config.get('MAIL_USERNAME') and app.config.get('MAIL_PASSWORD'):
+        try:
+            msg = Message(
+                subject=subject,
+                recipients=[user.email],
+                body=text_body,
+                html=_staff_account_email_html(
+                    user.first_name, role, user.email, login_url,
+                    temp_password=temp_password, role_changed=role_changed,
+                ),
+            )
+            mail.send(msg)
+        except Exception as e:
+            print(f"[MAIL ERROR] Could not send staff-account email to {user.email}: {e}")
+    else:
+        print(f"[DEV] Email not configured. Staff-account email would be sent to "
+              f"{user.email} — role={role}, temp_password={temp_password}, role_changed={role_changed}")
+
+
 @app.route('/forgot-password', methods=['GET', 'POST'])
 def forgot_password():
     if request.method == 'POST':
@@ -3510,6 +3785,118 @@ def admin_delete_member(member_id):
     return jsonify(success=True, message='Member deleted successfully.')
 
 
+@app.route('/admin/add-staff', methods=['POST'])
+def admin_add_staff():
+    if session.get('role') != 'admin':
+        return jsonify(success=False, error='Unauthorized.'), 403
+
+    data = request.get_json(silent=True) or request.form
+
+    first_name = (data.get('first_name') or '').strip()
+    last_name  = (data.get('last_name')  or '').strip()
+    email      = (data.get('email')      or '').strip().lower()
+    phone      = (data.get('phone')      or '').strip()
+    # This page only ever creates Staff accounts — admin accounts are
+    # managed separately, not through here.
+    role = 'staff'
+
+    if not first_name or not last_name or not email:
+        return jsonify(success=False, error='Please fill in first name, last name, and email.'), 400
+
+    if phone and not _valid_phone(phone):
+        return jsonify(success=False, error='Phone number must start with 09 and be exactly 11 digits.'), 400
+
+    if User.query.filter_by(email=email).first() is not None:
+        return jsonify(success=False, error='A user with this email already exists.'), 409
+
+    # New staff accounts are activated immediately (an admin is vouching
+    # for them directly), unlike self-registered members who start
+    # 'pending'. A random temp password is generated — never chosen by the
+    # admin — and is only ever shown once, here and in the notification
+    # email below, so it isn't sitting in plaintext anywhere.
+    temp_password = _generate_temp_password()
+    new_user = User(
+        first_name=first_name,
+        last_name=last_name,
+        email=email,
+        phone=phone or None,
+        password=generate_password_hash(temp_password),
+        role=role,
+        status='active',
+    )
+    db.session.add(new_user)
+    db.session.commit()
+
+    # This is the actual answer to "how does the new hire know this is a
+    # staff account and not a member account?" — the welcome email spells
+    # it out explicitly, since the sign-in page itself looks the same for
+    # every role until you start typing your email.
+    _send_staff_account_email(new_user, temp_password=temp_password)
+
+    return jsonify(
+        success=True,
+        message=f'Staff account created — a welcome email with login details was sent to {email}.',
+        staff={
+            'id': new_user.id,
+            'name': new_user.full_name,
+            'email': new_user.email,
+            'role': new_user.role,
+            'status': new_user.status,
+            'temp_password': temp_password,
+        }
+    )
+
+
+@app.route('/admin/edit-staff/<int:staff_id>', methods=['POST'])
+def admin_edit_staff(staff_id):
+    if session.get('role') != 'admin':
+        return jsonify(success=False, error='Unauthorized.'), 403
+
+    # Scoped to role == 'staff' only — this page never touches admin
+    # accounts, so an admin's id can't be passed in here to modify it.
+    user = User.query.filter(User.id == staff_id, User.role == 'staff').first()
+    if user is None:
+        return jsonify(success=False, error='Staff account not found.'), 404
+
+    data = request.get_json(silent=True) or request.form
+    status = (data.get('status') or user.status).strip().lower()
+
+    if status not in ('active', 'suspended'):
+        return jsonify(success=False, error='Please select a valid status.'), 400
+
+    user.status = status
+    db.session.commit()
+
+    return jsonify(
+        success=True,
+        message='Staff account updated.',
+        staff={
+            'id': user.id,
+            'name': user.full_name,
+            'email': user.email,
+            'role': user.role,
+            'status': user.status,
+        }
+    )
+
+
+@app.route('/admin/delete-staff/<int:staff_id>', methods=['POST'])
+def admin_delete_staff(staff_id):
+    if session.get('role') != 'admin':
+        return jsonify(success=False, error='Unauthorized.'), 403
+
+    # Scoped to role == 'staff' only — admin accounts can't be deleted
+    # through this endpoint at all.
+    user = User.query.filter(User.id == staff_id, User.role == 'staff').first()
+    if user is None:
+        return jsonify(success=False, error='Staff account not found.'), 404
+
+    db.session.delete(user)
+    db.session.commit()
+
+    return jsonify(success=True, message=f'{user.full_name} was removed.')
+
+
 @app.route('/admin/verify-payment/<int:payment_id>', methods=['POST'])
 def admin_verify_payment(payment_id):
     if session.get('role') not in ('admin', 'staff'):
@@ -3861,60 +4248,35 @@ def member_submit_payment():
 
     payment_amount = _payment_total(plan, is_student, coach_name)
 
-    # ── Student ID proof (required only if the member says they're a student) ──
+    # ── Student ID proof (required only if the member says they're a
+    #    student) — now captures both the front (with photo) and back of
+    #    the card. ──
     student_id_relative_path = None
+    student_id_back_relative_path = None
     if is_student:
-        student_id_file = request.files.get('student_id')
-        if not student_id_file or not student_id_file.filename:
-            return jsonify(success=False, error='Please upload a photo of your school ID.'), 400
+        front_file = request.files.get('student_id_front')
+        if not front_file or not front_file.filename:
+            return jsonify(success=False, error='Please upload a photo of the FRONT of your school ID.'), 400
 
-        ext = student_id_file.filename.rsplit('.', 1)[-1].lower() if '.' in student_id_file.filename else ''
-        if ext not in PROOF_ALLOWED_EXT:
-            return jsonify(success=False, error='School ID must be a PNG, JPG, or PDF file.'), 400
+        back_file = request.files.get('student_id_back')
+        if not back_file or not back_file.filename:
+            return jsonify(success=False, error='Please upload a photo of the BACK of your school ID.'), 400
 
-        student_id_file.seek(0, os.SEEK_END)
-        size = student_id_file.tell()
-        student_id_file.seek(0)
-        if size > PROOF_MAX_BYTES:
-            return jsonify(success=False, error='School ID file is too large (max 10MB).'), 400
+        student_id_relative_path, front_err = _validate_and_save_id_photo(front_file, side='front')
+        if front_err:
+            response, status_code = front_err
+            return response, status_code
 
-        safe_name = secure_filename(f"{secrets.token_hex(8)}_{student_id_file.filename}")
-        student_id_full_path = os.path.join(PROOF_UPLOAD_FOLDER, safe_name)
-        student_id_file.save(student_id_full_path)
-
-        # ── Reject obvious non-ID uploads. Three offline checks, applied in
-        #    order — each is skipped (returns None) for PDFs, or if its
-        #    library isn't installed, and those cases still go through to
-        #    staff's manual review rather than being blocked here. ──
-        if ext != 'pdf':
-            # 1) Must have a visible face at all (blank images, scenery, a
-            #    plain screenshot of a form, etc. get caught here).
-            has_face = _image_has_face(student_id_full_path)
-            if has_face is False:
-                os.remove(student_id_full_path)
-                return jsonify(
-                    success=False,
-                    error='We couldn\'t detect a face in that photo. Please upload a clear photo of your '
-                          'school ID with your photo visible on it.'
-                ), 400
-
-            # 2) A face alone isn't enough — a random selfie has one too.
-            #    Only reject here if BOTH the card-shape and text checks
-            #    come back definitively negative; if either is unavailable
-            #    (None) or positive, give the upload the benefit of the
-            #    doubt and let staff's manual review make the final call.
-            looks_like_card = _image_looks_like_a_card(student_id_full_path)
-            has_text = _image_has_readable_text(student_id_full_path)
-            if looks_like_card is False and has_text is False:
-                os.remove(student_id_full_path)
-                return jsonify(
-                    success=False,
-                    error='That doesn\'t look like a school ID card. Please upload a clear, well-lit photo '
-                          'of the ID itself — not a selfie — with your photo and printed details (name, '
-                          'school, ID number) visible.'
-                ), 400
-
-        student_id_relative_path = f"uploads/payment_proofs/{safe_name}"
+        student_id_back_relative_path, back_err = _validate_and_save_id_photo(back_file, side='back')
+        if back_err:
+            # Front already saved successfully — clean it up so a rejected
+            # back photo doesn't leave an orphaned file behind.
+            if student_id_relative_path:
+                stale_path = os.path.join(app.root_path, 'static', student_id_relative_path)
+                if os.path.exists(stale_path):
+                    os.remove(stale_path)
+            response, status_code = back_err
+            return response, status_code
 
     # ── Record the plan request as pending — no payment details are collected
     #    here. Payment method/reference/proof are submitted separately from
@@ -3929,6 +4291,7 @@ def member_submit_payment():
         proof_image_path=None,
         is_student=is_student,
         student_id_image_path=student_id_relative_path,
+        student_id_back_image_path=student_id_back_relative_path,
         wants_coach=wants_coach,
         coach_name=coach_name,
         requested_start_date=requested_start,
@@ -5946,6 +6309,7 @@ def staff():
         'proof_image_path': p.proof_image_path,
         'is_student': p.is_student,
         'student_id_image_path': p.student_id_image_path,
+        'student_id_back_image_path': p.student_id_back_image_path,
         # Whether this request's plan actually carries a student rate —
         # computed from the plan itself, so the "confirm student discount"
         # control appears for any plan that has one, including new ones.
@@ -6859,6 +7223,7 @@ def admin():
             'amount_mismatch': amount_mismatch,
             'is_student': p.is_student,
             'student_id_image_path': p.student_id_image_path,
+            'student_id_back_image_path': p.student_id_back_image_path,
             'wants_coach': p.wants_coach,
             'coach_name': p.coach_name,
             'stage': _payment_stage(p),
@@ -6900,6 +7265,23 @@ def admin():
     admin_user = User.query.get(session['user_id'])
     picture_can_change, picture_available_at = _profile_picture_cooldown(admin_user)
 
+    # Staff Accounts tab — real staff users only. Admin accounts are
+    # intentionally excluded: this page manages front-desk/staff access,
+    # not who else has admin rights, so admins never show up here.
+    staff_accounts_rows = (
+        User.query
+        .filter(User.role == 'staff')
+        .order_by(User.created_at.asc())
+        .all()
+    )
+    staff_accounts = [{
+        'id': u.id,
+        'name': u.full_name,
+        'email': u.email,
+        'role': u.role,
+        'status': u.status,
+    } for u in staff_accounts_rows]
+
     return render_template(
         'admin-dashboard.html',
         members=members,
@@ -6910,6 +7292,7 @@ def admin():
         attendance_calendar=attendance_calendar,
         announcements=announcements,
         current_user=admin_user,
+        staff_accounts=staff_accounts,
         gcash_settings=_get_gym_settings(),
         # Drives the Plan dropdowns in the Add Member / Edit Member modals
         # so they list whatever plans currently exist, instead of a fixed
@@ -7679,6 +8062,8 @@ def _run_startup_migrations():
         # ── Up to 3 GCash receipt screenshots per payment (was 1) ──
         ('payments', 'proof_image_path_2', "ALTER TABLE payments ADD COLUMN proof_image_path_2 VARCHAR(255) NULL"),
         ('payments', 'proof_image_path_3', "ALTER TABLE payments ADD COLUMN proof_image_path_3 VARCHAR(255) NULL"),
+        # ── School ID proof now captures both sides, not just the front ──
+        ('payments', 'student_id_back_image_path', "ALTER TABLE payments ADD COLUMN student_id_back_image_path VARCHAR(255) NULL"),
     ]
     with db.engine.connect() as conn:
         for table, column, ddl in migrations:

@@ -188,12 +188,13 @@ const Navigation = (() => {
   function showRoleHint(role) {
     const bar = document.getElementById('role-hint-bar');
     const tag = document.getElementById('login-role-tag');
+    const title = document.getElementById('login-title');
     if (!bar || !tag) return;
 
     const configs = {
-      admin:  { text: '🛡️ Admin Account Detected',  bg: 'rgba(230,30,37,0.12)',   color: 'var(--red)',   border: 'var(--red)',   tagText: 'ADMIN ACCESS' },
-      staff:  { text: '👥 Staff Account Detected',  bg: 'rgba(26,71,138,0.2)',    color: '#8eb8ff',      border: '#8eb8ff',      tagText: 'STAFF ACCESS' },
-      member: { text: '⚡ Member Login',             bg: 'rgba(255,171,64,0.1)',   color: 'var(--gold)',  border: 'rgba(255,171,64,0.3)', tagText: 'MEMBER ACCESS' }
+      admin:  { text: '🛡️ Admin Account Detected',  bg: 'rgba(230,30,37,0.12)',   color: 'var(--red)',   border: 'var(--red)',   tagText: 'ADMIN ACCESS',  titleText: 'ADMIN LOGIN' },
+      staff:  { text: '👥 Staff Account Detected',  bg: 'rgba(26,71,138,0.2)',    color: '#8eb8ff',      border: '#8eb8ff',      tagText: 'STAFF ACCESS',  titleText: 'STAFF LOGIN' },
+      member: { text: '⚡ Member Login',             bg: 'rgba(255,171,64,0.1)',   color: 'var(--gold)',  border: 'rgba(255,171,64,0.3)', tagText: 'MEMBER ACCESS', titleText: 'MEMBER LOGIN' }
     };
 
     if (role && configs[role]) {
@@ -201,9 +202,11 @@ const Navigation = (() => {
       bar.style.cssText = `display:block;background:${cfg.bg};color:${cfg.color};border:1px solid ${cfg.border};margin-bottom:16px;padding:10px 14px;border-radius:4px;font-size:13px;font-weight:600;letter-spacing:1px;text-transform:uppercase;`;
       bar.textContent = cfg.text;
       tag.textContent = cfg.tagText;
+      if (title) title.textContent = cfg.titleText;
     } else {
       bar.style.display = 'none';
       tag.textContent = '\u00a0';
+      if (title) title.textContent = 'MEMBER LOGIN';
     }
   }
 
