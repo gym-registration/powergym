@@ -8,7 +8,6 @@ import io
 import tempfile
 import time
 import numpy as np
-import cv2
 from collections import OrderedDict
 from dotenv import load_dotenv
 load_dotenv()  # Reads variables from a .env file in the project root, if present
@@ -1240,6 +1239,15 @@ class Payment(db.Model):
     verified_at      = db.Column(db.DateTime, nullable=True)
     notified         = db.Column(db.Boolean, nullable=False, default=False)
     staff_viewed     = db.Column(db.Boolean, nullable=False, default=False)
+    # ── Re-payment after a declined payment ──
+    # When staff/admin rejects a payment the member already submitted (Cash
+    # or GCash) — as opposed to rejecting the plan request itself — the plan
+    # stays approved and a fresh 'approved' row is opened in its place so the
+    # member can simply pay again from the Payment tab, without having to
+    # request the whole plan over again. This points back at the rejected row
+    # that caused the retry, so the Payment tab can explain why the member is
+    # being asked to pay a second time.
+    retry_of_payment_id = db.Column(db.Integer, nullable=True)
 
     member      = db.relationship('User', foreign_keys=[member_id], back_populates='payments')
     plan        = db.relationship('MembershipPlan', back_populates='payments')
@@ -1526,6 +1534,44 @@ class GymSettings(db.Model):
         return f"<GymSettings gcash_number={self.gcash_number}>"
 
 
+class GcashAccount(db.Model):
+    """One saved GCash account the gym can collect payments through.
+
+    The gym often has more than one number on hand (a personal account, a
+    business account, a backup when one gets limited), so admins keep them
+    all saved here and flip a switch to choose which one is live.
+
+    Exactly one row is marked is_default at a time, and that row is the
+    ONLY one members ever see. Whenever the default changes, its number /
+    name / QR are copied onto the singleton GymSettings row by
+    _sync_default_gcash_to_settings() — so every existing member-facing
+    template keeps reading gcash_settings exactly as it always has, with
+    no idea multiple accounts exist behind it.
+
+    A brand-new table like this is created automatically by db.create_all()
+    on next startup; _seed_gcash_accounts() then backfills it with whatever
+    single account was already configured, so nothing is lost on upgrade.
+    """
+    __tablename__ = 'gcash_accounts'
+    id                 = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    gcash_number       = db.Column(db.String(20),  nullable=False)
+    gcash_account_name = db.Column(db.String(120), nullable=False)
+    # Optional "scan to pay" QR for this specific account. Each account
+    # owns its own QR file — swapping the default swaps the QR too.
+    gcash_qr_path      = db.Column(db.String(255), nullable=True)
+    # Only one row may have this set to True; enforced in code (not by a
+    # DB constraint) via _set_default_gcash_account().
+    is_default         = db.Column(db.Boolean, nullable=False, default=False)
+    # Free-text reminder for the admin only — e.g. "Business account",
+    # "Backup when Lydia's is limited". Never shown to members.
+    label              = db.Column(db.String(60), nullable=True)
+    created_at         = db.Column(db.DateTime, nullable=False,
+                                   default=lambda: datetime.now(timezone.utc))
+
+    def __repr__(self):
+        return f"<GcashAccount {self.gcash_number} default={self.is_default}>"
+
+
 # Default Terms & Policy text (the content that used to be hardcoded into
 # trmem.html) — seeded onto the settings row the first time it's created,
 # and used as a fallback if an admin ever clears the field entirely.
@@ -1600,6 +1646,111 @@ def _get_gym_settings():
         settings.terms_content = DEFAULT_TERMS_TEXT
         db.session.commit()
     return settings
+
+
+# ── Multiple GCash accounts (one default, shown to members) ────────────
+
+# Guard rail so the Settings panel stays scannable and admins don't end up
+# with a wall of near-identical numbers they can't tell apart.
+MAX_GCASH_ACCOUNTS = 6
+
+
+def _gcash_accounts():
+    """All saved GCash accounts, default first, then oldest-first."""
+    return (GcashAccount.query
+            .order_by(GcashAccount.is_default.desc(),
+                      GcashAccount.created_at.asc(),
+                      GcashAccount.id.asc())
+            .all())
+
+
+def _gcash_account_data(acct):
+    """Serialize one account for the admin UI (JSON + template use)."""
+    return {
+        'id':                 acct.id,
+        'gcash_number':       acct.gcash_number,
+        'gcash_account_name': acct.gcash_account_name,
+        'label':              acct.label or '',
+        'is_default':         bool(acct.is_default),
+        'gcash_qr_url':       url_for('static', filename=acct.gcash_qr_path) if acct.gcash_qr_path else None,
+    }
+
+
+def _gcash_accounts_data():
+    return [_gcash_account_data(a) for a in _gcash_accounts()]
+
+
+def _format_gcash_number(raw):
+    """Normalize to the spaced format members are shown: 0917 123 4567.
+    Returns None if it isn't a valid PH mobile number."""
+    digits = (raw or '').replace(' ', '').replace('-', '')
+    if not _valid_phone(digits):
+        return None
+    return f"{digits[0:4]} {digits[4:7]} {digits[7:11]}"
+
+
+def _sync_default_gcash_to_settings():
+    """Copy the default account's details onto the singleton GymSettings
+    row — the bridge that keeps every member-facing template working
+    unchanged. If no account is marked default (e.g. the default was just
+    deleted), the oldest remaining account is promoted automatically, so
+    members are never left staring at a blank GCash panel while other
+    accounts are still saved. With no accounts at all, the settings fields
+    are cleared and GCash simply shows as unavailable.
+
+    Does NOT commit — callers commit once, alongside their own changes.
+    """
+    settings = _get_gym_settings()
+    default = GcashAccount.query.filter_by(is_default=True).first()
+
+    if default is None:
+        default = (GcashAccount.query
+                   .order_by(GcashAccount.created_at.asc(), GcashAccount.id.asc())
+                   .first())
+        if default is not None:
+            default.is_default = True
+
+    if default is None:
+        settings.gcash_number       = None
+        settings.gcash_account_name = None
+        settings.gcash_qr_path      = None
+    else:
+        settings.gcash_number       = default.gcash_number
+        settings.gcash_account_name = default.gcash_account_name
+        settings.gcash_qr_path      = default.gcash_qr_path
+    return default
+
+
+def _set_default_gcash_account(acct):
+    """Make `acct` the one account members see, clearing the flag on every
+    other row first so the "exactly one default" rule always holds."""
+    GcashAccount.query.filter(GcashAccount.id != acct.id).update(
+        {'is_default': False}, synchronize_session=False)
+    acct.is_default = True
+    _sync_default_gcash_to_settings()
+
+
+def _seed_gcash_accounts():
+    """First-boot upgrade path: if the accounts table is empty but a GCash
+    number was already configured the old way (on the settings row), lift
+    it into an account row and mark it default. Runs once — after that the
+    table is non-empty and this is a no-op, so an admin who intentionally
+    deletes every account won't see the old one reappear on restart."""
+    if GcashAccount.query.first() is not None:
+        return
+    settings = _get_gym_settings()
+    if not settings.gcash_number or not settings.gcash_account_name:
+        return
+    db.session.add(GcashAccount(
+        gcash_number=settings.gcash_number,
+        gcash_account_name=settings.gcash_account_name,
+        gcash_qr_path=settings.gcash_qr_path,
+        is_default=True,
+        label='Primary',
+    ))
+    db.session.commit()
+    print(f"Migration: moved existing GCash details ({settings.gcash_number}) "
+          f"into the new gcash_accounts table as the default account")
 
 
 # ── Content-management (plans / services / equipment) helpers ──────────
@@ -2704,6 +2855,116 @@ def _membership_activated_email_html(first_name, plan_name, start_date):
 </body>
 </html>
 """
+
+
+def _plan_approved_email_html(first_name, plan_name, amount, login_url):
+    """Styled HTML email sent the moment staff approves a plan REQUEST —
+    before any payment has been made. Deliberately distinct from
+    '_membership_activated_email_html' (different banner tag, an amount-due
+    box instead of a start-date box, and a "pay now" button) since this
+    email means "you still owe money", not "you're already a member"."""
+    plan_line = f' for the <strong style="color:#141820;">{plan_name}</strong> plan' if plan_name else ''
+    return f"""\
+<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#c6c9d1;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#c6c9d1;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="420" cellpadding="0" cellspacing="0"
+               style="max-width:420px;width:100%;background:#ffffff;border:1px solid #e2e4ea;
+                      border-radius:14px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;
+                      box-shadow:0 4px 18px rgba(0,0,0,0.06);">
+          <tr>
+            <td style="background:linear-gradient(135deg,#e61e25,#b8141c);padding:22px 24px;text-align:center;">
+              <div style="color:#ffffff;font-size:20px;font-weight:800;letter-spacing:1px;">POWER GYM</div>
+              <div style="color:rgba(255,255,255,0.85);font-size:11px;letter-spacing:2px;margin-top:2px;">MEMBERSHIP REQUEST APPROVED</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px 28px 8px 28px;text-align:center;">
+              <div style="width:64px;height:64px;margin:0 auto 18px auto;background:rgba(27,175,122,0.14);
+                          border-radius:50%;line-height:64px;font-size:28px;">✅</div>
+              <div style="color:#141820;font-size:19px;font-weight:800;margin-bottom:10px;">Good news, {first_name}!</div>
+              <div style="color:#3a3f4b;font-size:14px;line-height:1.7;margin-bottom:6px;">
+                Your membership request{plan_line} has been approved by our staff.
+                To become an official member, please pay the exact amount below.
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:10px 28px 4px 28px;text-align:center;">
+              <div style="background:#f2f3f6;border:1px solid #dcdfe6;border-radius:10px;padding:16px 18px;">
+                <div style="color:#6b7280;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">Amount to pay</div>
+                <div style="color:#141820;font-size:26px;font-weight:800;">₱{amount}</div>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:22px 28px 6px 28px;text-align:center;">
+              <div style="color:#6b7280;font-size:12px;line-height:1.6;margin-bottom:18px;">
+                Please pay the exact amount shown above — Cash at the front desk, or GCash with
+                your receipt uploaded — so staff or admin can confirm it and activate your plan.
+              </div>
+              <a href="{login_url}" style="display:inline-block;background:linear-gradient(135deg,#e61e25,#b8141c);
+                        color:#ffffff;text-decoration:none;font-size:13px;font-weight:800;letter-spacing:0.5px;
+                        padding:12px 26px;border-radius:999px;">PROCEED TO PAYMENT</a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 28px 28px 28px;text-align:center;">
+              <div style="height:1px;background:#e2e4ea;margin-bottom:16px;"></div>
+              <div style="color:#9aa0b0;font-size:11px;line-height:1.6;">
+                Questions about your membership? Just ask our front desk staff.
+              </div>
+            </td>
+          </tr>
+        </table>
+        <div style="color:#9aa0b0;font-size:11px;margin-top:18px;font-family:Arial,Helvetica,sans-serif;">
+          © Power Gym. This is an automated message, please do not reply.
+        </div>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+"""
+
+
+def _send_plan_approved_email(member, plan, amount):
+    """Best-effort email sent the moment staff approves a plan REQUEST (i.e.
+    payment.status flips to 'approved', not 'verified') — this is the "your
+    plan is approved, now go pay the exact amount" notice, distinct from
+    '_send_membership_activated_email' which fires later once that payment
+    is actually confirmed. Mirrors that function's dev-mode fallback: if
+    SMTP isn't configured, or sending fails, we log it and move on rather
+    than blocking the approval itself."""
+    if not member or not member.email:
+        return
+    plan_name = plan.name if plan else ''
+    login_url = url_for('login', _external=True)
+    if app.config.get('MAIL_USERNAME') and app.config.get('MAIL_PASSWORD'):
+        try:
+            msg = Message(
+                subject='POWER GYM — Your Membership Request Was Approved',
+                recipients=[member.email],
+                body=(
+                    f"Hi {member.first_name},\n\n"
+                    f"Your membership request{f' for the {plan_name} plan' if plan_name else ''} "
+                    f"has been approved by our staff.\n\n"
+                    f"To become an official member, please pay the exact amount of ₱{amount} — "
+                    f"Cash at the front desk, or GCash with your receipt uploaded — so staff or "
+                    f"admin can confirm it and activate your plan.\n\n"
+                    f"Sign in at: {login_url}"
+                ),
+                html=_plan_approved_email_html(member.first_name, plan_name, amount, login_url),
+            )
+            mail.send(msg)
+        except Exception as e:
+            print(f"[MAIL ERROR] Could not send plan-approved email to {member.email}: {e}")
+    else:
+        print(f"[DEV] Email not configured. Plan-approved email would be sent to "
+              f"{member.email} — plan={plan_name}, amount={amount}")
 
 
 def _send_membership_activated_email(member, plan, start_date):
@@ -3953,6 +4214,9 @@ def admin_verify_payment(payment_id):
         payment.method = 'Pending — choose payment method'
         payment.notified = False
         db.session.commit()
+
+        _send_plan_approved_email(payment.member, payment.plan, payment.amount)
+
         return jsonify(success=True, message='Plan approved — the member can now submit payment.', status='approved')
 
     # ── Stage 2: the plan was already approved by staff; this verifies the
@@ -3974,14 +4238,53 @@ def admin_verify_payment(payment_id):
         return jsonify(success=False, error='No GCash proof of payment was uploaded for this request.'), 400
 
     if action == 'reject':
+        # ── The PLAN was already approved at stage 1 — what's being rejected
+        #    here is only the payment the member submitted for it (a wrong
+        #    GCash reference, an unreadable screenshot, cash that never
+        #    reached the desk, etc.). That's a payment problem, not a plan
+        #    problem, so the member shouldn't be dropped all the way back to
+        #    "request a plan again" — the approved plan stays approved and
+        #    the payment step simply re-opens so they can pay again straight
+        #    from the Payment tab.
+        #
+        #    The rejected row itself is kept as-is for the audit trail (and
+        #    to fire the "payment declined" notice), and a fresh 'approved'
+        #    row is opened in its place carrying the exact same plan, amount,
+        #    coach, start date and student details. Payment-specific fields
+        #    (method, reference number, proof screenshots) are deliberately
+        #    NOT copied — those are the parts being redone. ──
         payment.status = 'rejected'
         payment.verified_at = datetime.now(timezone.utc)
-        payment.notified = False  # let the member see a "request declined" notice
-        membership = Membership.query.filter_by(member_id=payment.member_id).first()
-        if membership and membership.status == 'pending':
-            membership.status = 'declined'
+        payment.notified = False  # let the member see a "payment declined" notice
+
+        retry_payment = Payment(
+            member_id=payment.member_id,
+            plan_id=payment.plan_id,
+            amount=payment.amount,
+            method='Pending — choose payment method',
+            reference_number=None,
+            proof_image_path=None,
+            is_student=payment.is_student,
+            student_id_image_path=payment.student_id_image_path,
+            student_id_back_image_path=payment.student_id_back_image_path,
+            wants_coach=payment.wants_coach,
+            coach_name=payment.coach_name,
+            requested_start_date=payment.requested_start_date,
+            status='approved',
+            notes=payment.notes,          # keeps promo rows displaying as the promo
+            notified=True,                # no "plan approved!" popup — they already got that
+            staff_viewed=True,            # the plan request itself was already reviewed
+            retry_of_payment_id=payment.id,
+        )
+        db.session.add(retry_payment)
+
+        # The membership stays exactly where it was ('pending' — approved plan,
+        # waiting on payment). It is NOT flipped to 'declined' here, because
+        # the plan request was never the thing that got declined.
         db.session.commit()
-        return jsonify(success=True, message='Payment rejected.', status='rejected')
+        return jsonify(success=True,
+                       message='Payment rejected — the member can submit payment again for this plan.',
+                       status='rejected')
 
     # ── Approve: activate/extend membership (same logic as staff_record_payment) ──
     payment.status = 'verified'
@@ -4413,7 +4716,25 @@ def member_ocr_gcash_proof():
         # can quietly fall back to plain manual entry, no error shown.
         return jsonify(success=True, detected=None, ocr_available=False)
 
-    return jsonify(success=True, detected=detected, ocr_available=True)
+    # Let the member know right away — before they even hit Submit — if the
+    # reference number this screenshot was just OCR'd to already funded an
+    # earlier payment (theirs or anyone else's). The authoritative check
+    # still runs again in /member/submit-payment-method at final submit;
+    # this is purely a faster heads-up. Same normalization (whitespace
+    # stripped, case-folded) as that check, so "1234 5678" == "12345678".
+    reference_already_used = False
+    if detected.get('reference'):
+        normalized = re.sub(r'\s+', '', detected['reference']).lower()
+        reference_already_used = any(
+            re.sub(r'\s+', '', p.reference_number).lower() == normalized
+            for p in Payment.query
+                .filter(Payment.status.in_(['approved', 'verified']))
+                .filter(Payment.reference_number.isnot(None))
+                .all()
+        )
+
+    return jsonify(success=True, detected=detected, ocr_available=True,
+                    reference_already_used=reference_already_used)
 
 
 @app.route('/member/submit-payment-method', methods=['POST'])
@@ -4450,15 +4771,46 @@ def member_submit_payment_method():
         if not gcash_reference:
             return jsonify(success=False, error='Please enter your GCash reference number.'), 400
 
+        # The sender/account name is what staff/admin match the receipt
+        # against — a screenshot with no name attached can't be tied back to
+        # this member, so it's required rather than optional context.
+        if not (data.get('gcash_sender_name') or '').strip():
+            return jsonify(success=False, error='Please enter the sender / account name shown on your GCash receipt.'), 400
+
+        # Reference numbers identify one real-money GCash transaction, so the
+        # same number should never be able to fund two separate membership
+        # payments — whether that's a past payment (this member's own
+        # earlier submission, or anyone else's) or another screenshot in
+        # THIS same submission. Build the "already used" set once, from
+        # every 'approved' (submitted, awaiting admin verification) or
+        # 'verified' (already confirmed) payment other than this one — a
+        # 'rejected' or 'cancelled' payment never went through, so its
+        # reference number stays free to reuse (e.g. fixing a typo after
+        # admin rejected the wrong screenshot). Compared on a normalized
+        # (whitespace-stripped, case-folded) form so "1234 5678" and
+        # "12345678" are caught as the same number.
+        _history_refs = {
+            re.sub(r'\s+', '', p.reference_number).lower()
+            for p in Payment.query
+                .filter(Payment.status.in_(['approved', 'verified']), Payment.id != payment.id)
+                .filter(Payment.reference_number.isnot(None))
+                .all()
+        }
+
+        normalized_ref = re.sub(r'\s+', '', gcash_reference).lower()
+        if normalized_ref in _history_refs:
+            return jsonify(success=False, error=(
+                'This GCash reference number has already been used for another payment. '
+                'Please double-check your receipt and enter the correct reference number for this transaction.'
+            )), 400
+
         gcash_proof_file = request.files.get('gcash_proof')
         if not gcash_proof_file or not gcash_proof_file.filename:
             return jsonify(success=False, error='Please attach a screenshot of your GCash proof of payment.'), 400
 
         # The member can attach up to 3 receipt screenshots total (e.g. a
         # payment that was split across two or three GCash transfers) — the
-        # primary one above is required, these two are optional. Only the
-        # primary screenshot is ever run through OCR; these extra ones are
-        # for admin's manual review only.
+        # primary one above is required, these two are optional.
         extra_proof_files = [
             f for f in (request.files.get('gcash_proof_2'), request.files.get('gcash_proof_3'))
             if f and f.filename
@@ -4477,8 +4829,10 @@ def member_submit_payment_method():
                 f'required for this plan/promo. Please attach enough receipts to cover the full amount before submitting.'
             )), 400
 
-        for f in [gcash_proof_file, *extra_proof_files]:
-            ext = f.filename.rsplit('.', 1)[-1].lower() if '.' in f.filename else ''
+        all_proof_files = [gcash_proof_file, *extra_proof_files]
+
+        for f in all_proof_files:
+            ext = f.filename.rsplit('.', 1)[-1].lower() if f.filename and '.' in f.filename else ''
             if ext not in PROOF_ALLOWED_EXT:
                 return jsonify(success=False, error='Proof of payment must be a PNG, JPG, or PDF file.'), 400
             f.seek(0, os.SEEK_END)
@@ -4486,6 +4840,50 @@ def member_submit_payment_method():
             f.seek(0)
             if size > PROOF_MAX_BYTES:
                 return jsonify(success=False, error='Proof of payment file is too large (max 10MB).'), 400
+
+        # Guard against any attached screenshot's own reference number — not
+        # just the typed one above — reusing a transaction from history, and
+        # against the *same* real transaction being attached more than once
+        # within this submission (e.g. the identical screenshot picked for
+        # both Screenshot 1 and Screenshot 2 to make the total look like it
+        # covers more than what was actually paid). Best-effort and
+        # additive: it only flags a screenshot when OCR can actually read a
+        # reference number off it — one OCR can't read still just falls
+        # back to admin's manual review, same as before. Only images can be
+        # read this way (not PDFs), so a PDF proof always just skips this.
+        seen_refs = {}  # normalized reference -> which screenshot # first showed it
+        for idx, f in enumerate(all_proof_files, start=1):
+            ext = f.filename.rsplit('.', 1)[-1].lower() if f.filename and '.' in f.filename else ''
+            if ext == 'pdf':
+                continue
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix=f'.{ext}', delete=False) as tmp:
+                    f.save(tmp.name)
+                    tmp_path = tmp.name
+                f.seek(0)  # rewind — _save_proof() below still needs the full stream
+                detected = _extract_gcash_receipt_fields(tmp_path)
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            ref = detected.get('reference') if detected else None
+            if not ref:
+                continue
+            normalized = re.sub(r'\s+', '', ref).lower()
+
+            if normalized in _history_refs:
+                return jsonify(success=False, error=(
+                    f'Screenshot {idx}\'s reference number has already been used for another payment. '
+                    f'Each screenshot must be a transaction that hasn\'t been submitted before.'
+                )), 400
+
+            if normalized in seen_refs:
+                return jsonify(success=False, error=(
+                    f'Screenshot {seen_refs[normalized]} and Screenshot {idx} look like the same GCash '
+                    f'receipt (same reference number). Please attach a different transaction for each '
+                    f'screenshot, or remove the duplicate before submitting.'
+                )), 400
+            seen_refs[normalized] = idx
 
         def _save_proof(f):
             safe_name = secure_filename(f"{secrets.token_hex(8)}_{f.filename}")
@@ -5158,86 +5556,188 @@ def update_profile_picture():
     )
 
 
-@app.route('/admin/update-gcash-settings', methods=['POST'])
-def admin_update_gcash_settings():
-    """Admin-only: update the GCash account number/name (and optional QR
-    code image) members are shown when submitting a payment. Takes effect
-    immediately for every member, since the member dashboard reads this
-    same row on each page load.
+def _gcash_form_fields():
+    """Pull + validate the shared add/edit form fields. Returns
+    (number, name, label, error_response_or_None)."""
+    number = _format_gcash_number(request.form.get('gcash_number'))
+    name   = (request.form.get('gcash_account_name') or '').strip()
+    label  = (request.form.get('label') or '').strip()[:60]
 
-    Sent as multipart/form-data (not JSON) so the optional QR image file
-    can travel alongside the number/name in one request:
-      - gcash_number, gcash_account_name: required text fields
-      - gcash_qr: optional file (PNG/JPG/JPEG/WEBP, max 8MB) — a new QR
-        replaces any existing one
-      - remove_qr: optional 'true' to delete the existing QR without
-        uploading a replacement
+    if not request.form.get('gcash_number') or not name:
+        return None, None, None, (jsonify(
+            success=False, error='GCash number and account name are both required.'), 400)
+    if number is None:
+        return None, None, None, (jsonify(
+            success=False, error='Enter a valid GCash number, e.g. 0917 123 4567.'), 400)
+    return number, name.upper(), label, None
+
+
+@app.route('/admin/gcash-accounts/add', methods=['POST'])
+def admin_add_gcash_account():
+    """Admin-only: save an additional GCash account.
+
+    Sent as multipart/form-data so the optional QR image can travel with
+    the number/name:
+      - gcash_number, gcash_account_name : required
+      - label                            : optional admin-only note
+      - gcash_qr                         : optional QR image
+      - make_default                     : 'true' to immediately show this
+                                           account to members instead of
+                                           the current default
+
+    The very first account saved is always made the default regardless,
+    since having accounts on file but none live would leave members with
+    no way to pay.
     """
     if session.get('role') != 'admin':
         return jsonify(success=False, error='Unauthorized.'), 403
 
-    gcash_number       = (request.form.get('gcash_number') or '').strip()
-    gcash_account_name = (request.form.get('gcash_account_name') or '').strip()
-    remove_qr          = (request.form.get('remove_qr') or '').strip().lower() == 'true'
-    qr_file             = request.files.get('gcash_qr')
+    number, name, label, err = _gcash_form_fields()
+    if err:
+        return err
 
-    if not gcash_number or not gcash_account_name:
-        return jsonify(success=False, error='GCash number and account name are both required.'), 400
-    digits_only = gcash_number.replace(' ', '').replace('-', '')
-    if not _valid_phone(digits_only):
-        return jsonify(success=False, error='Enter a valid GCash number, e.g. 0917 123 4567.'), 400
+    existing = GcashAccount.query.all()
+    if len(existing) >= MAX_GCASH_ACCOUNTS:
+        return jsonify(success=False, error=(
+            f'You can save up to {MAX_GCASH_ACCOUNTS} GCash accounts. '
+            f'Delete one you no longer use before adding another.')), 400
+    if any(a.gcash_number == number for a in existing):
+        return jsonify(success=False, error=(
+            f'{number} is already saved. Edit that account instead of adding it twice.')), 400
 
-    settings = _get_gym_settings()
-    old_qr_path = settings.gcash_qr_path
-
+    acct = GcashAccount(gcash_number=number, gcash_account_name=name, label=label or None)
     try:
-        if qr_file and qr_file.filename:
-            settings.gcash_qr_path = _save_content_image(qr_file, existing_path=old_qr_path)
-        elif remove_qr:
-            settings.gcash_qr_path = None
+        acct.gcash_qr_path = _save_content_image(request.files.get('gcash_qr'))
     except ValueError as e:
         return jsonify(success=False, error=str(e)), 400
 
-    # Store in the same spaced format shown to members: 0917 123 4567
-    settings.gcash_number       = f"{digits_only[0:4]} {digits_only[4:7]} {digits_only[7:11]}"
-    settings.gcash_account_name = gcash_account_name.upper()
+    db.session.add(acct)
+    db.session.flush()  # assign acct.id before we touch the default flag
+
+    make_default = (request.form.get('make_default') or '').strip().lower() == 'true'
+    if make_default or not existing:
+        _set_default_gcash_account(acct)
+    else:
+        _sync_default_gcash_to_settings()
     db.session.commit()
 
-    # Best-effort cleanup of the old QR file now that the change is saved.
-    # Only ever deletes admin-uploaded files (under uploads/content) —
-    # never the bundled default QR asset shipped with the app.
-    if old_qr_path and old_qr_path != settings.gcash_qr_path and old_qr_path.startswith('uploads/content/'):
-        _delete_content_image(old_qr_path)
-
-    return jsonify(success=True, message='GCash payment details updated.', settings={
-        'gcash_number':       settings.gcash_number,
-        'gcash_account_name': settings.gcash_account_name,
-        'gcash_qr_url':       url_for('static', filename=settings.gcash_qr_path) if settings.gcash_qr_path else None,
-    })
+    msg = 'GCash account added.'
+    if acct.is_default:
+        msg = 'GCash account added — members now see this one.'
+    return jsonify(success=True, message=msg, accounts=_gcash_accounts_data())
 
 
-@app.route('/admin/delete-gcash-settings', methods=['POST'])
-def admin_delete_gcash_settings():
-    """Admin-only: clear the GCash number, account name, and QR code shown
-    to members on the Payment tab. Members won't see a usable GCash option
-    again until the admin re-enters details via Edit."""
+@app.route('/admin/gcash-accounts/<int:account_id>/update', methods=['POST'])
+def admin_update_gcash_account(account_id):
+    """Admin-only: edit one saved GCash account. Same fields as add, plus
+    remove_qr='true' to drop the existing QR without uploading a new one.
+    If the edited account is the live one, members see the change on their
+    very next page load."""
     if session.get('role') != 'admin':
         return jsonify(success=False, error='Unauthorized.'), 403
 
-    settings = _get_gym_settings()
-    old_qr_path = settings.gcash_qr_path
+    acct = GcashAccount.query.get(account_id)
+    if acct is None:
+        return jsonify(success=False, error='That GCash account no longer exists.'), 404
 
-    settings.gcash_number = None
-    settings.gcash_account_name = None
-    settings.gcash_qr_path = None
+    number, name, label, err = _gcash_form_fields()
+    if err:
+        return err
+
+    clash = GcashAccount.query.filter(GcashAccount.gcash_number == number,
+                                      GcashAccount.id != acct.id).first()
+    if clash is not None:
+        return jsonify(success=False, error=f'{number} is already saved on another account.'), 400
+
+    remove_qr  = (request.form.get('remove_qr') or '').strip().lower() == 'true'
+    qr_file    = request.files.get('gcash_qr')
+    old_qr_path = acct.gcash_qr_path
+
+    try:
+        if qr_file and qr_file.filename:
+            acct.gcash_qr_path = _save_content_image(qr_file, existing_path=old_qr_path)
+        elif remove_qr:
+            acct.gcash_qr_path = None
+    except ValueError as e:
+        return jsonify(success=False, error=str(e)), 400
+
+    acct.gcash_number       = number
+    acct.gcash_account_name = name
+    acct.label              = label or None
+
+    if (request.form.get('make_default') or '').strip().lower() == 'true':
+        _set_default_gcash_account(acct)
+    else:
+        _sync_default_gcash_to_settings()
     db.session.commit()
 
-    # Best-effort cleanup of the QR file — only ever deletes admin-uploaded
-    # files (under uploads/content), never a bundled default asset.
+    # Best-effort cleanup of the replaced QR file — only ever deletes
+    # admin-uploaded files (under uploads/content), never a bundled asset.
+    if old_qr_path and old_qr_path != acct.gcash_qr_path and old_qr_path.startswith('uploads/content/'):
+        _delete_content_image(old_qr_path)
+
+    return jsonify(success=True, message='GCash account updated.',
+                   accounts=_gcash_accounts_data())
+
+
+@app.route('/admin/gcash-accounts/<int:account_id>/set-default', methods=['POST'])
+def admin_set_default_gcash_account(account_id):
+    """Admin-only: switch which saved account members are shown. This is
+    the one-click account swap — no retyping numbers, and it takes effect
+    immediately for every member."""
+    if session.get('role') != 'admin':
+        return jsonify(success=False, error='Unauthorized.'), 403
+
+    acct = GcashAccount.query.get(account_id)
+    if acct is None:
+        return jsonify(success=False, error='That GCash account no longer exists.'), 404
+
+    _set_default_gcash_account(acct)
+    db.session.commit()
+    return jsonify(success=True,
+                   message=f'Members are now shown {acct.gcash_account_name} ({acct.gcash_number}).',
+                   accounts=_gcash_accounts_data())
+
+
+@app.route('/admin/gcash-accounts/<int:account_id>/delete', methods=['POST'])
+def admin_delete_gcash_account(account_id):
+    """Admin-only: remove one saved GCash account. Deleting the live
+    account automatically promotes the next one so members aren't left
+    without a way to pay; deleting the last one clears GCash entirely."""
+    if session.get('role') != 'admin':
+        return jsonify(success=False, error='Unauthorized.'), 403
+
+    acct = GcashAccount.query.get(account_id)
+    if acct is None:
+        return jsonify(success=False, error='That GCash account no longer exists.'), 404
+
+    old_qr_path = acct.gcash_qr_path
+    was_default = acct.is_default
+    db.session.delete(acct)
+    db.session.flush()
+
+    promoted = _sync_default_gcash_to_settings()
+    db.session.commit()
+
     if old_qr_path and old_qr_path.startswith('uploads/content/'):
         _delete_content_image(old_qr_path)
 
-    return jsonify(success=True, message='GCash payment details removed.')
+    if was_default and promoted is not None:
+        message = (f'Account removed — members are now shown '
+                   f'{promoted.gcash_account_name} ({promoted.gcash_number}).')
+    elif promoted is None:
+        message = 'Last GCash account removed — members can no longer pay via GCash.'
+    else:
+        message = 'GCash account removed.'
+    return jsonify(success=True, message=message, accounts=_gcash_accounts_data())
+
+
+@app.route('/admin/gcash-accounts', methods=['GET'])
+def admin_list_gcash_accounts():
+    """Admin-only: current saved accounts, for refreshing the panel."""
+    if session.get('role') != 'admin':
+        return jsonify(success=False, error='Unauthorized.'), 403
+    return jsonify(success=True, accounts=_gcash_accounts_data())
 
 
 @app.route('/admin/update-terms-settings', methods=['POST'])
@@ -5717,17 +6217,15 @@ def member():
         fitness_profile = None
 
     # ── Payment history (this member's own submissions) ──
-    # A row that was declined at the *plan request* stage (status='rejected'
-    # while the method is still the placeholder "Pending — ...") never had an
-    # actual payment attached — the member was never asked to pay, so it
-    # doesn't belong in "Past Payments". Only show declined rows here if a
-    # real payment method (Cash/GCash) had actually been submitted and later
-    # rejected.
+    # A declined request never resulted in an actual payment — whether it
+    # was declined at the plan-request stage (before a payment method was
+    # even chosen) or later, after Cash/GCash was submitted, the member
+    # isn't going to pay for it either way, so declined rows don't belong
+    # in "Past Payments" at all.
     #
     # A row the member cancelled themselves (status='cancelled', via
-    # /member/cancel-plan-request) is excluded entirely — the member
-    # withdrew the request before it went anywhere, so it should not be
-    # recorded in Past Payments at all.
+    # /member/cancel-plan-request) is excluded for the same reason — the
+    # member withdrew the request before it went anywhere.
     payment_rows = (
         Payment.query
         .options(joinedload(Payment.plan))
@@ -5744,8 +6242,7 @@ def member():
         'status':    p.status,
         'is_student': p.is_student,
     } for p in payment_rows
-      if not (p.status == 'rejected' and (p.method or '').startswith('Pending'))
-      and p.status != 'cancelled']
+      if p.status != 'rejected' and p.status != 'cancelled']
 
     # ── Awaiting approval (plan request submitted, staff/admin hasn't
     #    reviewed it yet — no payment can be made until it's approved) ──
@@ -5779,7 +6276,19 @@ def member():
     )
     pending_payment = None
     if pending_payment_row is not None:
+        # ── Was this payment step re-opened because a payment the member
+        #    already submitted got declined? If so the Payment tab explains
+        #    that up front, so the member understands why they're being asked
+        #    to pay again instead of wondering what happened to the payment
+        #    they already sent in. Their approved plan is untouched — only
+        #    the payment itself is being redone. ──
+        declined_attempt = (
+            Payment.query.get(pending_payment_row.retry_of_payment_id)
+            if pending_payment_row.retry_of_payment_id else None
+        )
         pending_payment = {
+            'is_retry':        declined_attempt is not None,
+            'declined_method': declined_attempt.method if declined_attempt else None,
             'plan_name':   _payment_display_plan(pending_payment_row),
             'is_promo':    _is_promo_payment(pending_payment_row),
             'amount':      f'{float(pending_payment_row.amount):,.2f}',
@@ -5847,9 +6356,17 @@ def member():
     )
     plan_declined_notice = None
     if just_declined_row is not None:
+        # A payment-stage decline ('Cash'/'GCash' was already chosen) leaves
+        # the approved plan in place and just re-opens the payment step, so
+        # the popup tells the member to pay again rather than to request the
+        # plan all over again. A plan-stage decline (method still starts with
+        # 'Pending' — no payment was ever submitted) keeps the old wording.
+        declined_at_payment_stage = not (just_declined_row.method or '').startswith('Pending')
         plan_declined_notice = {
             'plan_name': _payment_display_plan(just_declined_row, 'membership'),
             'is_promo': _is_promo_payment(just_declined_row),
+            'stage': 'payment' if declined_at_payment_stage else 'request',
+            'method': just_declined_row.method if declined_at_payment_stage else None,
         }
         just_declined_row.notified = True
         db.session.commit()
@@ -6267,7 +6784,6 @@ def staff():
     # needs to show members who actually have a plan in effect.
     members = [m for m in _get_members_with_plans() if m['status'] not in ('No Plan', 'Declined')]
     active_members       = [m for m in members if m['status'] == 'Active']
-    pending_status_members = [m for m in members if m['status'] == 'Pending']
     expiring_soon    = [
         m for m in members
         if m['status'] == 'Active' and m['expiry_date'] and 0 <= (m['expiry_date'] - today).days <= 7
@@ -7294,6 +7810,7 @@ def admin():
         current_user=admin_user,
         staff_accounts=staff_accounts,
         gcash_settings=_get_gym_settings(),
+        gcash_accounts=_gcash_accounts_data(),
         # Drives the Plan dropdowns in the Add Member / Edit Member modals
         # so they list whatever plans currently exist, instead of a fixed
         # four baked into the template.
@@ -8064,6 +8581,9 @@ def _run_startup_migrations():
         ('payments', 'proof_image_path_3', "ALTER TABLE payments ADD COLUMN proof_image_path_3 VARCHAR(255) NULL"),
         # ── School ID proof now captures both sides, not just the front ──
         ('payments', 'student_id_back_image_path', "ALTER TABLE payments ADD COLUMN student_id_back_image_path VARCHAR(255) NULL"),
+        # ── Declined payment re-opens the payment step instead of killing the
+        #    whole plan request (see admin_verify_payment) ──
+        ('payments', 'retry_of_payment_id', "ALTER TABLE payments ADD COLUMN retry_of_payment_id INT NULL"),
     ]
     with db.engine.connect() as conn:
         for table, column, ddl in migrations:
@@ -8245,6 +8765,7 @@ def _run_startup_sequence():
     seed_default_fitness_catalog()
     seed_default_users()
     _get_gym_settings()  # ensures the GCash settings row exists on first boot
+    _seed_gcash_accounts()  # lifts any pre-existing GCash details into gcash_accounts
     print("Tables created, plans and demo users seeded!")
 
 

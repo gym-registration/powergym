@@ -32,6 +32,13 @@ const MemberModule = (() => {
   let _pendingPaymentMethod = null; // { formData } staged between submitPaymentMethod() and confirmSubmitPayment()
   let _withdrawPaymentId = null;
 
+  // Reference number OCR reads off each attached GCash screenshot (slot 1/2/3
+  // -> string or null), kept purely so a newly-picked screenshot can be
+  // compared against the others already attached. Lets the member know
+  // right away if they picked the same receipt twice, instead of only
+  // finding out after they hit Submit. See _checkGcashDuplicateScreenshot().
+  let _gcashSlotReference = { 1: null, 2: null, 3: null };
+
   // The member's picked school-ID photos. Tracked here (not just read off
   // the <input>) because choosing a file clears whatever was already in a
   // native <input type="file">, so re-selecting to add/redo just one side
@@ -124,7 +131,16 @@ const MemberModule = (() => {
     if (_gcashReferenceInput) {
       _gcashReferenceInput.addEventListener('input', _updatePaymentSubmitState);
     }
+    // Auto-capitalize the Sender/Account Name once the member finishes
+    // typing (blur), e.g. "juan m dela cruz" -> "Juan M. Dela Cruz".
+    const _gcashSenderInput = document.getElementById('payment-gcash-sender');
+    if (_gcashSenderInput) {
+      _gcashSenderInput.addEventListener('input', _liveCapitalizeSenderNameStart);
+      _gcashSenderInput.addEventListener('input', _updatePaymentSubmitState);
+      _gcashSenderInput.addEventListener('blur', _formatSenderNameField);
+    }
     _updatePaymentSubmitState();
+    _updateGcashSlotVisibility();
 
     const dashData = _parseJSON('member-dashboard-data');
 
@@ -161,10 +177,24 @@ const MemberModule = (() => {
     if (dashData.plan_declined_notice) {
       const n = dashData.plan_declined_notice;
       const msg = document.getElementById('plan-declined-message');
-      if (msg) {
-        msg.textContent = n.is_promo
-          ? `Your ${n.plan_name} promo request was declined. Please check with staff or admin, then feel free to submit a new request.`
-          : `Your ${n.plan_name} plan request was declined. Please check with staff or admin, then feel free to submit a new request.`;
+      const title = document.getElementById('plan-declined-title');
+      const kind = n.is_promo ? 'promo' : 'plan';
+      // A payment-stage decline only rejects the payment itself — the plan
+      // stays approved and the payment step re-opens, so the member is told
+      // to pay again rather than to request the whole plan over again.
+      if (n.stage === 'payment') {
+        if (title) title.textContent = 'PAYMENT DECLINED';
+        if (msg) {
+          msg.textContent = `Your ${n.method || ''} payment for the ${n.plan_name} ${kind} was declined. `
+            + `Your ${kind} is still approved — you don't need to request it again. `
+            + `Please check with staff or admin, then submit your payment again on the Payment tab.`;
+        }
+      } else {
+        if (title) title.textContent = 'REQUEST DECLINED';
+        if (msg) {
+          msg.textContent = `Your ${n.plan_name} ${kind} request was declined. `
+            + `Please check with staff or admin, then feel free to submit a new request.`;
+        }
       }
       openModal('plan-declined-modal');
     }
@@ -671,42 +701,23 @@ const MemberModule = (() => {
     if (group) group.style.display = selectEl.value === 'yes' ? '' : 'none';
   }
 
-  /** Adds photo(s) from the file picker into the front/back slots.
-   *  - Picking 2 files at once fills front + back together.
-   *  - Picking 1 file fills whichever slot is still empty (front first,
-   *    then back) — so a member can add them one at a time across two
-   *    separate picks instead of having to reselect both every time.
-   *  - If both slots are already filled and they pick 1 more file, it
-   *    replaces the front (the side that's re-taken most often) — they
-   *    can always hit "✕ Remove" under a preview first to clear just
-   *    that one slot instead.
-   *  The native input is cleared after each pick since the File objects
-   *  are already captured in module state — that's what lets a later
-   *  single-file pick be treated as "add the other side" instead of
-   *  wiping out the one already chosen. */
-  function previewStudentId(input) {
-    const files = Array.from(input.files || []);
-    if (!files.length) return;
+  /** Adds/replaces the photo for one specific side ('front' or 'back').
+   *  Each side has its own file picker now, so there's no more guessing
+   *  which slot an incoming file belongs in — picking a new photo for a
+   *  side always just fills/replaces that side, leaving the other side
+   *  untouched. The native input is cleared after each pick so choosing
+   *  the same filename again still fires a change event. */
+  function previewStudentId(input, side) {
+    const file = (input.files || [])[0];
+    if (!file) return;
 
-    if (files.length > 2) {
-      showToast('Please select at most 2 photos — the front and the back of your school ID.', 'error');
-    } else if (files.length === 2) {
-      _studentIdFrontFile = files[0];
-      _studentIdBackFile = files[1];
-    } else { // files.length === 1
-      if (!_studentIdFrontFile) {
-        _studentIdFrontFile = files[0];
-        showToast('Front added. Now add the back the same way.', 'success');
-      } else if (!_studentIdBackFile) {
-        _studentIdBackFile = files[0];
-        showToast('Back added — both sides are in.', 'success');
-      } else {
-        _studentIdFrontFile = files[0];
-        showToast('Front photo replaced. Remove the back first if you meant to redo that one instead.', 'success');
-      }
+    if (side === 'back') {
+      _studentIdBackFile = file;
+    } else {
+      _studentIdFrontFile = file;
     }
 
-    input.value = ''; // safe to clear now — the File objects live in state above
+    input.value = '';
     _renderStudentIdPreviews();
   }
 
@@ -969,40 +980,6 @@ const MemberModule = (() => {
     _updatePaymentSubmitState();
   }
 
-  /** Reveals the next optional screenshot slot (2nd, then 3rd) when the
-   *  member wants to attach more than one receipt — e.g. a payment that
-   *  was split across two GCash transfers. Caps out at 3 total. */
-  function addAnotherGcashScreenshot() {
-    const slot2 = document.getElementById('payment-gcash-slot-2');
-    const slot3 = document.getElementById('payment-gcash-slot-3');
-    if (slot2 && slot2.style.display === 'none') {
-      slot2.style.display = '';
-    } else if (slot3 && slot3.style.display === 'none') {
-      slot3.style.display = '';
-    }
-    _updateAddScreenshotLinkVisibility();
-  }
-
-  /** Shows/hides the "+ Add another screenshot" link and updates its
-   *  wording depending on how many optional slots are already open. */
-  function _updateAddScreenshotLinkVisibility() {
-    const link = document.getElementById('payment-gcash-add-screenshot');
-    const slot2 = document.getElementById('payment-gcash-slot-2');
-    const slot3 = document.getElementById('payment-gcash-slot-3');
-    if (!link || !slot2 || !slot3) return;
-    const slot2Open = slot2.style.display !== 'none';
-    const slot3Open = slot3.style.display !== 'none';
-    if (!slot2Open) {
-      link.style.display = '';
-      link.textContent = '+ Add another screenshot (optional)';
-    } else if (!slot3Open) {
-      link.style.display = '';
-      link.textContent = '+ Add a third screenshot (optional)';
-    } else {
-      link.style.display = 'none';
-    }
-  }
-
   /** Gates the payment submit button: Cash never needs gating (it's just
    *  settled in person at the front desk), but GCash requires the primary
    *  receipt screenshot, a reference number, and an Amount Paid that meets
@@ -1024,6 +1001,10 @@ const MemberModule = (() => {
     const proofInput = document.getElementById('payment-gcash-proof');
     const hasProof = !!(proofInput && proofInput.files && proofInput.files[0]);
     const reference = document.getElementById('payment-gcash-reference')?.value.trim() || '';
+    // The sender/account name is what admin cross-checks the receipt against
+    // — without it an unnamed screenshot can't be tied to this member, so
+    // it's required before the button unlocks.
+    const sender = document.getElementById('payment-gcash-sender')?.value.trim() || '';
 
     const amountInput = document.getElementById('payment-gcash-amount');
     const raw = amountInput ? amountInput.value.trim() : '';
@@ -1031,11 +1012,11 @@ const MemberModule = (() => {
     const paid = raw ? parseFloat(raw.replace(/,/g, '')) : NaN;
     const amountIsEnough = !isNaN(required) && !isNaN(paid) && (paid + 0.01 >= required);
 
-    const ready = hasProof && !!reference && amountIsEnough;
+    const ready = hasProof && !!sender && !!reference && amountIsEnough;
     submitBtn.disabled = !ready;
     submitBtn.title = ready
       ? ''
-      : 'Attach your receipt screenshot, GCash reference number, and an amount that covers the required payment before submitting.';
+      : 'Attach your receipt screenshot, and fill in the sender/account name, GCash reference number, and an amount that covers the required payment before submitting.';
   }
 
   /** Copies the gym's GCash number to the clipboard when the member taps
@@ -1049,6 +1030,65 @@ const MemberModule = (() => {
       navigator.clipboard.writeText(number).then(done).catch(fail);
     } else {
       fail();
+    }
+  }
+
+  /** Formats a typed name into "Juan M. Dela Cruz" style casing: first
+   *  letter of each name part capitalized, rest lowercased, and any
+   *  single-letter part (a middle initial) uppercased with a trailing
+   *  period. Hyphens and apostrophes inside a part (e.g. "Dela-Cruz",
+   *  "O'Brien") each get their own capitalized segment. Collapses stray
+   *  extra spaces along the way. */
+  function _formatSenderName(raw) {
+    if (!raw) return raw;
+    return raw
+      .trim()
+      .replace(/\s+/g, ' ')
+      .split(' ')
+      .map(word => {
+        const bare = word.replace(/\.$/, '');
+        if (bare.length === 1) return bare.toUpperCase() + '.'; // middle initial
+        return word
+          .split(/([-'])/)
+          .map(seg => (seg === '-' || seg === "'" || !seg)
+            ? seg
+            : seg.charAt(0).toUpperCase() + seg.slice(1).toLowerCase())
+          .join('');
+      })
+      .join(' ');
+  }
+
+  /** Applies _formatSenderName() to the Sender/Account Name field in place,
+   *  called on blur/submit as the full corrective pass (lowercases the rest
+   *  of each word, adds the middle-initial period, collapses spacing) —
+   *  the kind of cleanup that's disruptive to run on every keystroke. */
+  function _formatSenderNameField() {
+    const input = document.getElementById('payment-gcash-sender');
+    if (!input) return;
+    const formatted = _formatSenderName(input.value);
+    if (formatted !== input.value) input.value = formatted;
+  }
+
+  /** Lighter-touch live version, run on every keystroke: as soon as the
+   *  member types the first letter of a new word (start of the field, or
+   *  right after a space), that one letter is capitalized immediately.
+   *  Nothing else in the field is touched — no forced lowercasing, no
+   *  middle-initial periods — so it never fights normal typing, deleting,
+   *  or pasting. The full cleanup in _formatSenderNameField() still runs on
+   *  blur/submit to catch everything this lighter pass intentionally
+   *  leaves alone (e.g. someone typing in ALL CAPS or pasting a name in). */
+  function _liveCapitalizeSenderNameStart(e) {
+    if (e.inputType !== 'insertText' || !e.data) return; // only a normal typed character
+    const input = e.target;
+    const pos = input.selectionStart;
+    if (!pos) return;
+    const val = input.value;
+    const typedChar = val[pos - 1];
+    const isWordStart = pos === 1 || /\s/.test(val[pos - 2]);
+    const upper = typedChar.toUpperCase();
+    if (isWordStart && typedChar !== upper) {
+      input.value = val.slice(0, pos - 1) + upper + val.slice(pos);
+      input.setSelectionRange(pos, pos);
     }
   }
 
@@ -1134,6 +1174,7 @@ const MemberModule = (() => {
     slot = slot || 1;
     const amountInput = document.getElementById('payment-gcash-amount-' + slot);
     if (amountInput) amountInput.placeholder = 'Reading receipt…';
+    _gcashSlotReference[slot] = null; // cleared until this OCR pass (re)confirms it
 
     // Older builds showed a "Detected from your receipt" summary box here;
     // keep it permanently hidden now that fields are filled silently.
@@ -1151,6 +1192,22 @@ const MemberModule = (() => {
           return;
         }
         const d = data.detected;
+        _gcashSlotReference[slot] = d.reference || null;
+
+        // If this exact reference number already funded a past payment
+        // (this member's own earlier submission, or anyone else's), reject
+        // this screenshot right away rather than letting the member fill in
+        // the rest of the form first. The server repeats this check
+        // independently at final submit as the real gate.
+        if (data.reference_already_used) {
+          showToast(
+            'This screenshot\'s reference number has already been used for another payment. ' +
+            'Please attach a different transaction.',
+            'error'
+          );
+          removeGcashProof(slot);
+          return;
+        }
 
         // Date/Time/Reference Number are only ever taken from screenshot 1 —
         // the system deliberately reads just one receipt for those fields
@@ -1186,12 +1243,45 @@ const MemberModule = (() => {
           }
         }
         _recomputeGcashTotalAmount();
+        _checkGcashDuplicateScreenshot(slot);
       })
       .catch(() => {
         if (amountInput) amountInput.placeholder = 'Could not auto-read — not counted yet';
         _recomputeGcashTotalAmount();
       });
   }
+
+  /** Compares this slot's just-OCR'd reference number against whatever was
+   *  already read off the other currently-attached screenshot(s). Catches
+   *  the same real GCash transaction being picked twice (e.g. to make it
+   *  look like the total covers more than what was actually paid) right as
+   *  it's attached, instead of only at final submit. Best-effort: a slot
+   *  OCR couldn't read a reference number for is simply never compared —
+   *  it doesn't block anything, admin still reviews it manually. On a
+   *  match, the newly-picked screenshot is the one rejected and cleared,
+   *  since it's the one that just tried to reuse an already-attached
+   *  receipt; the server repeats this check independently at submit time
+   *  as the real gate, so this is purely a faster heads-up for the member. */
+  function _checkGcashDuplicateScreenshot(slot) {
+    const ref = _gcashSlotReference[slot];
+    if (!ref) return;
+    const normalized = ref.replace(/\s+/g, '').toLowerCase();
+    for (const otherSlot of [1, 2, 3]) {
+      if (otherSlot === slot) continue;
+      const otherRef = _gcashSlotReference[otherSlot];
+      if (!otherRef) continue;
+      if (otherRef.replace(/\s+/g, '').toLowerCase() === normalized) {
+        showToast(
+          `Screenshot ${slot} looks like the same GCash receipt as Screenshot ${otherSlot} ` +
+          `(same reference number). Please upload a different transaction.`,
+          'error'
+        );
+        removeGcashProof(slot);
+        return;
+      }
+    }
+  }
+
 
   /** The Amount Paid (Total) field is never typed directly — it's the sum
    *  of whichever per-screenshot "Amount on This Screenshot" fields are
@@ -1219,7 +1309,52 @@ const MemberModule = (() => {
     const totalInput = document.getElementById('payment-gcash-amount');
     if (totalInput) totalInput.value = anyEntered ? sum.toFixed(2) : '';
     _validateGcashAmountPaid();
+    _updateGcashSlotVisibility();
   }
+
+  /** Screenshot 2 and 3 stay hidden until they're actually needed. Slot 2
+   *  only appears once screenshot 1 is attached and the amount read so far
+   *  still falls short of what's required for this payment (e.g. the
+   *  member split a large payment across multiple GCash transfers); slot 3
+   *  only appears the same way once slot 2 is in play and the total is
+   *  still short. If a screenshot alone already covers the required
+   *  amount, the extra slot(s) simply never show. A slot that already has
+   *  a file in it is kept visible even if a later edit makes the total
+   *  sufficient again, or another slot gets removed/replaced in the
+   *  meantime — a slot's own visibility never depends on another slot
+   *  being mid-replace, so clicking "Remove & replace" on one screenshot
+   *  never makes an untouched screenshot disappear. Called after every
+   *  recompute of the total, so it reacts to OCR fills, manual removes,
+   *  and new uploads alike. */
+  function _updateGcashSlotVisibility() {
+    const slot1Input = document.getElementById('payment-gcash-proof');
+    const slot2Input = document.getElementById('payment-gcash-proof-2');
+    const slot3Input = document.getElementById('payment-gcash-proof-3');
+    const slot2Box = document.getElementById('payment-gcash-slot-2');
+    const slot3Box = document.getElementById('payment-gcash-slot-3');
+    const totalInput = document.getElementById('payment-gcash-amount');
+
+    const hasSlot1 = !!(slot1Input && slot1Input.files && slot1Input.files[0]);
+    const hasSlot2File = !!(slot2Input && slot2Input.files && slot2Input.files[0]);
+    const hasSlot3File = !!(slot3Input && slot3Input.files && slot3Input.files[0]);
+
+    const required = parseFloat((totalInput?.dataset.required || '').replace(/,/g, ''));
+    const paidRaw = totalInput ? totalInput.value.trim() : '';
+    const paid = paidRaw ? parseFloat(paidRaw.replace(/,/g, '')) : NaN;
+    // Treat "couldn't be read yet" the same as "not enough" — the member
+    // still needs a way to add backup proof if OCR came up empty.
+    const insufficient = isNaN(required) || isNaN(paid) || (paid + 0.01 < required);
+
+    // A slot that already holds its own file stays visible no matter what —
+    // it only ever needs "prompted into view" (the hasSlot1 && insufficient
+    // part) while it's still empty.
+    const showSlot2 = hasSlot2File || (hasSlot1 && insufficient);
+    if (slot2Box) slot2Box.style.display = showSlot2 ? '' : 'none';
+
+    const showSlot3 = hasSlot3File || (showSlot2 && insufficient);
+    if (slot3Box) slot3Box.style.display = showSlot3 ? '' : 'none';
+  }
+
 
   /** Colors the Amount Paid field and its helper note red when what's
    *  typed/detected is less than the plan's required amount, green when
@@ -1282,6 +1417,7 @@ const MemberModule = (() => {
    *  re-added via "+ Add another screenshot". */
   function removeGcashProof(slot) {
     slot = slot || 1;
+    _gcashSlotReference[slot] = null;
     const suffix = slot === 1 ? '' : '-' + slot;
     const input = document.getElementById('payment-gcash-proof' + suffix);
     const preview = document.getElementById('payment-gcash-proof-preview' + suffix);
@@ -1306,11 +1442,11 @@ const MemberModule = (() => {
       if (amountEl1) { amountEl1.value = ''; amountEl1.placeholder = '0.00'; }
       _recomputeGcashTotalAmount(); // clears/updates the computed total too, cascades to the submit gate
     } else {
-      const box = document.getElementById('payment-gcash-slot-' + slot);
-      if (box) box.style.display = 'none';
+      const tapHint = document.getElementById('payment-gcash-proof-tap-hint-' + slot);
+      if (tapHint) tapHint.style.display = 'none';
+
       const amountEl = document.getElementById('payment-gcash-amount-' + slot);
       if (amountEl) { amountEl.value = ''; amountEl.placeholder = '0.00'; }
-      _updateAddScreenshotLinkVisibility();
       _recomputeGcashTotalAmount();
       _updatePaymentSubmitState();
     }
@@ -1430,9 +1566,15 @@ const MemberModule = (() => {
       if (proof2) formData.append('gcash_proof_2', proof2);
       if (proof3) formData.append('gcash_proof_3', proof3);
 
-      // Optional context fields — helpful for admin verification, but never
-      // block submission if the member left one blank.
+      // Sender/account name is required (see _updatePaymentSubmitState); the
+      // date/time fields below it are still optional context for admin.
+      _formatSenderNameField(); // safety net in case blur never fired (e.g. browser autofill)
       const sender = document.getElementById('payment-gcash-sender')?.value.trim() || '';
+      if (!sender) {
+        showToast('Please enter the sender / account name shown on your GCash receipt.', 'error');
+        document.getElementById('payment-gcash-sender')?.focus();
+        return;
+      }
       const payDate = document.getElementById('payment-gcash-date')?.value || '';
       const payTime = document.getElementById('payment-gcash-time')?.value || '';
       const amountPaid = document.getElementById('payment-gcash-amount')?.value.trim() || '';
@@ -1987,7 +2129,6 @@ const MemberModule = (() => {
     closePlanApprovedModal, goToPaymentFromApproval, closePaymentApprovedModal,
     closePlanDeclinedModal, withdrawPlanRequest, cancelWithdrawRequest, confirmWithdrawRequest,
     togglePaymentProofField, previewGcashProof, removeGcashProof, openGcashProofPreview, submitPaymentMethod,
-    addAnotherGcashScreenshot,
     copyGcashNumber, deferPaymentMethod,
     cancelSubmitPayment, confirmSubmitPayment, closePaymentSubmitSuccessModal,
     changeProfilePicture,
@@ -2021,7 +2162,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.toggleStudentIdField    = (el) => MemberModule.toggleStudentIdField(el);
   window.updateCoachAvailabilityNote = () => MemberModule.updateCoachAvailabilityNote();
   window.validateStartDateField      = () => MemberModule.validateStartDateField();
-  window.previewStudentId        = (input) => MemberModule.previewStudentId(input);
+  window.previewStudentId        = (input, side) => MemberModule.previewStudentId(input, side);
   window.removeStudentId         = (side) => MemberModule.removeStudentId(side);
   window.submitRenewalPayment    = () => MemberModule.submitRenewalPayment();
   window.cancelPlanRequest       = () => MemberModule.cancelPlanRequest();
@@ -2038,7 +2179,6 @@ document.addEventListener('DOMContentLoaded', () => {
   window.previewGcashProof       = (input, slot) => MemberModule.previewGcashProof(input, slot);
   window.removeGcashProof        = (slot) => MemberModule.removeGcashProof(slot);
   window.openGcashProofPreview   = (slot) => MemberModule.openGcashProofPreview(slot);
-  window.addAnotherGcashScreenshot = () => MemberModule.addAnotherGcashScreenshot();
   window.submitPaymentMethod     = () => MemberModule.submitPaymentMethod();
   window.copyGcashNumber         = (btn) => MemberModule.copyGcashNumber(btn);
   window.deferPaymentMethod      = () => MemberModule.deferPaymentMethod();

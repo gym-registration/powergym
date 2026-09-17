@@ -1,0 +1,23 @@
+{
+  "//": "Drop this file in your project root (next to app.py). It tells Pylance to stop flagging patterns that are false positives for this codebase's style — not to loosen real error checking.",
+
+  "//1_reportCallIssue": "Flask-SQLAlchemy's db.Model doesn't expose a typed __init__ matching your db.Column names, so Pylance can't verify constructor kwargs like User(first_name=..., email=...) even though they're all real columns (verified against your model definitions). This accounts for the large majority of the 292 problems.",
+
+  "//2_reportOptionalMemberAccess": "Query.first()/filter_by().first() return Optional[Model] by SQLAlchemy's stubs, so Pylance flags every .attribute access afterward even when your code already guarantees the row exists (e.g. inside an `if row:` block, or right after creating it). Same story for werkzeug's FileStorage.filename (str | None) and nullable DateTime/Date columns you only format after checking they're set.",
+
+  "//3_reportAttributeAccessIssue_cv2": "You intentionally reassign `cv2 = None` as a fallback sentinel when opencv fails to import (see the try/except around line 50), then guard every use with `if cv2 is not None:`. Pylance can't narrow a module-level name reassigned to None across function boundaries, so it keeps treating cv2 as None-typed everywhere downstream.",
+
+  "//4_reportArgumentType_joinedload": "joinedload(Model.relationship) — Pylance's SQLAlchemy stubs type relationship attributes as RelationshipProperty when accessed at the class level in some versions, which doesn't match joinedload's expected InstrumentedAttribute type. This is a stub-versioning mismatch, not a real error; joinedload works fine with these calls at runtime.",
+
+  "typeCheckingMode": "basic",
+  "reportCallIssue": "none",
+  "reportOptionalMemberAccess": "none",
+  "reportAttributeAccessIssue": "none",
+  "reportArgumentType": "none",
+  "reportOperatorIssue": "none",
+
+  "//kept_on": "Real problems stay visible: undefined names, unused imports/variables, syntax errors, unreachable code, etc.",
+  "reportUndefinedVariable": "error",
+  "reportUnusedImport": "warning",
+  "reportSelfClsParameterName": "warning"
+}

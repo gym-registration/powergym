@@ -1111,12 +1111,20 @@ const StaffModule = (() => {
   /** Show the uploaded payment proof (image or PDF) in a modal before approving/rejecting */
   function viewPaymentProof(url, title) {
     const img      = document.getElementById('proof-modal-img');
+    const img2     = document.getElementById('proof-modal-img-2');
     const pdfNote  = document.getElementById('proof-modal-pdf-note');
     const pdfLink  = document.getElementById('proof-modal-pdf-link');
     const titleEl  = document.getElementById('proof-modal-title');
+    const modalBox = document.getElementById('view-proof-modal-box');
     if (!img || !pdfNote || !pdfLink) return;
 
     if (titleEl) titleEl.textContent = (title || 'Payment Proof').toUpperCase();
+
+    // Always a single image here — make sure the second slot from a
+    // previous "View ID (Front & Back)" look is hidden and the modal is
+    // back to its normal single-image width.
+    if (img2) { img2.style.display = 'none'; img2.removeAttribute('src'); }
+    if (modalBox) modalBox.style.maxWidth = '520px';
 
     const isPdf = /\.pdf($|\?)/i.test(url);
 
@@ -1130,6 +1138,33 @@ const StaffModule = (() => {
       img.src = url;
       img.style.display = 'block';
     }
+
+    openModal('view-proof-modal');
+  }
+
+  /** Show a student's ID front and back together, side by side, in the same
+   *  proof modal — so staff can compare both sides at once instead of
+   *  opening two separate popups. Falls back gracefully if only one side
+   *  is available (shouldn't normally happen since both are required on
+   *  upload, but keeps this robust against older/partial records). */
+  function viewStudentIdProof(frontUrl, backUrl, title) {
+    const img      = document.getElementById('proof-modal-img');
+    const img2     = document.getElementById('proof-modal-img-2');
+    const pdfNote  = document.getElementById('proof-modal-pdf-note');
+    const titleEl  = document.getElementById('proof-modal-title');
+    const modalBox = document.getElementById('view-proof-modal-box');
+    if (!img || !img2) return;
+
+    if (titleEl) titleEl.textContent = (title || 'School ID Proof').toUpperCase();
+    pdfNote.style.display = 'none';
+
+    if (frontUrl) { img.src = frontUrl; img.style.display = 'block'; }
+    else { img.style.display = 'none'; img.removeAttribute('src'); }
+
+    if (backUrl) { img2.src = backUrl; img2.style.display = 'block'; }
+    else { img2.style.display = 'none'; img2.removeAttribute('src'); }
+
+    if (modalBox) modalBox.style.maxWidth = (frontUrl && backUrl) ? '760px' : '520px';
 
     openModal('view-proof-modal');
   }
@@ -1494,7 +1529,7 @@ const StaffModule = (() => {
       });
   }
 
-  return { init, tab, promptRecordPayment, confirmRecordPayment, cancelRecordPayment, closePaymentRecordedModal, checkInMember, checkOutMember, flatlineAndCheckOut, sendExpiryReminder, filterCheckinTable, filterCheckinByStatus, filterMembersByStatus, filterMembersTable, goToActiveMembers, toggleMemberIdColumn, toggleCheckinIdColumn, viewPaymentProof, onPayMemberInput, onPayStudentToggle, updatePayAmountDisplay, generateReport, submitCoachUpdate, confirmCoachUpdate, closeCoachSaveSuccessModal, toggleCoachEdit, addCoach, promptDeleteCoach, confirmDeleteCoach,
+  return { init, tab, promptRecordPayment, confirmRecordPayment, cancelRecordPayment, closePaymentRecordedModal, checkInMember, checkOutMember, flatlineAndCheckOut, sendExpiryReminder, filterCheckinTable, filterCheckinByStatus, filterMembersByStatus, filterMembersTable, goToActiveMembers, toggleMemberIdColumn, toggleCheckinIdColumn, viewPaymentProof, viewStudentIdProof, onPayMemberInput, onPayStudentToggle, updatePayAmountDisplay, generateReport, submitCoachUpdate, confirmCoachUpdate, closeCoachSaveSuccessModal, toggleCoachEdit, addCoach, promptDeleteCoach, confirmDeleteCoach,
            generateStaffAnalyticsReport, clearStaffReportDateRange, refreshStaffReport, exportStaffReportPDF, submitWalkIn, confirmWalkIn, confirmWalkInSubmit, toggleWalkInCoach, selectWalkInPlan, updateWalkInCoachNote,
            changeProfilePicture, toggleNotificationPanel, openNotifItem };
 })();
@@ -1531,6 +1566,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.toggleMemberIdColumn  = () => StaffModule.toggleMemberIdColumn();
   window.toggleCheckinIdColumn = () => StaffModule.toggleCheckinIdColumn();
   window.viewPaymentProof      = (url, title) => StaffModule.viewPaymentProof(url, title);
+  window.viewStudentIdProof    = (frontUrl, backUrl, title) => StaffModule.viewStudentIdProof(frontUrl, backUrl, title);
   window.onPayMemberInput      = (value) => StaffModule.onPayMemberInput(value);
   window.onPayStudentToggle    = () => StaffModule.onPayStudentToggle();
   window.generateReport        = (reportType) => StaffModule.generateReport(reportType);

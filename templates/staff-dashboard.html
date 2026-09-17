@@ -209,8 +209,8 @@
                    {% if p.member_profile_picture %}onclick="viewPaymentProof('{{ p.member_profile_picture }}', 'Profile Picture — {{ p.member_name }}')" title="View profile picture"{% endif %}>{% if not p.member_profile_picture %}👤{% endif %}</div>
               <div>
               <div style="font-weight:600;margin-bottom:4px;">{{ p.member_name }} — {{ p.plan }}</div>
-              <div style="font-size:13px;color:var(--muted);">
-                {% if p.stage == 'approval' %}New plan request{% else %}{{ p.method }} · Ref: {{ p.reference }}{% endif %} · Txn: #{{ p.txn }} · ₱{{ p.amount }}
+              <div style="font-size:15px;color:var(--muted);">
+                {% if p.stage == 'approval' %}New plan request{% else %}{{ p.method }} · Ref: {{ p.reference }}{% endif %} · Txn: #{{ p.txn }} · <span style="color:var(--white);font-weight:700;">₱{{ p.amount }}</span>
               </div>
               <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
                 {% if p.is_promo %}<span class="badge badge-gold">🎁 Promo</span>{% endif %}
@@ -233,19 +233,17 @@
               </div>
             </div>
             <div style="display:flex;gap:8px;">
-              {% if p.is_student and p.student_id_image_path %}
+              {% if p.is_student and p.student_id_image_path and p.student_id_back_image_path %}
+              <button class="btn btn-sm btn-outline"
+                      data-front-url="{{ url_for('static', filename=p.student_id_image_path) }}"
+                      data-back-url="{{ url_for('static', filename=p.student_id_back_image_path) }}"
+                      onclick="viewStudentIdProof(this.dataset.frontUrl, this.dataset.backUrl, 'School ID Proof — {{ p.member_name }}')">🎓 View ID (Front &amp; Back)</button>
+              {% elif p.is_student and p.student_id_image_path %}
               <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof — Front')">🎓 View ID (Front)</button>
-              {% endif %}
-              {% if p.is_student and p.student_id_back_image_path %}
+              {% elif p.is_student and p.student_id_back_image_path %}
               <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_back_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof — Back')">🎓 View ID (Back)</button>
               {% endif %}
               {% if p.stage == 'approval' %}
-              {% if p.has_student_rate and p.is_student and p.student_id_image_path %}
-              <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);align-self:center;cursor:pointer;">
-                <input type="checkbox" class="verify-student-check" checked>
-                Confirm student discount
-              </label>
-              {% endif %}
               <button class="btn btn-sm btn-green" onclick="verifyPayment(this,'approve')">✓ Approve Plan</button>
               <button class="btn btn-sm" style="background:rgba(230,30,37,0.1);color:var(--red);border:1px solid rgba(230,30,37,0.2);" onclick="verifyPayment(this,'reject')">✗ Reject</button>
               {% elif p.stage == 'awaiting_payment' %}
@@ -1006,11 +1004,14 @@
      MODALS
 ═══════════════════════════════════════ -->
 <div class="modal-overlay" id="view-proof-modal">
-  <div class="modal" style="max-width:520px;text-align:center;">
+  <div class="modal" id="view-proof-modal-box" style="max-width:520px;text-align:center;">
     <button class="modal-close" onclick="closeModal('view-proof-modal')">✕</button>
     <div class="modal-title" id="proof-modal-title">PAYMENT PROOF</div>
     <div id="proof-modal-body">
-      <img id="proof-modal-img" src="" alt="Payment proof" style="display:none;max-width:100%;max-height:60vh;margin:0 auto;border-radius:6px;border:1px solid var(--border);">
+      <div id="proof-modal-img-wrap" style="display:flex;gap:16px;justify-content:center;align-items:flex-start;flex-wrap:wrap;">
+        <img id="proof-modal-img" src="" alt="Payment proof" style="display:none;max-width:100%;max-height:60vh;border-radius:6px;border:1px solid var(--border);">
+        <img id="proof-modal-img-2" src="" alt="Payment proof — back" style="display:none;max-width:100%;max-height:60vh;border-radius:6px;border:1px solid var(--border);">
+      </div>
       <div id="proof-modal-pdf-note" style="display:none;">
         <p style="color:var(--muted);font-size:15px;margin-bottom:16px;">This proof was uploaded as a PDF file.</p>
         <a id="proof-modal-pdf-link" href="#" target="_blank" class="btn btn-red" style="display:inline-block;">OPEN PDF</a>

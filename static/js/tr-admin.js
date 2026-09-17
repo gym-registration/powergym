@@ -587,26 +587,90 @@ const AdminModule = (() => {
    *  trusted markup (it's rendered server-side from template data, not
    *  raw user input), so it's inserted as-is rather than escaped. */
   function viewPaymentProof(url, title, html) {
-    const img     = document.getElementById('proof-modal-img');
-    const pdfNote = document.getElementById('proof-modal-pdf-note');
-    const pdfLink = document.getElementById('proof-modal-pdf-link');
-    const titleEl = document.getElementById('proof-modal-title');
-    const details = document.getElementById('proof-modal-details');
-    if (!img || !pdfNote || !pdfLink) return;
+    _showProofModal([url], title, html);
+  }
+
+  /** Show every screenshot a member uploaded for one payment (GCash proofs
+   *  can be up to 3) side by side in a single modal, with the same
+   *  member-reported details panel underneath — one button instead of
+   *  "View Proof 1 / 2 / 3". Empty slots are simply skipped. */
+  function viewPaymentProofs(url1, url2, url3, title, html) {
+    const urls   = [url1, url2, url3].filter(u => u && String(u).trim());
+    const labels = urls.length > 1 ? urls.map((_, i) => `Screenshot ${i + 1}`) : [];
+    _showProofModal(urls, title, html, labels);
+  }
+
+  /** Show a student's ID front and back together, side by side, in the same
+   *  proof modal — so the admin can compare both sides at once instead of
+   *  opening two separate popups. Falls back gracefully if only one side
+   *  is available. */
+  function viewStudentIdProof(frontUrl, backUrl, title) {
+    const urls   = [];
+    const labels = [];
+    if (frontUrl) { urls.push(frontUrl); labels.push('Front'); }
+    if (backUrl)  { urls.push(backUrl);  labels.push('Back');  }
+    _showProofModal(urls, title || 'School ID Proof', '', urls.length > 1 ? labels : []);
+  }
+
+  /** Shared renderer behind every view-proof entry point. Renders one tile
+   *  per uploaded file into the modal (so a GCash payment with 2-3
+   *  screenshots shows them all at once, captioned and side by side),
+   *  widens the modal to fit, routes PDF uploads to an OPEN PDF link, and
+   *  shows the optional member-reported details panel underneath. Each
+   *  image is clickable to open the full-size file in a new tab. */
+  function _showProofModal(urls, title, html, labels) {
+    const wrap     = document.getElementById('proof-modal-img-wrap');
+    const pdfNote  = document.getElementById('proof-modal-pdf-note');
+    const pdfLink  = document.getElementById('proof-modal-pdf-link');
+    const titleEl  = document.getElementById('proof-modal-title');
+    const details  = document.getElementById('proof-modal-details');
+    const modalBox = document.getElementById('view-proof-modal-box');
+    if (!wrap) return;
+
+    const isPdf  = (u) => /\.pdf($|\?)/i.test(u);
+    const all    = (urls || []).filter(u => u && String(u).trim());
+    const images = all.filter(u => !isPdf(u));
+    const pdfs   = all.filter(isPdf);
+    const caps   = labels || [];
 
     if (titleEl) titleEl.textContent = (title || 'Payment Proof').toUpperCase();
 
-    const isPdf = /\.pdf($|\?)/i.test(url);
+    // Rebuild the image area from scratch each time, so nothing is left
+    // over from the previously opened proof.
+    wrap.innerHTML = '';
+    images.forEach((url, i) => {
+      const tile = document.createElement('div');
+      tile.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;';
 
-    if (isPdf) {
-      img.style.display = 'none';
-      img.removeAttribute('src');
-      pdfLink.href = url;
-      pdfNote.style.display = 'block';
-    } else {
-      pdfNote.style.display = 'none';
+      const img = document.createElement('img');
       img.src = url;
-      img.style.display = 'block';
+      img.alt = caps[i] || 'Payment proof';
+      img.title = 'Click to open the full-size file';
+      img.style.cssText = images.length > 1
+        ? 'width:100%;max-width:300px;max-height:55vh;object-fit:contain;border-radius:6px;border:1px solid var(--border);cursor:zoom-in;'
+        : 'max-width:100%;max-height:60vh;border-radius:6px;border:1px solid var(--border);cursor:zoom-in;';
+      img.addEventListener('click', () => window.open(url, '_blank', 'noopener'));
+      tile.appendChild(img);
+
+      if (caps[i]) {
+        const cap = document.createElement('div');
+        cap.textContent = caps[i];
+        cap.style.cssText = 'font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);';
+        tile.appendChild(cap);
+      }
+
+      wrap.appendChild(tile);
+    });
+
+    if (pdfNote && pdfLink) {
+      if (pdfs.length) { pdfLink.href = pdfs[0]; pdfNote.style.display = 'block'; }
+      else             { pdfNote.style.display = 'none'; }
+    }
+
+    if (modalBox) {
+      modalBox.style.maxWidth = images.length >= 3 ? '980px'
+                              : images.length === 2 ? '760px'
+                              : '520px';
     }
 
     if (details) {
@@ -872,6 +936,170 @@ const AdminModule = (() => {
       .catch(() => showToast('Could not reach the server. Please try again.', 'error'));
   }
 
+  /* ── GCash accounts ────────────────────────────────────────────────
+     The gym can have several GCash accounts saved at once; exactly one is
+     marked default, and that's the only one members ever see. Every save /
+     delete / switch returns the full account list from the server, which we
+     re-render in place — no page reload, so the admin stays on Settings.
+  ──────────────────────────────────────────────────────────────────── */
+
+  let _gcashAccounts = [];       // last known list from the server
+  let _gcashPendingDefaultId = null;
+  let _gcashPendingDeleteId  = null;
+
+  function _escGc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function _gcashById(id) {
+    return _gcashAccounts.find(a => String(a.id) === String(id)) || null;
+  }
+
+  /** Paint the saved-accounts list. Default account first, visually
+   *  marked, and with its Delete button carrying a heavier warning since
+   *  removing it changes what members see. */
+  function renderGcashAccounts(accounts) {
+    if (Array.isArray(accounts)) _gcashAccounts = accounts;
+
+    const list  = document.getElementById('gcash-accounts-list');
+    const empty = document.getElementById('gcash-accounts-empty');
+    const addBtn = document.getElementById('gcash-add-btn');
+    if (!list) return;
+
+    if (addBtn) addBtn.disabled = _gcashAccounts.length >= 6;
+
+    if (!_gcashAccounts.length) {
+      list.innerHTML = '';
+      if (empty) empty.style.display = '';
+      return;
+    }
+    if (empty) empty.style.display = 'none';
+
+    list.innerHTML = _gcashAccounts.map(a => {
+      const isDefault = !!a.is_default;
+      const qr = a.gcash_qr_url
+        ? `<img src="${_escGc(a.gcash_qr_url)}" alt="QR"
+               style="width:64px;height:64px;object-fit:contain;background:#fff;border-radius:8px;padding:4px;flex-shrink:0;">`
+        : `<div style="width:64px;height:64px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+                       border:1px dashed rgba(255,255,255,0.18);color:var(--muted);font-size:10px;text-align:center;line-height:1.3;">NO<br>QR</div>`;
+
+      const badge = isDefault
+        ? `<span style="display:inline-block;font-size:10px;letter-spacing:1px;font-weight:700;padding:3px 8px;border-radius:999px;
+                        background:rgba(230,30,37,0.15);color:var(--red);border:1px solid rgba(230,30,37,0.45);">DEFAULT</span>`
+        : '';
+
+      const labelLine = a.label
+        ? `<div style="font-size:12px;color:var(--muted);margin-top:4px;">${_escGc(a.label)}</div>`
+        : '';
+
+      const defaultBtn = isDefault
+        ? `<button type="button" class="btn btn-outline btn-sm" disabled
+                   title="This is the account members already see">✓ SHOWN TO MEMBERS</button>`
+        : `<button type="button" class="btn btn-outline btn-sm"
+                   onclick="promptSetDefaultGcash(${a.id})">SET AS DEFAULT</button>`;
+
+      return `
+        <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;padding:16px;margin-bottom:12px;border-radius:12px;
+                    background:rgba(255,255,255,0.02);
+                    border:1px solid ${isDefault ? 'rgba(230,30,37,0.45)' : 'rgba(255,255,255,0.08)'};">
+          ${qr}
+          <div style="flex:1;min-width:180px;">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <span style="font-size:18px;font-weight:600;color:var(--white);letter-spacing:0.5px;">${_escGc(a.gcash_number)}</span>
+              ${badge}
+            </div>
+            <div style="font-size:14px;color:var(--white);opacity:0.85;margin-top:4px;">${_escGc(a.gcash_account_name)}</div>
+            ${labelLine}
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            ${defaultBtn}
+            <button type="button" class="btn btn-outline btn-sm" onclick="openEditGcashModal(${a.id})">✎ EDIT</button>
+            <button type="button" class="btn btn-outline btn-sm"
+                    style="color:var(--red);border-color:rgba(230,30,37,0.4);"
+                    onclick="promptDeleteGcashAccount(${a.id})">🗑️ DELETE</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  /** Read the server-rendered account list out of the page on first load. */
+  function initGcashAccounts() {
+    const tag = document.getElementById('gcash-accounts-data');
+    if (!tag) return;
+    try {
+      renderGcashAccounts(JSON.parse(tag.textContent || '[]'));
+    } catch (e) {
+      renderGcashAccounts([]);
+    }
+  }
+
+  /** Reset the add/edit modal to a blank "add" state. */
+  function openAddGcashModal() {
+    document.getElementById('gcash-account-id').value   = '';
+    document.getElementById('gcash-number').value       = '';
+    document.getElementById('gcash-account-name').value = '';
+    document.getElementById('gcash-label').value        = '';
+    document.getElementById('gcash-qr-input').value     = '';
+
+    const removeCheck = document.getElementById('gcash-qr-remove');
+    if (removeCheck) removeCheck.checked = false;
+    document.getElementById('gcash-qr-current-wrap').style.display = 'none';
+    document.getElementById('gcash-qr-remove-row').style.display   = 'none';
+
+    const makeDefault = document.getElementById('gcash-make-default');
+    const defaultRow  = document.getElementById('gcash-make-default-row');
+    // The very first account saved is the default by definition, so the
+    // choice would be meaningless — hide it rather than offer a checkbox
+    // that can't do anything.
+    const isFirst = _gcashAccounts.length === 0;
+    if (makeDefault) makeDefault.checked = isFirst;
+    if (defaultRow)  defaultRow.style.display = isFirst ? 'none' : 'flex';
+
+    document.getElementById('gcash-modal-title').textContent = 'ADD GCASH ACCOUNT';
+    document.getElementById('gcash-save-btn').textContent    = 'SAVE ACCOUNT';
+    openModal('gcash-account-modal');
+  }
+
+  /** Load one saved account into the modal for editing. */
+  function openEditGcashModal(accountId) {
+    const a = _gcashById(accountId);
+    if (!a) { showToast('That account is no longer available.', 'error'); return; }
+
+    document.getElementById('gcash-account-id').value   = a.id;
+    document.getElementById('gcash-number').value       = a.gcash_number || '';
+    document.getElementById('gcash-account-name').value = a.gcash_account_name || '';
+    document.getElementById('gcash-label').value        = a.label || '';
+    document.getElementById('gcash-qr-input').value     = '';
+
+    const removeCheck = document.getElementById('gcash-qr-remove');
+    if (removeCheck) removeCheck.checked = false;
+
+    const wrap      = document.getElementById('gcash-qr-current-wrap');
+    const img       = document.getElementById('gcash-qr-current-preview');
+    const removeRow = document.getElementById('gcash-qr-remove-row');
+    if (a.gcash_qr_url) {
+      if (img) img.src = a.gcash_qr_url;
+      wrap.style.display      = '';
+      removeRow.style.display = 'flex';
+    } else {
+      if (img) img.src = '';
+      wrap.style.display      = 'none';
+      removeRow.style.display = 'none';
+    }
+
+    const makeDefault = document.getElementById('gcash-make-default');
+    const defaultRow  = document.getElementById('gcash-make-default-row');
+    // Already the default? Then there's nothing to switch to.
+    if (makeDefault) makeDefault.checked = false;
+    if (defaultRow)  defaultRow.style.display = a.is_default ? 'none' : 'flex';
+
+    document.getElementById('gcash-modal-title').textContent = 'EDIT GCASH ACCOUNT';
+    document.getElementById('gcash-save-btn').textContent    = 'SAVE CHANGES';
+    openModal('gcash-account-modal');
+  }
+
   /** Preview a newly-picked QR file before saving, and clear the "remove"
    *  checkbox since picking a new file supersedes removing the old one. */
   function previewGcashQr(input) {
@@ -881,15 +1109,9 @@ const AdminModule = (() => {
     if (removeCheck) removeCheck.checked = false;
     const reader = new FileReader();
     reader.onload = (e) => {
-      let img = document.getElementById('gcash-qr-current-preview');
+      const img  = document.getElementById('gcash-qr-current-preview');
       const wrap = document.getElementById('gcash-qr-current-wrap');
-      if (!img) {
-        img = document.createElement('img');
-        img.id = 'gcash-qr-current-preview';
-        img.style.cssText = 'width:100px;height:100px;object-fit:contain;background:#fff;border-radius:8px;padding:6px;';
-        wrap.appendChild(img);
-      }
-      img.src = e.target.result;
+      if (img)  img.src = e.target.result;
       if (wrap) wrap.style.display = '';
     };
     reader.readAsDataURL(file);
@@ -908,116 +1130,10 @@ const AdminModule = (() => {
     }
   }
 
-  // Snapshot of the GCash fields taken when Edit is clicked, so Cancel can
-  // restore them without a page reload.
-  let _gcashOriginal = null;
-
-  function _setGcashEditMode(editing) {
-    const numEl      = document.getElementById('gcash-number');
-    const nameEl     = document.getElementById('gcash-account-name');
-    const qrInput    = document.getElementById('gcash-qr-input');
-    const removeCheck= document.getElementById('gcash-qr-remove');
-    const saveBtn    = document.getElementById('gcash-settings-submit-btn');
-    const cancelBtn  = document.getElementById('gcash-settings-cancel-btn');
-    const addBtn     = document.getElementById('gcash-add-btn');
-    const editBtn    = document.getElementById('gcash-edit-btn');
-    const deleteBtn  = document.getElementById('gcash-delete-btn');
-
-    if (numEl)  numEl.disabled  = !editing;
-    if (nameEl) nameEl.disabled = !editing;
-    if (qrInput) qrInput.disabled = !editing;
-    if (removeCheck) removeCheck.disabled = !editing;
-    if (saveBtn)   saveBtn.style.display   = editing ? '' : 'none';
-    if (cancelBtn) cancelBtn.style.display = editing ? '' : 'none';
-    // ADD/EDIT/DELETE stay visible and clickable at all times, except
-    // while a save/edit is already in progress (all three disabled then
-    // so the admin can't stack conflicting actions).
-    if (addBtn)    addBtn.disabled    = editing;
-    if (editBtn)   editBtn.disabled   = editing;
-    if (deleteBtn) deleteBtn.disabled = editing;
-  }
-
-  /** Unlock the GCash fields for editing. */
-  function toggleGcashEdit() {
-    _gcashOriginal = {
-      number: _val('gcash-number'),
-      name:   _val('gcash-account-name'),
-      qrSrc:  (document.getElementById('gcash-qr-current-preview') || {}).src || '',
-      qrVisible: (document.getElementById('gcash-qr-current-wrap') || {}).style.display !== 'none',
-    };
-    _setGcashEditMode(true);
-  }
-
-  /** Discard any unsaved changes and re-lock the GCash fields. */
-  function cancelGcashEdit() {
-    const numEl  = document.getElementById('gcash-number');
-    const nameEl = document.getElementById('gcash-account-name');
-    if (_gcashOriginal) {
-      if (numEl)  numEl.value  = _gcashOriginal.number;
-      if (nameEl) nameEl.value = _gcashOriginal.name;
-    }
-    const qrInput = document.getElementById('gcash-qr-input');
-    if (qrInput) qrInput.value = '';
-    const removeCheck = document.getElementById('gcash-qr-remove');
-    if (removeCheck) removeCheck.checked = false;
-    const wrap = document.getElementById('gcash-qr-current-wrap');
-    const img  = document.getElementById('gcash-qr-current-preview');
-    if (_gcashOriginal && _gcashOriginal.qrVisible) {
-      if (img) img.src = _gcashOriginal.qrSrc;
-      if (wrap) wrap.style.display = '';
-    } else if (wrap) {
-      wrap.style.display = 'none';
-    }
-    _setGcashEditMode(false);
-  }
-
-  /** Open the confirmation modal before clearing the GCash config. */
-  function promptDeleteGcashSettings() {
-    openModal('confirm-delete-gcash-modal');
-  }
-
-  /** Clear the GCash number/name/QR after the admin confirms. Members
-   *  won't see a usable GCash option again until it's re-added. */
-  function confirmDeleteGcashSettings() {
-    const btn = document.getElementById('confirm-delete-gcash-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'DELETING...'; }
-
-    fetch('/admin/delete-gcash-settings', { method: 'POST' })
-      .then(res => res.json().then(data => ({ ok: res.ok, data })))
-      .then(({ ok, data }) => {
-        closeModal('confirm-delete-gcash-modal');
-        if (!ok || !data.success) {
-          showToast((data && data.error) || 'Failed to remove GCash details.', 'error');
-          return;
-        }
-        const numEl  = document.getElementById('gcash-number');
-        const nameEl = document.getElementById('gcash-account-name');
-        if (numEl)  numEl.value  = '';
-        if (nameEl) nameEl.value = '';
-        const qrInput = document.getElementById('gcash-qr-input');
-        if (qrInput) qrInput.value = '';
-        const removeCheck = document.getElementById('gcash-qr-remove');
-        if (removeCheck) removeCheck.checked = false;
-        const wrap      = document.getElementById('gcash-qr-current-wrap');
-        const removeRow = document.getElementById('gcash-qr-remove-row');
-        if (wrap) wrap.style.display = 'none';
-        if (removeRow) removeRow.style.display = 'none';
-        _setGcashEditMode(false);
-        showToast(data.message || 'GCash payment details removed.', 'success');
-      })
-      .catch(() => {
-        closeModal('confirm-delete-gcash-modal');
-        showToast('Could not reach the server. Please try again.', 'error');
-      })
-      .finally(() => {
-        if (btn) { btn.disabled = false; btn.textContent = 'YES, DELETE'; }
-      });
-  }
-
-  /** Save the GCash account number/name (and optional QR code) shown to
-   *  members on the Payment tab. Lets admin swap accounts any time
-   *  without touching code. */
-  function submitGcashSettings() {
+  /** Validate, then create or update depending on whether the hidden id
+   *  field is populated. */
+  function submitGcashAccount() {
+    const accountId          = _val('gcash-account-id');
     const gcash_number       = _val('gcash-number');
     const gcash_account_name = _val('gcash-account-name');
 
@@ -1030,64 +1146,130 @@ const AdminModule = (() => {
       return;
     }
 
-    openModal('confirm-gcash-settings-modal');
-  }
-
-  function confirmGcashSettings() {
-    const gcash_number       = _val('gcash-number');
-    const gcash_account_name = _val('gcash-account-name');
-
-    if (!gcash_number || !gcash_account_name) {
-      closeModal('confirm-gcash-settings-modal');
-      showToast('GCash number and account name are both required.', 'error');
-      return;
-    }
-
-    const modalBtn = document.getElementById('confirm-gcash-settings-btn');
-    if (modalBtn) { modalBtn.disabled = true; modalBtn.textContent = 'SAVING...'; }
+    const btn = document.getElementById('gcash-save-btn');
+    const originalText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'SAVING...'; }
 
     const fd = new FormData();
     fd.append('gcash_number', gcash_number);
     fd.append('gcash_account_name', gcash_account_name);
+    fd.append('label', _val('gcash-label'));
+
     const qrInput = document.getElementById('gcash-qr-input');
     if (qrInput && qrInput.files[0]) fd.append('gcash_qr', qrInput.files[0]);
     const removeCheck = document.getElementById('gcash-qr-remove');
     if (removeCheck && removeCheck.checked) fd.append('remove_qr', 'true');
+    const makeDefault = document.getElementById('gcash-make-default');
+    if (makeDefault && makeDefault.checked) fd.append('make_default', 'true');
 
-    fetch('/admin/update-gcash-settings', { method: 'POST', body: fd })
+    const url = accountId
+      ? `/admin/gcash-accounts/${accountId}/update`
+      : '/admin/gcash-accounts/add';
+
+    fetch(url, { method: 'POST', body: fd })
       .then(res => res.json().then(data => ({ ok: res.ok, data })))
       .then(({ ok, data }) => {
         if (!ok || !data.success) {
-          showToast((data && data.error) || 'Failed to update GCash details.', 'error');
+          showToast((data && data.error) || 'Failed to save the GCash account.', 'error');
           return;
         }
-        const numEl  = document.getElementById('gcash-number');
-        const nameEl = document.getElementById('gcash-account-name');
-        if (numEl)  numEl.value  = data.settings.gcash_number;
-        if (nameEl) nameEl.value = data.settings.gcash_account_name;
-
-        // Reset the file/remove controls and reflect the saved QR state.
-        if (qrInput) qrInput.value = '';
-        if (removeCheck) removeCheck.checked = false;
-        const wrap = document.getElementById('gcash-qr-current-wrap');
-        const removeRow = document.getElementById('gcash-qr-remove-row');
-        const img = document.getElementById('gcash-qr-current-preview');
-        if (data.settings.gcash_qr_url) {
-          if (img) img.src = data.settings.gcash_qr_url;
-          if (wrap) wrap.style.display = '';
-          if (removeRow) removeRow.style.display = 'flex';
-        } else {
-          if (wrap) wrap.style.display = 'none';
-          if (removeRow) removeRow.style.display = 'none';
-        }
-
-        closeModal('confirm-gcash-settings-modal');
-        _setGcashEditMode(false);
-        showToast(data.message || 'GCash payment details updated.', 'success');
+        renderGcashAccounts(data.accounts);
+        closeModal('gcash-account-modal');
+        showToast(data.message || 'GCash account saved.', 'success');
       })
       .catch(() => showToast('Could not reach the server. Please try again.', 'error'))
       .finally(() => {
-        if (modalBtn) { modalBtn.disabled = false; modalBtn.textContent = 'YES'; }
+        if (btn) { btn.disabled = false; btn.textContent = originalText; }
+      });
+  }
+
+  /** Confirm before switching which account members are shown — this is a
+   *  money-facing change, so it shouldn't happen on a stray click. */
+  function promptSetDefaultGcash(accountId) {
+    const a = _gcashById(accountId);
+    if (!a) { showToast('That account is no longer available.', 'error'); return; }
+    _gcashPendingDefaultId = accountId;
+    const text = document.getElementById('confirm-default-gcash-text');
+    if (text) {
+      text.innerHTML = `Members will start sending payments to<br>
+        <strong>${_escGc(a.gcash_account_name)}</strong><br>${_escGc(a.gcash_number)}<br>
+        <span style="font-size:13px;color:var(--muted);">This takes effect right away. Payments already submitted aren't affected.</span>`;
+    }
+    openModal('confirm-default-gcash-modal');
+  }
+
+  function confirmSetDefaultGcash() {
+    if (!_gcashPendingDefaultId) return;
+    const btn = document.getElementById('confirm-default-gcash-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'SWITCHING...'; }
+
+    fetch(`/admin/gcash-accounts/${_gcashPendingDefaultId}/set-default`, { method: 'POST' })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        closeModal('confirm-default-gcash-modal');
+        if (!ok || !data.success) {
+          showToast((data && data.error) || 'Failed to switch accounts.', 'error');
+          return;
+        }
+        renderGcashAccounts(data.accounts);
+        showToast(data.message || 'Default GCash account updated.', 'success');
+      })
+      .catch(() => {
+        closeModal('confirm-default-gcash-modal');
+        showToast('Could not reach the server. Please try again.', 'error');
+      })
+      .finally(() => {
+        _gcashPendingDefaultId = null;
+        if (btn) { btn.disabled = false; btn.textContent = 'YES, SWITCH'; }
+      });
+  }
+
+  /** Confirm before deleting, spelling out what members will see next. */
+  function promptDeleteGcashAccount(accountId) {
+    const a = _gcashById(accountId);
+    if (!a) { showToast('That account is no longer available.', 'error'); return; }
+    _gcashPendingDeleteId = accountId;
+
+    const others = _gcashAccounts.filter(x => String(x.id) !== String(accountId));
+    let consequence;
+    if (!a.is_default) {
+      consequence = `<span style="font-size:13px;color:var(--muted);">This isn't the account members see, so nothing changes for them.</span>`;
+    } else if (others.length) {
+      consequence = `<span style="font-size:13px;color:var(--muted);">This is the account members currently see — another saved account will take over automatically.</span>`;
+    } else {
+      consequence = `<span style="font-size:13px;color:var(--red);">This is your only GCash account. Members won't be able to pay via GCash until you add a new one.</span>`;
+    }
+
+    const text = document.getElementById('confirm-delete-gcash-text');
+    if (text) {
+      text.innerHTML = `<strong>${_escGc(a.gcash_account_name)}</strong><br>${_escGc(a.gcash_number)}<br><br>${consequence}`;
+    }
+    openModal('confirm-delete-gcash-modal');
+  }
+
+  function confirmDeleteGcashAccount() {
+    if (!_gcashPendingDeleteId) return;
+    const btn = document.getElementById('confirm-delete-gcash-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'DELETING...'; }
+
+    fetch(`/admin/gcash-accounts/${_gcashPendingDeleteId}/delete`, { method: 'POST' })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        closeModal('confirm-delete-gcash-modal');
+        if (!ok || !data.success) {
+          showToast((data && data.error) || 'Failed to remove the GCash account.', 'error');
+          return;
+        }
+        renderGcashAccounts(data.accounts);
+        showToast(data.message || 'GCash account removed.', 'success');
+      })
+      .catch(() => {
+        closeModal('confirm-delete-gcash-modal');
+        showToast('Could not reach the server. Please try again.', 'error');
+      })
+      .finally(() => {
+        _gcashPendingDeleteId = null;
+        if (btn) { btn.disabled = false; btn.textContent = 'YES, DELETE'; }
       });
   }
 
@@ -1545,12 +1727,14 @@ const AdminModule = (() => {
     init, tab, addMember, openEditMemberModal, saveEditMember, deleteMemberRow,
     addStaff, openEditStaffModal, saveEditStaff, promptDeleteStaff, confirmDeleteStaff,
     generateAnalyticsReport, refreshCurrentReport, exportReportPDF, clearReportDateRange,
-    viewPaymentProof, filterMembersByStatus, filterMembersTable, toggleMemberIdColumn,
+    viewPaymentProof, viewPaymentProofs, viewStudentIdProof, filterMembersByStatus, filterMembersTable, toggleMemberIdColumn,
     goToAdminMembers, goToAdminRevenue,
     publishAnnouncement, confirmPublishAnnouncement, openEditAnnouncementModal, saveEditAnnouncement,
-    toggleAnnouncement, deleteAnnouncement, submitGcashSettings, confirmGcashSettings,
+    toggleAnnouncement, deleteAnnouncement,
     previewGcashQr, toggleGcashQrRemove, submitTermsSettings,
-    toggleGcashEdit, cancelGcashEdit, promptDeleteGcashSettings, confirmDeleteGcashSettings,
+    initGcashAccounts, renderGcashAccounts, openAddGcashModal, openEditGcashModal,
+    submitGcashAccount, promptSetDefaultGcash, confirmSetDefaultGcash,
+    promptDeleteGcashAccount, confirmDeleteGcashAccount,
     submitCoachUpdate, confirmCoachUpdate, closeCoachSaveSuccessModal,
     toggleCoachEdit, addCoach, promptDeleteCoach, confirmDeleteCoach,
     changeProfilePicture
@@ -1576,6 +1760,8 @@ document.addEventListener('DOMContentLoaded', () => {
   window.exportCurrentReportPDF  = AdminModule.exportReportPDF;
   window.clearReportDateRange    = AdminModule.clearReportDateRange;
   window.viewPaymentProof        = AdminModule.viewPaymentProof;
+  window.viewPaymentProofs       = AdminModule.viewPaymentProofs;
+  window.viewStudentIdProof      = AdminModule.viewStudentIdProof;
   window.filterAdminMembersByStatus = (status, el) => AdminModule.filterMembersByStatus(status, el);
   window.filterAdminMembersTable    = () => AdminModule.filterMembersTable();
   window.toggleAdminMemberIdColumn  = () => AdminModule.toggleMemberIdColumn();
@@ -1587,14 +1773,16 @@ document.addEventListener('DOMContentLoaded', () => {
   window.saveEditAnnouncement    = AdminModule.saveEditAnnouncement;
   window.toggleAnnouncement      = AdminModule.toggleAnnouncement;
   window.deleteAnnouncement      = AdminModule.deleteAnnouncement;
-  window.submitGcashSettings     = AdminModule.submitGcashSettings;
-  window.confirmGcashSettings    = AdminModule.confirmGcashSettings;
   window.previewGcashQr          = (input) => AdminModule.previewGcashQr(input);
   window.toggleGcashQrRemove     = (checkbox) => AdminModule.toggleGcashQrRemove(checkbox);
-  window.toggleGcashEdit         = () => AdminModule.toggleGcashEdit();
-  window.cancelGcashEdit         = () => AdminModule.cancelGcashEdit();
-  window.promptDeleteGcashSettings  = () => AdminModule.promptDeleteGcashSettings();
-  window.confirmDeleteGcashSettings = () => AdminModule.confirmDeleteGcashSettings();
+  window.openAddGcashModal       = () => AdminModule.openAddGcashModal();
+  window.openEditGcashModal      = (id) => AdminModule.openEditGcashModal(id);
+  window.submitGcashAccount      = () => AdminModule.submitGcashAccount();
+  window.promptSetDefaultGcash   = (id) => AdminModule.promptSetDefaultGcash(id);
+  window.confirmSetDefaultGcash  = () => AdminModule.confirmSetDefaultGcash();
+  window.promptDeleteGcashAccount  = (id) => AdminModule.promptDeleteGcashAccount(id);
+  window.confirmDeleteGcashAccount = () => AdminModule.confirmDeleteGcashAccount();
+  AdminModule.initGcashAccounts();
   window.submitTermsSettings     = AdminModule.submitTermsSettings;
   window.submitCoachUpdate       = AdminModule.submitCoachUpdate;
   window.confirmCoachUpdate      = AdminModule.confirmCoachUpdate;

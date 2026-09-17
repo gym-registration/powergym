@@ -197,10 +197,22 @@
               <span class="gate-banner-icon">✅</span>
               <div>
                 <div class="gate-banner-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                  {% if pending_payment.is_retry %}
+                  {% if pending_payment.is_promo %}Your {{ pending_payment.plan_name }} promo is still approved — payment needs to be redone{% else %}Your {{ pending_payment.plan_name }} plan is still approved — payment needs to be redone{% endif %}
+                  <span class="badge badge-gold">RE-SUBMIT PAYMENT</span>
+                  {% else %}
                   {% if pending_payment.is_promo %}Your {{ pending_payment.plan_name }} promo has been approved!{% else %}Your {{ pending_payment.plan_name }} plan has been approved!{% endif %}
                   <span class="badge badge-green">APPROVED</span>
+                  {% endif %}
                 </div>
-                <div class="gate-banner-text">₱{{ pending_payment.amount }} · Head to the Payment tab to choose Cash or GCash and complete payment.</div>
+                <div class="gate-banner-text">
+                  {% if pending_payment.is_retry %}
+                  Your {{ pending_payment.declined_method or 'previous' }} payment was declined, but your {{ 'promo' if pending_payment.is_promo else 'plan' }} is still approved — you don't need to request it again.
+                  ₱{{ pending_payment.amount }} · Just head to the Payment tab and submit your payment again.
+                  {% else %}
+                  ₱{{ pending_payment.amount }} · Head to the Payment tab to choose Cash or GCash and complete payment.
+                  {% endif %}
+                </div>
               </div>
               <button class="btn btn-red btn-sm" onclick="memberTab('payment', document.getElementById('nav-member-payment'))">GO TO PAYMENT</button>
             </div>
@@ -283,23 +295,34 @@
               </div>
               <div class="form-group" id="member-student-id-group" style="display:none;">
                 <label class="form-label">Upload School ID — Front &amp; Back</label>
-                <input class="form-input" type="file" id="member-student-id" accept="image/*" multiple
-                       onchange="previewStudentId(this)">
-                <div style="font-size:15px;color:#c7c7cf;margin-top:4px;">
-                  Pick both at once (hold Ctrl/Cmd to select two files), or add them one at a time —
-                  whichever's easier. Both sides are required to verify student status. Admin will
-                  confirm before your plan is approved.
+                <div style="font-size:15px;color:#c7c7cf;margin-top:4px;margin-bottom:4px;">
+                  Choose each side separately below. Both sides are required to verify
+                  student status. Admin will confirm before your plan is approved.
                 </div>
-                <div class="proof-preview-wrap" style="display:flex;gap:16px;flex-wrap:wrap;">
+                <div class="proof-preview-wrap" style="display:flex;flex-direction:row;gap:16px;flex-wrap:wrap;">
                   <div>
                     <div style="font-size:12px;color:#c7c7cf;margin-bottom:4px;">Front</div>
                     <img id="member-student-id-front-preview" class="proof-preview" alt="School ID front preview" style="display:none;">
+                    <div style="margin-top:8px;">
+                      <label class="gcash-upload-btn" for="member-student-id-front-input" style="padding:8px 16px;font-size:12px;">
+                        Choose Front Photo
+                      </label>
+                      <input class="visually-hidden" type="file" id="member-student-id-front-input" accept="image/*"
+                             onchange="previewStudentId(this, 'front')">
+                    </div>
                     <button type="button" id="member-student-id-front-remove" class="proof-remove-btn"
                             style="display:none;margin-top:6px;" onclick="removeStudentId('front')">✕ Remove</button>
                   </div>
                   <div>
                     <div style="font-size:12px;color:#c7c7cf;margin-bottom:4px;">Back</div>
                     <img id="member-student-id-back-preview" class="proof-preview" alt="School ID back preview" style="display:none;">
+                    <div style="margin-top:8px;">
+                      <label class="gcash-upload-btn" for="member-student-id-back-input" style="padding:8px 16px;font-size:12px;">
+                        Choose Back Photo
+                      </label>
+                      <input class="visually-hidden" type="file" id="member-student-id-back-input" accept="image/*"
+                             onchange="previewStudentId(this, 'back')">
+                    </div>
                     <button type="button" id="member-student-id-back-remove" class="proof-remove-btn"
                             style="display:none;margin-top:6px;" onclick="removeStudentId('back')">✕ Remove</button>
                   </div>
@@ -411,8 +434,23 @@
 
       {% if pending_payment %}
       <div class="panel" id="payment-submit-panel">
-        <div class="panel-header"><div class="panel-title">Submit Payment</div></div>
+        <div class="panel-header">
+          <div class="panel-title">Submit Payment</div>
+          {% if pending_payment.is_retry %}<span class="badge badge-red">PREVIOUS PAYMENT DECLINED</span>{% endif %}
+        </div>
         <div class="panel-body">
+          {% if pending_payment.is_retry %}
+          <div class="gate-banner" style="border-color:rgba(239,68,68,0.35);margin-bottom:16px;">
+            <span class="gate-banner-icon">❌</span>
+            <div>
+              <div class="gate-banner-title">Your {{ pending_payment.declined_method or 'previous' }} payment was declined</div>
+              <div class="gate-banner-text">
+                Your {{ 'promo' if pending_payment.is_promo else 'plan' }} is still approved — you don't need to request it again.
+                Check with staff or admin for the reason, then simply submit your payment again below.
+              </div>
+            </div>
+          </div>
+          {% endif %}
           <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:16px;">
             <div>
               <div style="font-family:'Bebas Neue';font-size:31px;color:var(--red);">{{ pending_payment.plan_name|upper }}{% if not pending_payment.is_promo %} PLAN{% endif %}</div>
@@ -482,119 +520,119 @@
                     <div class="form-group">
                       <label class="form-label">Upload Receipt Screenshot(s)</label>
                       <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">
-                        Attach 1 to 3 screenshots (e.g. if your payment was split across transfers).
-                        Only the first screenshot is auto-read — double-check the fields below regardless.
+                        Attach a screenshot of your receipt. Each screenshot is auto-read for its
+                        own amount — double-check the fields below regardless. If one screenshot
+                        doesn't cover the full amount, an extra slot will appear so you can add
+                        more (e.g. if your payment was split across transfers).
                       </div>
 
-                      <!-- Screenshot 1 — required, the only one auto-read via OCR -->
-                      <div class="gcash-upload-row">
-                        <label class="gcash-upload-btn" for="payment-gcash-proof">
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                          Choose Screenshot
-                        </label>
-                        <input class="visually-hidden" type="file" id="payment-gcash-proof" accept="image/*"
-                               onchange="previewGcashProof(this, 1)">
-                        <span class="gcash-upload-filename" id="payment-gcash-filename">No file selected</span>
-                      </div>
-
-                      <!-- All 3 receipt previews live side-by-side in this row so every
-                           uploaded screenshot stays visible at once ([1][2][3]) instead of
-                           replacing one another. Slots 2/3's "Choose Screenshot" button and
-                           Amount field stay in their own slot section further down (only
-                           revealed via "+ Add another screenshot"); only their preview
-                           thumbnail is grouped up here — same element ids as before, so
-                           previewGcashProof / removeGcashProof / openGcashProofPreview in
-                           tr-member.js work unchanged regardless of where the preview
-                           element physically sits in the DOM. -->
+                      <!-- Screenshot 1 is required and always visible. Screenshots 2 and 3 are
+                           optional and start hidden — _updateGcashSlotVisibility() in
+                           tr-member.js reveals slot 2 once screenshot 1 is attached and the
+                           amount read so far falls short of what's required, and reveals slot 3
+                           the same way once slot 2 is in play and still short. Each visible slot
+                           has its own compact "Choose Screenshot" button right under its own
+                           thumbnail — same pattern as the School ID Front/Back upload. -->
                       <div class="gcash-proof-row" id="payment-gcash-proof-row">
-                        <div class="proof-preview-wrap">
-                          <img id="payment-gcash-proof-preview" class="proof-preview" alt="GCash proof preview"
-                               style="display:none;" onclick="openGcashProofPreview(1)">
-                          <div class="gcash-qr-tap-hint" id="payment-gcash-proof-tap-hint" style="display:none;">Tap to enlarge</div>
-                          <button type="button" id="payment-gcash-proof-remove" class="proof-remove-btn"
-                                  style="display:none;" onclick="removeGcashProof(1)">✕ Remove &amp; replace</button>
-                        </div>
-                        <div class="proof-preview-wrap" id="payment-gcash-preview-wrap-2">
-                          <img id="payment-gcash-proof-preview-2" class="proof-preview" alt="GCash proof preview 2"
-                               style="display:none;" onclick="openGcashProofPreview(2)">
-                          <button type="button" id="payment-gcash-proof-remove-2" class="proof-remove-btn"
-                                  style="display:none;" onclick="removeGcashProof(2)">✕ Remove</button>
-                        </div>
-                        <div class="proof-preview-wrap" id="payment-gcash-preview-wrap-3">
-                          <img id="payment-gcash-proof-preview-3" class="proof-preview" alt="GCash proof preview 3"
-                               style="display:none;" onclick="openGcashProofPreview(3)">
-                          <button type="button" id="payment-gcash-proof-remove-3" class="proof-remove-btn"
-                                  style="display:none;" onclick="removeGcashProof(3)">✕ Remove</button>
-                        </div>
-                      </div>
 
-                      <div class="form-group" style="margin-top:10px;max-width:220px;">
-                        <label class="form-label" style="font-size:12px;">Amount on This Screenshot</label>
-                        <div class="gcash-amount-input-wrap">
-                          <span class="gcash-amount-prefix">₱</span>
-                          <input class="form-input gcash-amount-input" type="text" inputmode="decimal"
-                                 id="payment-gcash-amount-1" placeholder="0.00" readonly>
+                        <div>
+                          <div style="font-size:12px;color:#c7c7cf;margin-bottom:4px;">Screenshot 1</div>
+                          <div class="proof-preview-wrap">
+                            <img id="payment-gcash-proof-preview" class="proof-preview" alt="GCash proof preview"
+                                 style="display:none;" onclick="openGcashProofPreview(1)">
+                            <div class="gcash-qr-tap-hint" id="payment-gcash-proof-tap-hint" style="display:none;">Tap to enlarge</div>
+                          </div>
+                          <div style="margin-top:8px;">
+                            <label class="gcash-upload-btn" for="payment-gcash-proof" style="padding:8px 16px;font-size:12px;">
+                              Choose Screenshot
+                            </label>
+                            <input class="visually-hidden" type="file" id="payment-gcash-proof" accept="image/*"
+                                   onchange="previewGcashProof(this, 1)">
+                          </div>
+                          <span class="gcash-upload-filename" id="payment-gcash-filename" style="display:block;margin-top:4px;">No file selected</span>
+                          <button type="button" id="payment-gcash-proof-remove" class="proof-remove-btn"
+                                  style="display:none;margin-top:6px;" onclick="removeGcashProof(1)">✕ Remove &amp; replace</button>
+                          <div class="form-group" style="margin-top:10px;max-width:180px;">
+                            <label class="form-label" style="font-size:12px;">Amount on This Screenshot</label>
+                            <div class="gcash-amount-input-wrap">
+                              <span class="gcash-amount-prefix">₱</span>
+                              <input class="form-input gcash-amount-input" type="text" inputmode="decimal"
+                                     id="payment-gcash-amount-1" placeholder="0.00" readonly>
+                            </div>
+                            <div style="font-size:11px;color:var(--muted);margin-top:4px;">Auto-read — not editable.</div>
+                          </div>
                         </div>
-                        <div style="font-size:11px;color:var(--muted);margin-top:4px;">Auto-read from this screenshot — not editable.</div>
+
+                        <div id="payment-gcash-slot-2" style="display:none;">
+                          <div style="font-size:12px;color:#c7c7cf;margin-bottom:4px;">Screenshot 2 <span style="color:var(--muted);">(optional — shown when screenshot 1 isn't enough)</span></div>
+                          <div class="proof-preview-wrap" id="payment-gcash-preview-wrap-2">
+                            <img id="payment-gcash-proof-preview-2" class="proof-preview" alt="GCash proof preview 2"
+                                 style="display:none;" onclick="openGcashProofPreview(2)">
+                            <div class="gcash-qr-tap-hint" id="payment-gcash-proof-tap-hint-2" style="display:none;">Tap to enlarge</div>
+                          </div>
+                          <div style="margin-top:8px;">
+                            <label class="gcash-upload-btn" for="payment-gcash-proof-2" style="padding:8px 16px;font-size:12px;">
+                              Choose Screenshot
+                            </label>
+                            <input class="visually-hidden" type="file" id="payment-gcash-proof-2" accept="image/*"
+                                   onchange="previewGcashProof(this, 2)">
+                          </div>
+                          <span class="gcash-upload-filename" id="payment-gcash-filename-2" style="display:block;margin-top:4px;">No file selected</span>
+                          <button type="button" id="payment-gcash-proof-remove-2" class="proof-remove-btn"
+                                  style="display:none;margin-top:6px;" onclick="removeGcashProof(2)">✕ Remove &amp; replace</button>
+                          <div class="form-group" style="margin-top:10px;max-width:180px;">
+                            <label class="form-label" style="font-size:12px;">Amount on This Screenshot</label>
+                            <div class="gcash-amount-input-wrap">
+                              <span class="gcash-amount-prefix">₱</span>
+                              <input class="form-input gcash-amount-input" type="text" inputmode="decimal"
+                                     id="payment-gcash-amount-2" placeholder="0.00" readonly>
+                            </div>
+                            <div style="font-size:11px;color:var(--muted);margin-top:4px;">Auto-read — not editable.</div>
+                          </div>
+                        </div>
+
+                        <div id="payment-gcash-slot-3" style="display:none;">
+                          <div style="font-size:12px;color:#c7c7cf;margin-bottom:4px;">Screenshot 3 <span style="color:var(--muted);">(optional — shown when screenshots 1–2 aren't enough)</span></div>
+                          <div class="proof-preview-wrap" id="payment-gcash-preview-wrap-3">
+                            <img id="payment-gcash-proof-preview-3" class="proof-preview" alt="GCash proof preview 3"
+                                 style="display:none;" onclick="openGcashProofPreview(3)">
+                            <div class="gcash-qr-tap-hint" id="payment-gcash-proof-tap-hint-3" style="display:none;">Tap to enlarge</div>
+                          </div>
+                          <div style="margin-top:8px;">
+                            <label class="gcash-upload-btn" for="payment-gcash-proof-3" style="padding:8px 16px;font-size:12px;">
+                              Choose Screenshot
+                            </label>
+                            <input class="visually-hidden" type="file" id="payment-gcash-proof-3" accept="image/*"
+                                   onchange="previewGcashProof(this, 3)">
+                          </div>
+                          <span class="gcash-upload-filename" id="payment-gcash-filename-3" style="display:block;margin-top:4px;">No file selected</span>
+                          <button type="button" id="payment-gcash-proof-remove-3" class="proof-remove-btn"
+                                  style="display:none;margin-top:6px;" onclick="removeGcashProof(3)">✕ Remove &amp; replace</button>
+                          <div class="form-group" style="margin-top:10px;max-width:180px;">
+                            <label class="form-label" style="font-size:12px;">Amount on This Screenshot</label>
+                            <div class="gcash-amount-input-wrap">
+                              <span class="gcash-amount-prefix">₱</span>
+                              <input class="form-input gcash-amount-input" type="text" inputmode="decimal"
+                                     id="payment-gcash-amount-3" placeholder="0.00" readonly>
+                            </div>
+                            <div style="font-size:11px;color:var(--muted);margin-top:4px;">Auto-read — not editable.</div>
+                          </div>
+                        </div>
+
                       </div>
 
                       <!-- Auto-filled from the uploaded screenshot via OCR (see
                            previewGcashProof -> _runGcashReceiptOCR in tr-member.js).
                            Hidden until a file is picked / OCR responds. -->
                       <div id="payment-gcash-ocr-box" class="gcash-ocr-box" style="display:none;"></div>
-
-                      <!-- Screenshot 2 — optional, revealed by the "add another" link -->
-                      <div id="payment-gcash-slot-2" style="display:none;margin-top:16px;padding-top:16px;border-top:1px dashed var(--border);">
-                        <div class="gcash-upload-row">
-                          <label class="gcash-upload-btn" for="payment-gcash-proof-2">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                            Choose Screenshot 2
-                          </label>
-                          <input class="visually-hidden" type="file" id="payment-gcash-proof-2" accept="image/*"
-                                 onchange="previewGcashProof(this, 2)">
-                          <span class="gcash-upload-filename" id="payment-gcash-filename-2">No file selected</span>
-                        </div>
-                        <div class="form-group" style="margin-top:10px;max-width:220px;">
-                          <label class="form-label" style="font-size:12px;">Amount on This Screenshot</label>
-                          <div class="gcash-amount-input-wrap">
-                            <span class="gcash-amount-prefix">₱</span>
-                            <input class="form-input gcash-amount-input" type="text" inputmode="decimal"
-                                   id="payment-gcash-amount-2" placeholder="0.00" readonly>
-                          </div>
-                          <div style="font-size:11px;color:var(--muted);margin-top:4px;">Auto-read from this screenshot — not editable.</div>
-                        </div>
-                      </div>
-
-                      <!-- Screenshot 3 — optional, revealed by the "add another" link -->
-                      <div id="payment-gcash-slot-3" style="display:none;margin-top:16px;padding-top:16px;border-top:1px dashed var(--border);">
-                        <div class="gcash-upload-row">
-                          <label class="gcash-upload-btn" for="payment-gcash-proof-3">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                            Choose Screenshot 3
-                          </label>
-                          <input class="visually-hidden" type="file" id="payment-gcash-proof-3" accept="image/*"
-                                 onchange="previewGcashProof(this, 3)">
-                          <span class="gcash-upload-filename" id="payment-gcash-filename-3">No file selected</span>
-                        </div>
-                        <div class="form-group" style="margin-top:10px;max-width:220px;">
-                          <label class="form-label" style="font-size:12px;">Amount on This Screenshot</label>
-                          <div class="gcash-amount-input-wrap">
-                            <span class="gcash-amount-prefix">₱</span>
-                            <input class="form-input gcash-amount-input" type="text" inputmode="decimal"
-                                   id="payment-gcash-amount-3" placeholder="0.00" readonly>
-                          </div>
-                          <div style="font-size:11px;color:var(--muted);margin-top:4px;">Auto-read from this screenshot — not editable.</div>
-                        </div>
-                      </div>
-
-                      <div style="margin-top:10px;">
-                        <span class="link-btn" id="payment-gcash-add-screenshot" onclick="addAnotherGcashScreenshot()">+ Add another screenshot (optional)</span>
-                      </div>
                     </div>
 
                     <div class="form-group">
-                      <label class="form-label">Sender / Account Name</label>
-                      <input class="form-input" id="payment-gcash-sender" placeholder="e.g. Juan Dela Cruz">
+                      <label class="form-label">Sender / Account Name <span style="color:var(--red);">*</span></label>
+                      <input class="form-input" id="payment-gcash-sender" placeholder="e.g. Juan Dela Cruz" required>
+                      <div style="font-size:12px;color:var(--muted);margin-top:6px;">
+                        Required — enter the name on the GCash account the payment was sent from, so staff can match the receipt to you.
+                      </div>
                     </div>
 
                     <div class="form-row">
@@ -675,8 +713,6 @@
               <td>
                 {% if p.status == 'verified' %}
                 <span class="badge badge-green">Approved</span>
-                {% elif p.status == 'rejected' %}
-                <span class="badge badge-red">Declined</span>
                 {% elif p.status == 'approved' and p.method.startswith('Pending') %}
                 <span class="badge badge-gold">Awaiting Payment</span>
                 {% elif p.status == 'approved' and p.method == 'Cash' %}
@@ -1413,7 +1449,7 @@
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </div>
     </div>
-    <div class="modal-title" style="text-align:center;">REQUEST DECLINED</div>
+    <div class="modal-title" id="plan-declined-title" style="text-align:center;">REQUEST DECLINED</div>
     <div id="plan-declined-message" style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;">
       Your plan request was declined.
     </div>

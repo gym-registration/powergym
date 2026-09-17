@@ -121,8 +121,8 @@
                      {% if p.member_profile_picture %}onclick="viewPaymentProof('{{ p.member_profile_picture }}', 'Profile Picture — {{ p.member_name }}')" title="View profile picture"{% endif %}>{% if not p.member_profile_picture %}👤{% endif %}</div>
                 <div>
                 <div style="font-weight:600;margin-bottom:4px;">{{ p.member_name }} — {{ p.plan }}</div>
-                <div style="font-size:13px;color:var(--muted);">
-                  {% if p.stage == 'approval' %}New plan request{% else %}{{ p.method }} · Ref: {{ p.reference }}{% endif %} · Txn: #{{ p.txn }} · ₱{{ p.amount }}
+                <div style="font-size:14px;color:var(--white);">
+                  {% if p.stage == 'approval' %}New plan request{% else %}{{ p.method }} · Ref: {{ p.reference }}{% endif %} · Txn: #{{ p.txn }} · <span style="color:var(--gold);font-weight:700;">₱{{ p.amount }}</span>
                 </div>
                 {% if p.amount_mismatch %}
                 <div style="font-size:12px;color:var(--red);font-weight:600;margin-top:4px;">⚠️ Member-reported amount doesn't match — see View Proof for details</div>
@@ -150,10 +150,14 @@
                 </div>
               </div>
               <div style="display:flex;gap:8px;">
-                {% if p.is_student and p.student_id_image_path %}
+                {% if p.is_student and p.student_id_image_path and p.student_id_back_image_path %}
+                <button class="btn btn-sm btn-outline"
+                        data-front-url="{{ url_for('static', filename=p.student_id_image_path) }}"
+                        data-back-url="{{ url_for('static', filename=p.student_id_back_image_path) }}"
+                        onclick="viewStudentIdProof(this.dataset.frontUrl, this.dataset.backUrl, 'School ID Proof — {{ p.member_name }}')">🎓 View ID (Front &amp; Back)</button>
+                {% elif p.is_student and p.student_id_image_path %}
                 <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof — Front')">🎓 View ID (Front)</button>
-                {% endif %}
-                {% if p.is_student and p.student_id_back_image_path %}
+                {% elif p.is_student and p.student_id_back_image_path %}
                 <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_back_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof — Back')">🎓 View ID (Back)</button>
                 {% endif %}
                 {% if p.stage == 'approval' %}
@@ -260,8 +264,8 @@
                    {% if p.member_profile_picture %}onclick="viewPaymentProof('{{ p.member_profile_picture }}', 'Profile Picture — {{ p.member_name }}')" title="View profile picture"{% endif %}>{% if not p.member_profile_picture %}👤{% endif %}</div>
               <div>
               <div style="font-weight:600;margin-bottom:4px;">{{ p.member_name }} — {{ p.plan }}</div>
-              <div style="font-size:13px;color:var(--muted);">
-                {% if p.stage == 'approval' %}New plan request{% else %}{{ p.method }} · Ref: {{ p.reference }}{% endif %} · Txn: #{{ p.txn }} · ₱{{ p.amount }}
+              <div style="font-size:14px;color:var(--white);">
+                {% if p.stage == 'approval' %}New plan request{% else %}{{ p.method }} · Ref: {{ p.reference }}{% endif %} · Txn: #{{ p.txn }} · <span style="color:var(--gold);font-weight:700;">₱{{ p.amount }}</span>
               </div>
               {% if p.amount_mismatch %}
               <div style="font-size:12px;color:var(--red);font-weight:600;margin-top:4px;">⚠️ Member-reported amount doesn't match — see View Proof for details</div>
@@ -320,24 +324,22 @@
 </div>
 {% endif %}
 {% endset %}
-              <button class="btn btn-sm btn-outline" data-proof-url="{{ url_for('static', filename=p.proof_image_path) }}"
+              {% set proof_count = 1 + (1 if p.proof_image_path_2 else 0) + (1 if p.proof_image_path_3 else 0) %}
+              <button class="btn btn-sm btn-outline"
+                      data-proof-url="{{ url_for('static', filename=p.proof_image_path) }}"
+                      data-proof-url2="{% if p.proof_image_path_2 %}{{ url_for('static', filename=p.proof_image_path_2) }}{% endif %}"
+                      data-proof-url3="{% if p.proof_image_path_3 %}{{ url_for('static', filename=p.proof_image_path_3) }}{% endif %}"
                       data-proof-context="{{ proof_html }}"
-                      onclick="viewPaymentProof(this.dataset.proofUrl, 'Payment Proof — Screenshot 1', this.dataset.proofContext)">👁 View Proof{% if p.proof_image_path_2 or p.proof_image_path_3 %} 1{% endif %}</button>
-              {% if p.proof_image_path_2 %}
-              <button class="btn btn-sm btn-outline" data-proof-url-2="{{ url_for('static', filename=p.proof_image_path_2) }}"
-                      data-proof-context="{{ proof_html }}"
-                      onclick="viewPaymentProof(this.dataset.proofUrl2, 'Payment Proof — Screenshot 2', this.dataset.proofContext)">👁 View Proof 2</button>
+                      onclick="viewPaymentProofs(this.dataset.proofUrl, this.dataset.proofUrl2, this.dataset.proofUrl3, 'Payment Proof — {{ p.member_name }}', this.dataset.proofContext)">👁 View Proof{% if proof_count > 1 %} ({{ proof_count }}){% endif %}</button>
               {% endif %}
-              {% if p.proof_image_path_3 %}
-              <button class="btn btn-sm btn-outline" data-proof-url-3="{{ url_for('static', filename=p.proof_image_path_3) }}"
-                      data-proof-context="{{ proof_html }}"
-                      onclick="viewPaymentProof(this.dataset.proofUrl3, 'Payment Proof — Screenshot 3', this.dataset.proofContext)">👁 View Proof 3</button>
-              {% endif %}
-              {% endif %}
-              {% if p.is_student and p.student_id_image_path %}
+              {% if p.is_student and p.student_id_image_path and p.student_id_back_image_path %}
+              <button class="btn btn-sm btn-outline"
+                      data-front-url="{{ url_for('static', filename=p.student_id_image_path) }}"
+                      data-back-url="{{ url_for('static', filename=p.student_id_back_image_path) }}"
+                      onclick="viewStudentIdProof(this.dataset.frontUrl, this.dataset.backUrl, 'School ID Proof — {{ p.member_name }}')">🎓 View ID (Front &amp; Back)</button>
+              {% elif p.is_student and p.student_id_image_path %}
               <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof — Front')">🎓 View ID (Front)</button>
-              {% endif %}
-              {% if p.is_student and p.student_id_back_image_path %}
+              {% elif p.is_student and p.student_id_back_image_path %}
               <button class="btn btn-sm btn-outline" data-id-url="{{ url_for('static', filename=p.student_id_back_image_path) }}" onclick="viewPaymentProof(this.dataset.idUrl, 'School ID Proof — Back')">🎓 View ID (Back)</button>
               {% endif %}
               {% if p.stage == 'approval' %}
@@ -771,84 +773,123 @@
         </div>
       </div>
 
-      <!-- GCash Payment Details -->
+      <!-- GCash Payment Details — multiple saved accounts, one default -->
       <div class="panel" style="margin-top:24px;">
         <div class="panel-header">
-          <div><div class="panel-title">GCash Payment Details</div><div style="font-size:13px;color:var(--muted);margin-top:2px;">This is the GCash account members are shown when submitting a payment. Update it any time your account or number changes.</div></div>
+          <div>
+            <div class="panel-title">GCash Payment Details</div>
+            <div style="font-size:13px;color:var(--muted);margin-top:2px;">
+              Save as many GCash accounts as you need. The one marked <strong style="color:var(--white);">DEFAULT</strong>
+              is the only account members are shown when submitting a payment — switch it any time.
+            </div>
+          </div>
           <div style="display:flex;gap:8px;flex-shrink:0;">
-            <button type="button" class="btn btn-outline btn-sm" id="gcash-add-btn" onclick="toggleGcashEdit()"
-                    {% if gcash_settings and gcash_settings.gcash_number %}disabled{% endif %}>＋ ADD</button>
-            <button type="button" class="btn btn-outline btn-sm" id="gcash-edit-btn" onclick="toggleGcashEdit()"
-                    {% if not (gcash_settings and gcash_settings.gcash_number) %}disabled{% endif %}>✎ EDIT</button>
-            <button type="button" class="btn btn-outline btn-sm" id="gcash-delete-btn"
-                    style="color:var(--red);border-color:rgba(230,30,37,0.4);"
-                    {% if not (gcash_settings and gcash_settings.gcash_number) %}disabled{% endif %}
-                    onclick="promptDeleteGcashSettings()">🗑️ DELETE</button>
+            <button type="button" class="btn btn-outline btn-sm" id="gcash-add-btn"
+                    onclick="openAddGcashModal()">＋ ADD ACCOUNT</button>
           </div>
         </div>
         <div class="panel-body">
+          <div id="gcash-accounts-list"></div>
+          <div id="gcash-accounts-empty" style="display:none;padding:28px 16px;text-align:center;color:var(--muted);font-size:14px;line-height:1.7;">
+            No GCash account saved yet.<br>
+            Members won't see a GCash option until you add one.
+          </div>
+        </div>
+      </div>
+
+      <!-- Add / Edit a GCash account -->
+      <div class="modal-overlay" id="gcash-account-modal">
+        <div class="modal" style="max-width:520px;">
+          <button class="modal-close" onclick="closeModal('gcash-account-modal')">✕</button>
+          <div class="modal-title" id="gcash-modal-title">ADD GCASH ACCOUNT</div>
+
+          <input type="hidden" id="gcash-account-id" value="">
+
           <div class="form-row">
             <div class="form-group">
               <label class="form-label">GCash Number</label>
               <input class="form-input" id="gcash-number" placeholder="0917 123 4567"
-                     value="{{ gcash_settings.gcash_number if gcash_settings else '' }}"
-                     maxlength="13" inputmode="numeric" disabled
+                     maxlength="13" inputmode="numeric"
                      oninput="this.value=this.value.replace(/[^\d\s]/g,'')">
             </div>
             <div class="form-group">
               <label class="form-label">Account Name</label>
               <input class="form-input" id="gcash-account-name" placeholder="JUAN D. DELA CRUZ"
-                     value="{{ gcash_settings.gcash_account_name if gcash_settings else '' }}"
-                     disabled
                      oninput="this.value=this.value.toUpperCase()">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Label (optional)</label>
+            <input class="form-input" id="gcash-label" maxlength="60"
+                   placeholder="e.g. Business account, Backup number">
+            <div style="font-size:12px;color:var(--muted);margin-top:6px;">
+              Just so you can tell your accounts apart. Members never see this.
             </div>
           </div>
 
           <div class="form-group">
             <label class="form-label">QR Code (optional)</label>
             <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">
-              Upload a "scan to pay" QR (GCash or InstaPay). Members will see this next to
-              the number so they can scan instead of typing it in.
+              Upload a "scan to pay" QR (GCash or InstaPay) for this account. Members see it
+              next to the number so they can scan instead of typing it in.
             </div>
             <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
-              <div id="gcash-qr-current-wrap" style="{{ '' if (gcash_settings and gcash_settings.gcash_qr_path) else 'display:none;' }}">
-                <img id="gcash-qr-current-preview"
-                     src="{{ url_for('static', filename=gcash_settings.gcash_qr_path) if gcash_settings and gcash_settings.gcash_qr_path else '' }}"
-                     alt="Current GCash QR" style="width:100px;height:100px;object-fit:contain;background:#fff;border-radius:8px;padding:6px;">
+              <div id="gcash-qr-current-wrap" style="display:none;">
+                <img id="gcash-qr-current-preview" src="" alt="GCash QR"
+                     style="width:100px;height:100px;object-fit:contain;background:#fff;border-radius:8px;padding:6px;">
               </div>
               <div style="flex:1;min-width:200px;">
-                <input class="form-input" type="file" id="gcash-qr-input" accept="image/png,image/jpeg,image/webp"
-                       disabled onchange="previewGcashQr(this)">
-                <label id="gcash-qr-remove-row" style="display:{{ 'flex' if (gcash_settings and gcash_settings.gcash_qr_path) else 'none' }};align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-top:8px;cursor:pointer;">
-                  <input type="checkbox" id="gcash-qr-remove" disabled onchange="toggleGcashQrRemove(this)">
+                <input class="form-input" type="file" id="gcash-qr-input"
+                       accept="image/png,image/jpeg,image/webp" onchange="previewGcashQr(this)">
+                <label id="gcash-qr-remove-row" style="display:none;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-top:8px;cursor:pointer;">
+                  <input type="checkbox" id="gcash-qr-remove" onchange="toggleGcashQrRemove(this)">
                   <span>Remove current QR code</span>
                 </label>
               </div>
             </div>
           </div>
 
-          <div style="display:flex;gap:10px;margin-top:8px;">
-            <button class="btn btn-red" id="gcash-settings-submit-btn" style="flex:1;display:none;" onclick="submitGcashSettings()">SAVE GCASH DETAILS</button>
-            <button class="btn btn-outline" id="gcash-settings-cancel-btn" style="flex:1;display:none;" onclick="cancelGcashEdit()">CANCEL</button>
+          <label id="gcash-make-default-row" style="display:flex;align-items:center;gap:8px;font-size:14px;color:var(--white);margin:4px 0 20px;cursor:pointer;">
+            <input type="checkbox" id="gcash-make-default">
+            <span>Make this the account members see</span>
+          </label>
+
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+            <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="closeModal('gcash-account-modal')">CANCEL</button>
+            <button class="btn btn-red" id="gcash-save-btn" style="width:100%;justify-content:center;" onclick="submitGcashAccount()">SAVE ACCOUNT</button>
           </div>
         </div>
       </div>
 
-      <!-- Confirm: delete GCash payment details -->
-      <div class="modal-overlay" id="confirm-delete-gcash-modal">
-        <div class="modal" style="max-width:400px;">
-          <button class="modal-close" onclick="closeModal('confirm-delete-gcash-modal')">✕</button>
-          <div class="modal-title" style="text-align:center;">REMOVE GCASH DETAILS?</div>
-          <div style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;">
-            This clears the GCash number, account name, and QR code shown to members.
-            They won't be able to pay via GCash until you add new details.
-          </div>
+      <!-- Confirm: switch which account members see -->
+      <div class="modal-overlay" id="confirm-default-gcash-modal">
+        <div class="modal" style="max-width:420px;">
+          <button class="modal-close" onclick="closeModal('confirm-default-gcash-modal')">✕</button>
+          <div class="modal-title" style="text-align:center;">SWITCH GCASH ACCOUNT?</div>
+          <div id="confirm-default-gcash-text" style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;"></div>
           <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
-            <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="closeModal('confirm-delete-gcash-modal')">NO</button>
-            <button class="btn btn-red" id="confirm-delete-gcash-btn" style="width:100%;justify-content:center;" onclick="confirmDeleteGcashSettings()">YES, DELETE</button>
+            <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="closeModal('confirm-default-gcash-modal')">NO</button>
+            <button class="btn btn-red" id="confirm-default-gcash-btn" style="width:100%;justify-content:center;" onclick="confirmSetDefaultGcash()">YES, SWITCH</button>
           </div>
         </div>
       </div>
+
+      <!-- Confirm: delete one GCash account -->
+      <div class="modal-overlay" id="confirm-delete-gcash-modal">
+        <div class="modal" style="max-width:420px;">
+          <button class="modal-close" onclick="closeModal('confirm-delete-gcash-modal')">✕</button>
+          <div class="modal-title" style="text-align:center;">REMOVE GCASH ACCOUNT?</div>
+          <div id="confirm-delete-gcash-text" style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;"></div>
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+            <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="closeModal('confirm-delete-gcash-modal')">NO</button>
+            <button class="btn btn-red" id="confirm-delete-gcash-btn" style="width:100%;justify-content:center;" onclick="confirmDeleteGcashAccount()">YES, DELETE</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Saved accounts, handed to the JS that renders the list above -->
+      <script type="application/json" id="gcash-accounts-data">{{ gcash_accounts | tojson }}</script>
 
       <!-- Terms & Policy (shown to members during registration) -->
       <div class="panel" style="margin-top:24px;">
@@ -931,11 +972,11 @@
 </div>
 
 <div class="modal-overlay" id="view-proof-modal">
-  <div class="modal" style="max-width:520px;text-align:center;">
+  <div class="modal" id="view-proof-modal-box" style="max-width:520px;text-align:center;">
     <button class="modal-close" onclick="closeModal('view-proof-modal')">✕</button>
     <div class="modal-title" id="proof-modal-title">PAYMENT PROOF</div>
     <div id="proof-modal-body">
-      <img id="proof-modal-img" src="" alt="Payment proof" style="display:none;max-width:100%;max-height:60vh;margin:0 auto;border-radius:6px;border:1px solid var(--border);">
+      <div id="proof-modal-img-wrap" style="display:flex;gap:16px;justify-content:center;align-items:flex-start;flex-wrap:wrap;"></div>
       <div id="proof-modal-pdf-note" style="display:none;">
         <p style="color:var(--muted);font-size:15px;margin-bottom:16px;">This proof was uploaded as a PDF file.</p>
         <a id="proof-modal-pdf-link" href="#" target="_blank" class="btn btn-red" style="display:inline-block;">OPEN PDF</a>
@@ -1080,20 +1121,6 @@
     <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
       <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="ContentManager.cancelDelete()">CANCEL</button>
       <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="ContentManager.performDelete()">DELETE</button>
-    </div>
-  </div>
-</div>
-
-<div class="modal-overlay" id="confirm-gcash-settings-modal">
-  <div class="modal" style="max-width:400px;">
-    <button class="modal-close" onclick="closeModal('confirm-gcash-settings-modal')">✕</button>
-    <div class="modal-title" style="text-align:center;">CONFIRM SAVE</div>
-    <div style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;">
-      Are you sure you want to save this GCash payment detail?
-    </div>
-    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
-      <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="closeModal('confirm-gcash-settings-modal')">NO</button>
-      <button class="btn btn-red" id="confirm-gcash-settings-btn" style="width:100%;justify-content:center;" onclick="confirmGcashSettings()">YES</button>
     </div>
   </div>
 </div>
