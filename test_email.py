@@ -12,7 +12,7 @@ import ssl
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)  # load .env file into os.environ, overriding any existing values
 
 server_host = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
 port        = int(os.environ.get('MAIL_PORT', 587))

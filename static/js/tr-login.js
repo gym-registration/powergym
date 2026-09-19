@@ -753,14 +753,35 @@ function selectPlan(card, plan) {
 }
 
 /** Live role hint as the visitor types their email on the login overlay.
- *  Pre-existing feature that trmem.html referenced but never actually
- *  defined — wired up here against the existing Auth/Navigation helpers
- *  above so it fails safely (just shows no hint) instead of throwing. */
+ *  Asks the server (/api/detect-role) which role the email really belongs to,
+ *  so real admin/staff accounts from the database are recognised. (The old
+ *  client-side guess only knew two hardcoded demo emails and labelled every
+ *  other address as a member.) Debounced, and stale responses are ignored so
+ *  a slow reply for an earlier keystroke can't overwrite the latest one. */
+let _roleHintTimer = null;
+let _roleHintSeq   = 0;
 function detectRoleHint() {
   const email = _val('login-email');
-  let role = null;
-  try { role = email ? Auth.detectRole(email) : null; } catch (e) { role = null; }
-  Navigation.showRoleHint(role);
+  clearTimeout(_roleHintTimer);
+  const seq = ++_roleHintSeq;
+
+  // Not a plausible email yet — reset to the neutral default straight away.
+  if (!email || !email.includes('@') || email.length < 4) {
+    Navigation.showRoleHint(null);
+    return;
+  }
+
+  _roleHintTimer = setTimeout(() => {
+    fetch('/api/detect-role?email=' + encodeURIComponent(email))
+      .then(res => res.json())
+      .then(data => {
+        if (seq !== _roleHintSeq) return;   // a newer keystroke superseded this
+        Navigation.showRoleHint(data && data.role ? data.role : null);
+      })
+      .catch(() => {
+        if (seq === _roleHintSeq) Navigation.showRoleHint(null);
+      });
+  }, 250);
 }
 
 /** Toggle a password input between hidden (••••) and visible (plain text).

@@ -579,6 +579,22 @@ const FormChangeTracker = (() => {
     _updateProfileButton();
   }
 
+  /** Chrome sometimes ignores autocomplete hints and fills the saved password in
+   *  a moment after page load. Wipe any value it drops into the Change Password
+   *  fields during the first couple of seconds (never touches a field the user is
+   *  actually typing in). */
+  function _blockPasswordAutofill() {
+    if (!document.getElementById('cp-submit-btn')) return;
+    const wipe = () => {
+      PASSWORD_FIELD_IDS.forEach(id => {
+        const el = document.getElementById(id);
+        if (el && el.value && document.activeElement !== el) el.value = '';
+      });
+      _updatePasswordButton();
+    };
+    [0, 250, 750, 1500, 2500].forEach(ms => setTimeout(wipe, ms));
+  }
+
   /** Wire up listeners for whichever of the two forms exist on this page. */
   function init() {
     if (document.getElementById('pi-save-btn') && PROFILE_FIELD_IDS.some(id => document.getElementById(id))) {
@@ -591,6 +607,7 @@ const FormChangeTracker = (() => {
     }
 
     if (document.getElementById('cp-submit-btn')) {
+      _blockPasswordAutofill();
       _updatePasswordButton();
       PASSWORD_FIELD_IDS.forEach(id => {
         const el = document.getElementById(id);

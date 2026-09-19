@@ -10,7 +10,7 @@ import time
 import numpy as np
 from collections import OrderedDict
 from dotenv import load_dotenv
-load_dotenv()  # Reads variables from a .env file in the project root, if present
+load_dotenv(override=True)  # Reads variables from a .env file in the project root, if present
 
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response
 from markupsafe import Markup, escape
@@ -6317,9 +6317,21 @@ def member():
             plan_is_promo    = bool(latest_payment_row and _is_promo_payment(latest_payment_row))
             plan_coach_fee   = (0.0 if plan_is_promo else _coach_fee(latest_payment_row.coach_name)) if plan_wants_coach else 0.0
 
+            # A promo (e.g. "16 Sessions") only ever rides on the Monthly
+            # plan behind the scenes for expiry scheduling — plan_obj here
+            # is that anchor, not what the member actually availed. Pull
+            # the real promo name/price the same way the declined-plan
+            # panel above already does, so the card, Quick Stats and the
+            # plan modal all show "16 SESSIONS" (and its real price)
+            # instead of "MONTHLY".
+            promo_obj = _payment_promo(latest_payment_row) if plan_is_promo else None
+            display_plan_name  = _payment_display_plan(latest_payment_row, plan_obj.name)
+            display_plan_price = promo_obj.price if promo_obj else plan_obj.price
+
             current_plan = {
-                'name': plan_obj.name,
-                'price': plan_obj.price,
+                'name': display_plan_name,
+                'price': display_plan_price,
+                'is_promo': plan_is_promo,
                 'start_date': membership.start_date.strftime('%B %d, %Y'),
                 'expiry_date': membership.expiry_date.strftime('%B %d, %Y'),
                 'days_left': days_left,
