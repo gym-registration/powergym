@@ -739,20 +739,32 @@ STUDENT_PLAN_PRICES = {
 # one-off day pass rather than an ongoing coaching arrangement.
 WALKIN_COACH_FEE = 350.0
 
-# Flat price for a walk-in Boxing session — a second walk-in option
-# alongside the Daily plan. Unlike Daily, this isn't backed by a
-# MembershipPlan row (Boxing here is a per-visit rate, not a plan
-# members subscribe to), so it's kept as a simple constant like the
-# coach fee above.
-WALKIN_BOXING_FEE = 350.0
-
 
 # Plans that exist as real MembershipPlan rows but are NOT a membership a
-# member signs up for themselves — 'Daily' is a walk-in day pass recorded
-# by staff from the Walk In tab. Matched case-insensitively. Every other
-# plan in the table, including any admin/staff add later, is offered to
-# members automatically.
-MEMBER_HIDDEN_PLAN_NAMES = {'daily'}
+# member signs up for themselves — 'Daily' is a walk-in day pass and
+# 'Boxing' is a walk-in single session, both recorded by staff from the
+# Walk In tab and editable (price/description/inclusions) from Admin →
+# Manage Content → Walk-In, exactly like any other plan. Matched
+# case-insensitively. Every other plan in the table, including any
+# admin/staff add later, is offered to members automatically.
+MEMBER_HIDDEN_PLAN_NAMES = {'daily', 'boxing'}
+
+
+# Plans and promos carry an `audience`: 'member' (shown to members on My
+# Membership and on the public home page) or 'walkin' (shown ONLY in the
+# staff Walk In tab — members never see them, and they can't be picked
+# when creating/renewing a member's plan).
+AUDIENCE_MEMBER = 'member'
+AUDIENCE_WALKIN = 'walkin'
+
+
+def _norm_audience(value):
+    return AUDIENCE_WALKIN if str(value or '').strip().lower() == AUDIENCE_WALKIN else AUDIENCE_MEMBER
+
+
+def _is_walkin_only(item):
+    """True for a MembershipPlan / GymPromo that was added for the Walk In tab only."""
+    return _norm_audience(getattr(item, 'audience', None)) == AUDIENCE_WALKIN
 
 
 def _member_selectable_plans():
@@ -766,7 +778,8 @@ def _member_selectable_plans():
              .order_by(MembershipPlan.sort_order, MembershipPlan.id)
              .all())
     return [p for p in plans
-            if (p.name or '').strip().lower() not in MEMBER_HIDDEN_PLAN_NAMES]
+            if (p.name or '').strip().lower() not in MEMBER_HIDDEN_PLAN_NAMES
+            and not _is_walkin_only(p)]
 
 
 def _find_plan_by_key(key, plans=None):
@@ -812,6 +825,9 @@ def _plan_options_data(include_hidden=True):
              .filter_by(is_active=True)
              .order_by(MembershipPlan.sort_order, MembershipPlan.id)
              .all())
+    # Walk-in-only plans are for guests without an account, so they never
+    # belong in the membership dropdowns (Record Payment, Add / Edit Member).
+    plans = [p for p in plans if not _is_walkin_only(p)]
     if not include_hidden:
         plans = [p for p in plans
                  if (p.name or '').strip().lower() not in MEMBER_HIDDEN_PLAN_NAMES]
@@ -851,6 +867,36 @@ def _manila_day_bounds_utc(day):
         start_manila.astimezone(timezone.utc).replace(tzinfo=None),
         end_manila.astimezone(timezone.utc).replace(tzinfo=None),
     )
+
+
+def _walkins_today_data():
+    """Walk-ins recorded today (most recent first), plus today's cash total —
+    shared by the staff Walk In tab and the admin Manage Content > Walk-In
+    tab so both show the exact same live list without duplicating the
+    query/formatting logic."""
+    day_start, day_end = _manila_day_bounds_utc(_today_manila())
+    rows = (
+        WalkIn.query
+        .options(joinedload(WalkIn.recorded_by))
+        .filter(WalkIn.created_at >= day_start, WalkIn.created_at <= day_end)
+        .order_by(WalkIn.created_at.desc())
+        .all()
+    )
+    walkins = [{
+        'name': w.full_name,
+        'phone': w.phone or '—',
+        'plan': w.plan_type,
+        'amount': f'{float(w.amount):,.2f}',
+        'method': w.method,
+        'coach': w.coach_name if w.wants_coach else '—',
+        'time': _to_manila(w.created_at).strftime('%I:%M %p').lstrip('0'),
+        # Who recorded it — not shown on the staff dashboard (staff already
+        # knows who's at the desk) but useful on the admin dashboard, which
+        # oversees multiple staff accounts.
+        'staff': w.recorded_by.full_name if w.recorded_by else '—',
+    } for w in rows]
+    total_today = sum(float(w.amount) for w in rows)
+    return walkins, f'{total_today:,.2f}'
 
 
 def _get_member_attendance_month(user_id, year, month):
@@ -1117,6 +1163,10 @@ class MembershipPlan(db.Model):
     # price. Set from Manage Content → Membership Plans, so a brand-new
     # plan can carry a student rate without any code change.
     student_price = db.Column(db.Float, nullable=True)
+    # Who this plan is offered to: 'member' (My Membership page + home page)
+    # or 'walkin' (shown ONLY in the staff Walk In tab). Defaults to 'member'
+    # so every existing plan keeps behaving exactly as before.
+    audience      = db.Column(db.String(10), nullable=False, default='member', server_default='member')
 
     memberships   = db.relationship('Membership', back_populates='plan')
     payments      = db.relationship('Payment', back_populates='plan')
@@ -1153,6 +1203,8 @@ class GymPromo(db.Model):
     image_path   = db.Column(db.String(255), nullable=True)
     is_active    = db.Column(db.Boolean, nullable=False, default=True)
     sort_order   = db.Column(db.Integer, nullable=False, default=0)
+    # 'member' (My Membership page) or 'walkin' (ONLY the staff Walk In tab).
+    audience     = db.Column(db.String(10), nullable=False, default='member', server_default='member')
     created_at   = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at   = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
                              onupdate=lambda: datetime.now(timezone.utc))
@@ -1182,6 +1234,35 @@ class Membership(db.Model):
 
     member = db.relationship('User', back_populates='membership')
     plan   = db.relationship('MembershipPlan', back_populates='memberships')
+
+
+class MemberFeedback(db.Model):
+    """Post-membership rating & feedback — prompted once a member's plan
+    has expired (see the feedback_prompt block in /member), so the gym
+    hears from people right after their experience with the plan they just
+    finished, not just from members who happen to go looking for a form.
+
+    `membership_expiry_date` snapshots the expiry date the feedback was
+    given for. Membership rows are reused/updated on renewal rather than
+    re-created (see Membership above), so this snapshot — not just
+    member_id — is what lets /member tell "already gave feedback for the
+    plan that just expired" apart from "gave feedback last cycle and has
+    since renewed/expired again", without needing a second table."""
+    __tablename__ = 'member_feedback'
+    id              = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    member_id       = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    rating          = db.Column(db.Integer, nullable=False)  # 1-5 stars
+    comment         = db.Column(db.Text, nullable=True)      # "Tell us more about your experience"
+    improvement     = db.Column(db.Text, nullable=True)      # "What could we improve?"
+    would_recommend = db.Column(db.Boolean, nullable=True)
+    plan_name       = db.Column(db.String(50), nullable=True)  # snapshot — plan could later be renamed/deleted
+    membership_expiry_date = db.Column(db.Date, nullable=True, index=True)
+    created_at      = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    member = db.relationship('User')
+
+    def __repr__(self):
+        return f"<MemberFeedback member={self.member_id} rating={self.rating}>"
 
 
 class Coach(db.Model):
@@ -1281,7 +1362,9 @@ class WalkIn(db.Model):
     phone             = db.Column(db.String(15), nullable=True)
     email             = db.Column(db.String(120), nullable=True)
     amount            = db.Column(db.Numeric(10, 2), nullable=False)
-    plan_type         = db.Column(db.String(20), nullable=False, default='Daily')
+    # Holds 'Daily' / 'Boxing', or the name of a walk-in-only plan/promo
+    # added from Manage Content (hence the wider column).
+    plan_type         = db.Column(db.String(100), nullable=False, default='Daily')
     method            = db.Column(db.String(32), nullable=False, default='Cash')
     wants_coach       = db.Column(db.Boolean, nullable=False, default=False)
     coach_name        = db.Column(db.String(60), nullable=True)
@@ -1844,6 +1927,10 @@ def _plan_to_dict(p):
         'description': p.description or '', 'image_path': p.image_path or '',
         'inclusions': p.inclusions or '', 'sort_order': p.sort_order,
         'student_price': '' if p.student_price is None else p.student_price,
+        'audience': _norm_audience(p.audience),
+        # Built-in walk-in day pass (Daily): not a member plan, so Manage
+        # Content lists it under the Walk-In tab instead of Membership Plans.
+        'member_hidden': (p.name or '').strip().lower() in MEMBER_HIDDEN_PLAN_NAMES,
     }
 
 
@@ -1858,6 +1945,7 @@ def _promo_to_dict(p):
         'image_path': p.image_path or '', 'inclusions': p.inclusions or '',
         'valid_until': p.valid_until.isoformat() if p.valid_until else '',
         'sort_order': p.sort_order,
+        'audience': _norm_audience(p.audience),
     }
 
 
@@ -2167,6 +2255,7 @@ def api_save_plan():
     sort_order    = request.form.get('sort_order', '0').strip()
     is_active     = request.form.get('is_active', 'true').strip().lower() != 'false'
     remove_image  = request.form.get('remove_image', 'false').strip().lower() == 'true'
+    audience      = _norm_audience(request.form.get('audience'))
 
     if not name:
         return jsonify(success=False, error='Plan name is required.'), 400
@@ -2203,6 +2292,11 @@ def api_save_plan():
     if dupe:
         return jsonify(success=False, error='A plan with that name already exists.'), 400
 
+    # A plan members are already on can't be flipped to walk-in-only — it
+    # would vanish from their My Membership page mid-subscription.
+    if audience == AUDIENCE_WALKIN and plan_id and Membership.query.filter_by(plan_id=plan.id).first():
+        return jsonify(success=False, error='Members are already on this plan, so it can\'t be made walk-in only. Create a separate walk-in plan instead.'), 400
+
     try:
         image_path = plan.image_path if plan_id else None
         if remove_image:
@@ -2225,6 +2319,7 @@ def api_save_plan():
     plan.image_path    = image_path
     plan.sort_order    = sort_order
     plan.is_active      = is_active
+    plan.audience      = audience
 
     if not plan_id:
         db.session.add(plan)
@@ -2277,6 +2372,7 @@ def api_save_promo():
     sort_order   = request.form.get('sort_order', '0').strip()
     is_active    = request.form.get('is_active', 'true').strip().lower() != 'false'
     remove_image = request.form.get('remove_image', 'false').strip().lower() == 'true'
+    audience     = _norm_audience(request.form.get('audience'))
 
     if not title:
         return jsonify(success=False, error='Promo title is required.'), 400
@@ -2336,6 +2432,7 @@ def api_save_promo():
     promo.image_path  = image_path
     promo.sort_order  = sort_order
     promo.is_active   = is_active
+    promo.audience    = audience
 
     if not promo_id:
         db.session.add(promo)
@@ -2630,7 +2727,9 @@ def _home_context(open_screen=None):
     automatically on load — used after a redirect from /login, /register
     links, or a failed sign-in so the visitor lands back on the same
     page instead of a separate screen."""
-    plans     = MembershipPlan.query.filter_by(is_active=True).order_by(MembershipPlan.sort_order, MembershipPlan.id).all()
+    plans     = (MembershipPlan.query.filter_by(is_active=True)
+                 .filter(MembershipPlan.audience != AUDIENCE_WALKIN)
+                 .order_by(MembershipPlan.sort_order, MembershipPlan.id).all())
     services  = GymService.query.filter_by(is_active=True).order_by(GymService.sort_order, GymService.id).all()
     # Public landing page only shows facility-zone photos (Weight Area,
     # Cardio Area, etc.) — real machines/equipment are member-only and
@@ -2670,7 +2769,7 @@ def login():
         payload  = request.get_json(silent=True)
         is_ajax  = payload is not None
         data     = payload if is_ajax else request.form
-        email    = (data.get('email') or '').strip()
+        email    = (data.get('email') or '').strip().lower()
         password = data.get('password') or ''
 
         def _fail(msg):
@@ -2699,6 +2798,27 @@ def login():
     # overlay open, instead of a dedicated login page.
     screen = request.args.get('screen', 'login')
     return redirect(url_for('home', screen=screen))
+
+
+@app.route('/api/detect-role')
+def api_detect_role():
+    """Powers the "ADMIN ACCESS" / "STAFF ACCESS" / "MEMBER ACCESS" hint bar
+    that appears above the login form as the visitor types their email (see
+    detectRoleHint() in tr-login.js). This used to be guessed client-side
+    against a couple of hardcoded demo accounts left over from before this
+    app had a real database — which meant any real staff/admin account that
+    wasn't the one seeded demo login silently fell through to "member"
+    (the reported bug). This looks the email up against the real User
+    table instead, so the hint always matches the account's actual role.
+
+    Deliberately returns nothing but the role (no name, status, etc.), and
+    only for something that looks like a real email, so this stays a thin
+    UI nicety rather than a way to page through account data."""
+    email = (request.args.get('email') or '').strip().lower()
+    if not email or '@' not in email or len(email) < 4:
+        return jsonify(role=None)
+    user = User.query.filter_by(email=email).first()
+    return jsonify(role=user.role if user else None)
 
 
 # ── Forgot / Reset Password (OTP-based) ──────────────────────
@@ -3894,7 +4014,7 @@ def admin_add_member():
         return jsonify(success=False, error='A user with this email already exists.'), 409
 
     plan = MembershipPlan.query.filter_by(name=plan_name).first()
-    if plan is None:
+    if plan is None or _is_walkin_only(plan):
         return jsonify(success=False, error='Please select a valid membership plan.'), 400
 
     # Admin-added members are walk-ins who already paid at the desk,
@@ -3986,6 +4106,8 @@ def admin_edit_member(member_id):
     membership = Membership.query.filter_by(member_id=user.id).first()
 
     plan = MembershipPlan.query.filter_by(name=plan_name).first() if plan_name else None
+    if plan is not None and _is_walkin_only(plan):
+        return jsonify(success=False, error='That plan is for walk-ins only and can\'t be given to a member.'), 400
     expiry_date = None
     if expiry_str:
         try:
@@ -4461,7 +4583,7 @@ def member_submit_payment():
         except ValueError:
             return jsonify(success=False, error='Please select a promo.'), 400
         promo = GymPromo.query.get(promo_id)
-        if promo is None or not promo.is_active:
+        if promo is None or not promo.is_active or _is_walkin_only(promo):
             return jsonify(success=False, error='Selected promo is no longer available.'), 400
 
         coach = Coach.query.filter_by(name=coach_name, is_active=True).first()
@@ -4962,7 +5084,7 @@ def staff_record_payment():
         return jsonify(success=False, error=error), 404
 
     plan = MembershipPlan.query.filter_by(name=plan_name).first()
-    if plan is None:
+    if plan is None or _is_walkin_only(plan):
         return jsonify(success=False, error='Please select a valid membership plan.'), 400
 
     if not method:
@@ -5323,9 +5445,10 @@ def staff_send_reminder(member_id):
 
 @app.route('/staff/walkin', methods=['POST'])
 def staff_walkin():
-    """Record a Daily-plan walk-in guest and the cash amount collected for
-    them. Not tied to a member account or membership — just a logged visit
-    + payment, shown in the Walk In tab's Recent Walk-Ins list."""
+    """Record a walk-in guest and the cash amount collected for them — a
+    Daily or Boxing visit, or any walk-in-only plan added from Manage
+    Content. Not tied to a member account or membership — just a logged
+    visit + payment, shown in the Walk In tab's Recent Walk-Ins list."""
     if session.get('role') not in ('staff', 'admin'):
         return jsonify(success=False, error='Unauthorized.'), 403
 
@@ -5341,13 +5464,36 @@ def staff_walkin():
     coach_name = (data.get('coach_name') or '').strip()
     plan_type = (data.get('plan_type') or 'Daily').strip()
 
-    if plan_type not in ('Daily', 'Boxing'):
-        return jsonify(success=False, error='Please select Daily or Boxing.'), 400
+    # A walk-in-only plan added from Manage Content arrives as
+    # walkin_item = "plan:<id>". It is re-checked here (still active, still
+    # walk-in-only) rather than trusting the price/name the browser had
+    # loaded. (Walk-in promos used to be supported too, but that option has
+    # been removed from Admin.)
+    custom_item = None
+    walkin_item = (data.get('walkin_item') or '').strip().lower()
+    if walkin_item:
+        kind, _, raw_id = walkin_item.partition(':')
+        try:
+            item_id = int(raw_id)
+        except ValueError:
+            item_id = None
+        if item_id is not None and kind == 'plan':
+            custom_item = MembershipPlan.query.get(item_id)
+        if custom_item is None or not custom_item.is_active or not _is_walkin_only(custom_item):
+            return jsonify(success=False,
+                           error='That walk-in option is no longer available. Please refresh the page and pick another.'), 400
+        plan_type = (custom_item.name or '').strip()[:100]
+    elif plan_type not in ('Daily', 'Boxing'):
+        return jsonify(success=False, error='Please select a valid walk-in plan.'), 400
+
+    # Only the built-in Boxing walk-in has the coach folded into its flat
+    # rate. (A custom plan that happens to be named "Boxing" is NOT it.)
+    is_boxing = custom_item is None and plan_type == 'Boxing'
 
     # Boxing includes a coach in its flat rate — always required (staff
     # picks which coach), but never charged as the separate paid add-on
-    # that applies to Daily walk-ins.
-    if plan_type == 'Boxing':
+    # that applies to Daily and walk-in-only plan/promo walk-ins.
+    if is_boxing:
         wants_coach = True
 
     if not first_name or not last_name:
@@ -5361,7 +5507,7 @@ def staff_walkin():
     # so the record stays consistent with the Coach tab.
     if wants_coach:
         if not coach_name:
-            err = 'Please select a coach for the Boxing session.' if plan_type == 'Boxing' \
+            err = 'Please select a coach for the Boxing session.' if is_boxing \
                 else 'Please select a coach, or turn off "Avail a Coach?".'
             return jsonify(success=False, error=err), 400
         coach = Coach.query.filter_by(name=coach_name, is_active=True).first()
@@ -5370,18 +5516,23 @@ def staff_walkin():
     else:
         coach_name = ''
 
-    if plan_type == 'Daily':
+    if custom_item is not None:
+        base_amount = float(custom_item.price)
+    elif plan_type == 'Daily':
         daily_plan = MembershipPlan.query.filter_by(name='Daily').first()
         if daily_plan is None:
             return jsonify(success=False, error='No "Daily" plan is set up yet. Add one from Admin → Plans first.'), 400
         base_amount = float(daily_plan.price)
-    else:  # Boxing — flat walk-in rate, not tied to a MembershipPlan row
-        base_amount = WALKIN_BOXING_FEE
+    else:  # Boxing — flat walk-in rate, editable via the "Boxing" MembershipPlan row
+        boxing_plan = MembershipPlan.query.filter_by(name='Boxing').first()
+        if boxing_plan is None:
+            return jsonify(success=False, error='No "Boxing" plan is set up yet. Add one from Admin → Plans first.'), 400
+        base_amount = float(boxing_plan.price)
 
-    # The paid coach add-on only exists for Daily's optional toggle —
-    # Boxing's coach is already folded into its flat rate, never billed
-    # separately.
-    coach_fee = WALKIN_COACH_FEE if (wants_coach and plan_type == 'Daily') else 0.0
+    # The paid coach add-on is the optional toggle on every walk-in option
+    # except Boxing — Boxing's coach is already folded into its flat rate,
+    # never billed separately.
+    coach_fee = WALKIN_COACH_FEE if (wants_coach and not is_boxing) else 0.0
     total_amount = base_amount + coach_fee
 
     walkin = WalkIn(
@@ -6182,6 +6333,24 @@ def member():
                 'coach_fee': plan_coach_fee,
             }
 
+    # ── Post-membership rating & feedback prompt — fires once the plan on
+    #    file has actually expired (not merely declined/never-started), and
+    #    only if this exact expiry cycle hasn't already been rated. Reusing
+    #    membership.expiry_date as the "cycle key" (see MemberFeedback above)
+    #    means a member who renews after giving feedback gets asked again
+    #    the next time THAT plan expires, instead of never again. ──
+    feedback_prompt = None
+    if (membership and plan_obj and membership.status != 'declined'
+            and membership.expiry_date < today):
+        already_rated = MemberFeedback.query.filter_by(
+            member_id=user.id, membership_expiry_date=membership.expiry_date
+        ).first()
+        if already_rated is None:
+            feedback_prompt = {
+                'plan_name': plan_obj.name,
+                'expiry_date': membership.expiry_date.strftime('%B %d, %Y'),
+            }
+
     # ── Attendance (current month) ──
     current_month_data = _get_member_attendance_month(user.id, today.year, today.month)
     days_in_month   = current_month_data['days_in_month']
@@ -6481,7 +6650,9 @@ def member():
     content_plans = _member_selectable_plans()
     content_services  = GymService.query.filter_by(is_active=True).order_by(GymService.sort_order, GymService.id).all()
     content_equipment = GymEquipment.query.filter_by(is_active=True).order_by(GymEquipment.sort_order, GymEquipment.id).all()
-    content_promos    = GymPromo.query.filter_by(is_active=True).order_by(GymPromo.sort_order, GymPromo.id).all()
+    content_promos    = (GymPromo.query.filter_by(is_active=True)
+                         .filter(GymPromo.audience != AUDIENCE_WALKIN)
+                         .order_by(GymPromo.sort_order, GymPromo.id).all())
 
     # Equipment grouped by category for the "Gym Machines and Equipment"
     # display — each group is (category_name, category_icon, [items]),
@@ -6594,6 +6765,7 @@ def member():
         plan_approved_notice=plan_approved_notice,
         payment_verified_notice=payment_verified_notice,
         plan_declined_notice=plan_declined_notice,
+        feedback_prompt=feedback_prompt,
         announcements=announcements,
         new_announcements=new_announcements,
         bot_reminders=bot_reminders,
@@ -6620,6 +6792,68 @@ def member_notifications_mark_seen():
         return jsonify(success=False, error='User not found.'), 404
 
     user.last_seen_notifications_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.session.commit()
+    return jsonify(success=True)
+
+
+@app.route('/member/submit-feedback', methods=['POST'])
+def member_submit_feedback():
+    """Saves the rating/feedback a member gives from the post-expiry prompt
+    on their dashboard (see feedback_prompt in /member). Keyed to the
+    membership's current expiry_date so re-submitting for the same expired
+    cycle (e.g. the member double-taps Submit) updates that same row
+    instead of creating duplicates — see MemberFeedback above."""
+    if 'user_id' not in session or session.get('role') != 'member':
+        return jsonify(success=False, error='Not logged in.'), 401
+
+    user = User.query.get(session['user_id'])
+    if user is None:
+        session.clear()
+        return jsonify(success=False, error='User not found.'), 404
+
+    data = request.get_json(silent=True) or {}
+
+    try:
+        rating = int(data.get('rating'))
+    except (TypeError, ValueError):
+        rating = 0
+    if rating < 1 or rating > 5:
+        return jsonify(success=False, error='Please pick a star rating from 1 to 5.'), 400
+
+    comment     = (data.get('comment') or '').strip()[:2000]
+    improvement = (data.get('improvement') or '').strip()[:2000]
+    would_recommend_raw = data.get('would_recommend')
+    would_recommend = would_recommend_raw if would_recommend_raw in (True, False) else None
+
+    membership = Membership.query.filter_by(member_id=user.id).first()
+    expiry_snapshot = membership.expiry_date if membership else None
+    plan_name = membership.plan.name if membership and membership.plan else None
+
+    # Same member + same expiry cycle already on file (e.g. a retry after a
+    # dropped connection) -> update it in place rather than duplicating.
+    existing = None
+    if expiry_snapshot is not None:
+        existing = MemberFeedback.query.filter_by(
+            member_id=user.id, membership_expiry_date=expiry_snapshot
+        ).first()
+
+    if existing is not None:
+        existing.rating = rating
+        existing.comment = comment or None
+        existing.improvement = improvement or None
+        existing.would_recommend = would_recommend
+        existing.plan_name = plan_name
+    else:
+        db.session.add(MemberFeedback(
+            member_id=user.id,
+            rating=rating,
+            comment=comment or None,
+            improvement=improvement or None,
+            would_recommend=would_recommend,
+            plan_name=plan_name,
+            membership_expiry_date=expiry_snapshot,
+        ))
+
     db.session.commit()
     return jsonify(success=True)
 
@@ -6887,26 +7121,34 @@ def staff():
         if _walkin_available_coaches else None
     )
 
-    # ── Walk In tab: the Daily plan's current price/duration, plus the
+    # ── Walk In tab: the Daily and Boxing plans' current price/description
+    #    (both editable from Admin → Manage Content → Walk-In), plus the
     #    list of walk-ins recorded today (most recent first) ──
     daily_plan = MembershipPlan.query.filter_by(name='Daily').first()
-    _walkin_day_start, _walkin_day_end = _manila_day_bounds_utc(today)
-    walkins_today_rows = (
-        WalkIn.query
-        .filter(WalkIn.created_at >= _walkin_day_start, WalkIn.created_at <= _walkin_day_end)
-        .order_by(WalkIn.created_at.desc())
-        .all()
-    )
-    walkins_today = [{
-        'name': w.full_name,
-        'phone': w.phone or '—',
-        'plan': w.plan_type,
-        'amount': f'{float(w.amount):,.2f}',
-        'method': w.method,
-        'coach': w.coach_name if w.wants_coach else '—',
-        'time': _to_manila(w.created_at).strftime('%I:%M %p').lstrip('0'),
-    } for w in walkins_today_rows]
-    walkin_total_today = sum(float(w.amount) for w in walkins_today_rows)
+    boxing_plan = MembershipPlan.query.filter_by(name='Boxing').first()
+
+    # Plans added from Manage Content as "Walk-ins only" — they get their
+    # own selectable cards after Daily and Boxing. Keyed "plan:<id>", which
+    # is also what /staff/walkin expects back. (Walk-in promos used to be
+    # supported here too, but that "+ Add Walk-In Promo" option has been
+    # removed from Admin — only walk-in-only plans remain.)
+    def _walkin_price_text(v):
+        v = float(v)
+        return f'{v:,.0f}' if v == int(v) else f'{v:,.2f}'
+    walkin_extra_items = []
+    for wp in (MembershipPlan.query
+               .filter_by(is_active=True, audience=AUDIENCE_WALKIN)
+               .order_by(MembershipPlan.sort_order, MembershipPlan.id).all()):
+        walkin_extra_items.append({
+            'key': f'plan:{wp.id}', 'name': wp.name, 'price': float(wp.price),
+            'price_text': _walkin_price_text(wp.price),
+            'period': f'for {wp.duration_days} day{"s" if wp.duration_days != 1 else ""}',
+            'description': wp.description or '', 'inclusions': wp.inclusions_list,
+        })
+    walkin_extra_data = {it['key']: {k: it[k] for k in ('name', 'price', 'description', 'inclusions')}
+                         for it in walkin_extra_items}
+
+    walkins_today, walkin_total_today = _walkins_today_data()
 
     stats = {
         'checkins_today':   _count_checkins_today(),
@@ -6997,10 +7239,12 @@ def staff():
         recommended_coach_name=recommended_coach_name,
         coach_days=VALID_COACH_DAYS,
         daily_plan=daily_plan,
+        boxing_plan=boxing_plan,
+        walkin_extra_items=walkin_extra_items,
+        walkin_extra_data=walkin_extra_data,
         walkins_today=walkins_today,
-        walkin_total_today=f'{walkin_total_today:,.2f}',
+        walkin_total_today=walkin_total_today,
         WALKIN_COACH_FEE=WALKIN_COACH_FEE,
-        WALKIN_BOXING_FEE=WALKIN_BOXING_FEE,
         payment_members=payment_members,
         # Plan dropdown for the Payment Record form — read live from the
         # plans table, so a plan added in Manage Content is recordable here
@@ -7798,15 +8042,51 @@ def admin():
         'status': u.status,
     } for u in staff_accounts_rows]
 
+    walkins_today, walkin_total_today = _walkins_today_data()
+
+    # ── Member Feedback — ratings/comments collected from the post-expiry
+    #    prompt on the member dashboard (see feedback_prompt in /member). ──
+    feedback_rows = (
+        MemberFeedback.query
+        .options(joinedload(MemberFeedback.member))
+        .order_by(MemberFeedback.created_at.desc())
+        .all()
+    )
+    feedback_list = [{
+        'member_name': f.member.full_name if f.member else 'Former member',
+        'member_profile_picture': (url_for('static', filename=f.member.profile_picture)
+                                    if f.member and f.member.profile_picture else None),
+        'rating': f.rating,
+        'comment': f.comment,
+        'improvement': f.improvement,
+        'would_recommend': f.would_recommend,
+        'plan_name': f.plan_name or '—',
+        'date': _to_manila(f.created_at).strftime('%b %d, %Y'),
+    } for f in feedback_rows]
+    feedback_stats = {
+        'count': len(feedback_list),
+        'average': round(sum(f['rating'] for f in feedback_list) / len(feedback_list), 1) if feedback_list else 0,
+        'recommend_pct': (
+            round(100 * sum(1 for f in feedback_list if f['would_recommend'] is True)
+                  / sum(1 for f in feedback_list if f['would_recommend'] is not None))
+            if any(f['would_recommend'] is not None for f in feedback_list) else None
+        ),
+        'distribution': {n: sum(1 for f in feedback_list if f['rating'] == n) for n in (5, 4, 3, 2, 1)},
+    }
+
     return render_template(
         'admin-dashboard.html',
         members=members,
         stats=stats,
+        feedback_list=feedback_list,
+        feedback_stats=feedback_stats,
         pending_payments=pending_payments,
         payment_history=payment_history,
         attendance_today=attendance_today,
         attendance_calendar=attendance_calendar,
         announcements=announcements,
+        walkins_today=walkins_today,
+        walkin_total_today=walkin_total_today,
         current_user=admin_user,
         staff_accounts=staff_accounts,
         gcash_settings=_get_gym_settings(),
@@ -7853,6 +8133,10 @@ def seed_default_plans():
         {'name': 'Daily',   'duration_days': 1,   'price': 100.0,
          'description': 'Perfect for a casual visit — walk in, train, and go, no commitment required.',
          'inclusions': 'Gym Equipment Access\nGym Services', 'sort_order': 1},
+        {'name': 'Boxing',  'duration_days': 1,   'price': 350.0,
+         'description': 'A single walk-in boxing session with a coach included — not a recurring membership.',
+         'inclusions': 'Gym Access for the session\nIncludes a boxing coach for the session\n'
+                        'Locker/Changing Room\nLearn boxing skills and technique fundamentals', 'sort_order': 2},
         {'name': 'Monthly', 'duration_days': 30,  'price': 900.0,
          'description': 'Our most popular plan — unlimited visits with trainer support to keep you on track.',
          'inclusions': 'Gym Equipment Access\nGym Services', 'sort_order': 3},
@@ -8544,6 +8828,9 @@ def _run_startup_migrations():
         ('membership_plans', 'sort_order',  "ALTER TABLE membership_plans ADD COLUMN sort_order INT NOT NULL DEFAULT 0"),
         ('membership_plans', 'student_price', "ALTER TABLE membership_plans ADD COLUMN student_price DECIMAL(10,2) NULL"),
         ('gym_promos', 'duration_days', "ALTER TABLE gym_promos ADD COLUMN duration_days INT NOT NULL DEFAULT 30"),
+        # ── Plans/promos can be walk-in-only (shown just in the staff Walk In tab) ──
+        ('membership_plans', 'audience', "ALTER TABLE membership_plans ADD COLUMN audience VARCHAR(10) NOT NULL DEFAULT 'member'"),
+        ('gym_promos', 'audience', "ALTER TABLE gym_promos ADD COLUMN audience VARCHAR(10) NOT NULL DEFAULT 'member'"),
         ('gym_services',   'category', "ALTER TABLE gym_services ADD COLUMN category VARCHAR(60) NULL"),
         ('gym_services',   'icon',     "ALTER TABLE gym_services ADD COLUMN icon VARCHAR(8) NULL"),
         ('gym_equipment',  'category', "ALTER TABLE gym_equipment ADD COLUMN category VARCHAR(60) NULL"),
@@ -8629,6 +8916,24 @@ def _run_startup_migrations():
                 conn.execute(text("ALTER TABLE food_items MODIFY COLUMN suitable_meal VARCHAR(40) NOT NULL"))
                 conn.commit()
                 print("Migration: widened food_items.suitable_meal to VARCHAR(40)")
+
+        # ── Widen walk_ins.plan_type (was VARCHAR(20)) so a walk-in-only
+        #    plan/promo with a longer name can be recorded. Widening only,
+        #    and only when still narrower than needed — safe on every startup. ──
+        result = conn.execute(text("SHOW COLUMNS FROM walk_ins LIKE 'plan_type'"))
+        row = result.fetchone()
+        if row is not None:
+            type_str = row[1]
+            current_length = 0
+            if '(' in type_str and ')' in type_str:
+                try:
+                    current_length = int(type_str.split('(')[1].split(')')[0])
+                except (ValueError, IndexError):
+                    current_length = 0
+            if current_length < 100:
+                conn.execute(text("ALTER TABLE walk_ins MODIFY COLUMN plan_type VARCHAR(100) NOT NULL DEFAULT 'Daily'"))
+                conn.commit()
+                print("Migration: widened walk_ins.plan_type to VARCHAR(100)")
 
         # ── Normalize fitness_profiles.activity_level from the original
         #    5-value vocabulary (sedentary/lightly_active/moderately_active/

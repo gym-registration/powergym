@@ -393,12 +393,15 @@ body::before {
 .plan-price { font-family: 'Bebas Neue', sans-serif; font-size: 31px; color: var(--red); margin: 4px 0 2px; }
 .plan-period { font-size: 12px; color: var(--muted); }
 
-/* ── "Choose a Plan" panel (member dashboard) — redesigned cards + larger type ── */
-#choose-plan-panel .plan-grid {
+/* ── "Choose a Plan" panel (member dashboard) — redesigned cards + larger type.
+      Also shared by Staff → Walk In's "Select a Plan" panel (#walkin-plan-panel). ── */
+#choose-plan-panel .plan-grid,
+#walkin-plan-panel .plan-grid {
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 16px;
 }
-#choose-plan-panel .plan-card {
+#choose-plan-panel .plan-card,
+#walkin-plan-panel .plan-card {
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 22px 20px;
@@ -408,7 +411,8 @@ body::before {
   overflow: hidden;
   transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
 }
-#choose-plan-panel .plan-card::before {
+#choose-plan-panel .plan-card::before,
+#walkin-plan-panel .plan-card::before {
   content: '';
   position: absolute;
   top: 0; left: 0; right: 0;
@@ -417,21 +421,26 @@ body::before {
   opacity: 0;
   transition: opacity 0.25s ease;
 }
-#choose-plan-panel .plan-card:hover {
+#choose-plan-panel .plan-card:hover,
+#walkin-plan-panel .plan-card:hover {
   transform: translateY(-5px);
   border-color: var(--red);
   background: rgba(230,30,37,0.07);
   box-shadow: 0 12px 26px rgba(230,30,37,0.18);
 }
-#choose-plan-panel .plan-card:hover::before { opacity: 0.65; }
-#choose-plan-panel .plan-card.selected {
+#choose-plan-panel .plan-card:hover::before,
+#walkin-plan-panel .plan-card:hover::before { opacity: 0.65; }
+#choose-plan-panel .plan-card.selected,
+#walkin-plan-panel .plan-card.selected {
   border-color: var(--red);
   background: rgba(230,30,37,0.1);
   box-shadow: 0 12px 30px rgba(230,30,37,0.28);
   transform: translateY(-3px);
 }
-#choose-plan-panel .plan-card.selected::before { opacity: 1; }
-#choose-plan-panel .plan-card.selected::after {
+#choose-plan-panel .plan-card.selected::before,
+#walkin-plan-panel .plan-card.selected::before { opacity: 1; }
+#choose-plan-panel .plan-card.selected::after,
+#walkin-plan-panel .plan-card.selected::after {
   content: '✓';
   position: absolute;
   top: 14px; right: 14px;
@@ -445,7 +454,8 @@ body::before {
   align-items: center;
   justify-content: center;
 }
-#choose-plan-panel .plan-card-tag {
+#choose-plan-panel .plan-card-tag,
+#walkin-plan-panel .plan-card-tag {
   align-self: flex-start;
   background: var(--red);
   color: var(--white);
@@ -456,14 +466,19 @@ body::before {
   border-radius: 20px;
   margin-bottom: 10px;
 }
-#choose-plan-panel .plan-card-popular { border-color: rgba(230,30,37,0.35); }
+#choose-plan-panel .plan-card-popular,
+#walkin-plan-panel .plan-card-popular { border-color: rgba(230,30,37,0.35); }
 
 /* Larger type throughout this panel only */
 #choose-plan-panel .panel-title { font-size: 22px; }
-#choose-plan-panel .plan-name { font-size: 20px; letter-spacing: 1.2px; margin-bottom: 4px; }
-#choose-plan-panel .plan-price { font-size: 38px; }
-#choose-plan-panel .plan-period { font-size: 15px; color: var(--muted); margin-bottom: 10px; }
-#choose-plan-panel .plan-view-link { font-size: 15px; margin-top: auto; cursor: pointer; }
+#choose-plan-panel .plan-name,
+#walkin-plan-panel .plan-name { font-size: 20px; letter-spacing: 1.2px; margin-bottom: 4px; }
+#choose-plan-panel .plan-price,
+#walkin-plan-panel .plan-price { font-size: 38px; }
+#choose-plan-panel .plan-period,
+#walkin-plan-panel .plan-period { font-size: 15px; color: var(--muted); margin-bottom: 10px; }
+#choose-plan-panel .plan-view-link,
+#walkin-plan-panel .plan-view-link { font-size: 15px; margin-top: auto; cursor: pointer; }
 #choose-plan-panel .form-label { font-size: 16px; }
 #payment-submit-panel .form-label { font-size: 16px; letter-spacing: 1.5px; }
 #choose-plan-panel .form-input { font-size: 17px; padding: 11px 14px; }
@@ -2450,6 +2465,18 @@ body.home-page { overflow-x: hidden; }
   grid-column: 1 / -1; text-align: center; padding: 40px 20px; color: var(--muted); font-size: 15px;
 }
 
+/* Manage Content → Walk-In tab: a heading row (title + its own add button) above each group of cards */
+.content-section-head {
+  grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+}
+.content-section-head:not(:first-child) { margin-top: 22px; }
+.content-section-title {
+  font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 21px;
+  letter-spacing: 1.2px; text-transform: uppercase;
+}
+.content-section-hint { font-size: 13.5px; color: var(--muted); margin-top: 2px; }
+
 /* Field Picker — Category (all types) & Name (facilities/machines add-new) */
 .picker-select-wrap { position: relative; }
 .picker-select {
@@ -2539,6 +2566,33 @@ body.home-page { overflow-x: hidden; }
 
 .fw-goal-desc { font-size: 13px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
 .plan-card .plan-name { margin-bottom: 0; }
+
+/* ── Post-membership Rating & Feedback modal (#feedback-modal) ──
+   Reuses .fw-step-dot/.fw-step-panel from the Fitness wizard above for the
+   step indicator; only the star-rating control and recommend toggle are
+   new here. ── */
+.fb-stars { display: flex; justify-content: center; gap: 8px; margin-bottom: 6px; }
+.fb-star {
+  font-size: 34px;
+  line-height: 1;
+  color: var(--border);
+  cursor: pointer;
+  transition: color 0.15s, transform 0.1s;
+  user-select: none;
+}
+.fb-star:hover { transform: scale(1.08); }
+.fb-star.filled { color: var(--gold); }
+.fb-star-labels {
+  display: flex; justify-content: space-between;
+  font-size: 11px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase;
+  padding: 0 2px;
+}
+.fb-recommend-btn.selected {
+  border-color: var(--gold);
+  color: var(--gold);
+  background: rgba(255,171,64,0.1);
+  box-shadow: 0 0 14px rgba(255,171,64,0.22);
+}
 
 /* ── Personalized Fitness Plan — mini-dashboard tabs (Body Goals tab) ──
    Presentation only: turns the plan into a compact summary strip + tabbed

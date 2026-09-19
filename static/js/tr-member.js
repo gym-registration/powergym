@@ -32,6 +32,12 @@ const MemberModule = (() => {
   let _pendingPaymentMethod = null; // { formData } staged between submitPaymentMethod() and confirmSubmitPayment()
   let _withdrawPaymentId = null;
 
+  // Post-membership feedback wizard (#feedback-modal) staged state — held
+  // here rather than read fresh off the DOM at submit time so a star pick
+  // on step 1 survives navigating to step 2 and back.
+  let _feedbackRating = 0;
+  let _feedbackRecommend = null; // true | false | null (not answered yet)
+
   // Reference number OCR reads off each attached GCash screenshot (slot 1/2/3
   // -> string or null), kept purely so a newly-picked screenshot can be
   // compared against the others already attached. Lets the member know
@@ -197,6 +203,9 @@ const MemberModule = (() => {
         }
       }
       openModal('plan-declined-modal');
+    }
+    if (dashData.feedback_prompt) {
+      _openFeedbackPrompt(dashData.feedback_prompt);
     }
     // Neither admin announcements nor Gym Bot membership-expiry reminders
     // pop up automatically on load anymore — both wait quietly in the
@@ -931,6 +940,137 @@ const MemberModule = (() => {
 
   function closePlanDeclinedModal() {
     closeModal('plan-declined-modal');
+  }
+
+  /* ════════════════════════════════════════════════
+     POST-MEMBERSHIP RATING & FEEDBACK (#feedback-modal)
+     Opens automatically on load when the server says this expiry cycle
+     hasn't been rated yet (see dashData.feedback_prompt in init()).
+  ════════════════════════════════════════════════ */
+
+  function _openFeedbackPrompt(prompt) {
+    const nameEl = document.getElementById('fb-plan-name');
+    if (nameEl) nameEl.textContent = prompt.plan_name || 'membership';
+
+    // Reset wizard to a clean step 1 every time it opens, in case a
+    // previous visit this session got as far as picking a rating and then
+    // hit "Maybe Later".
+    _feedbackRating = 0;
+    _feedbackRecommend = null;
+    document.querySelectorAll('#fb-stars .fb-star').forEach(s => s.classList.remove('filled'));
+    const commentEl = document.getElementById('fb-comment');
+    if (commentEl) commentEl.value = '';
+    const improvementEl = document.getElementById('fb-improvement');
+    if (improvementEl) improvementEl.value = '';
+    document.querySelectorAll('.fb-recommend-btn').forEach(b => b.classList.remove('selected'));
+    const step1Btn = document.getElementById('fb-step1-btn');
+    if (step1Btn) step1Btn.disabled = true;
+    _showFeedbackStep(1);
+
+    _setupFeedbackStars();
+    openModal('feedback-modal');
+  }
+
+  /** Wires click/hover on the 5 star glyphs — done once per modal open
+   *  rather than in init() so it works even though the modal (and its
+   *  stars) only exist once member-dashboard.html has fully rendered. */
+  function _setupFeedbackStars() {
+    const stars = Array.from(document.querySelectorAll('#fb-stars .fb-star'));
+    stars.forEach(star => {
+      star.onclick = () => {
+        _feedbackRating = parseInt(star.getAttribute('data-star'), 10) || 0;
+        _renderFeedbackStars(_feedbackRating);
+        const step1Btn = document.getElementById('fb-step1-btn');
+        if (step1Btn) step1Btn.disabled = _feedbackRating < 1;
+      };
+    });
+  }
+
+  function _renderFeedbackStars(rating) {
+    document.querySelectorAll('#fb-stars .fb-star').forEach(s => {
+      const val = parseInt(s.getAttribute('data-star'), 10) || 0;
+      s.classList.toggle('filled', val <= rating);
+    });
+  }
+
+  function _showFeedbackStep(step) {
+    document.getElementById('fb-step-1').style.display = step === 1 ? '' : 'none';
+    document.getElementById('fb-step-2').style.display = step === 2 ? '' : 'none';
+    document.getElementById('fb-thanks').style.display  = 'none';
+
+    const dot1 = document.getElementById('fb-dot-1');
+    const dot2 = document.getElementById('fb-dot-2');
+    if (dot1 && dot2) {
+      dot1.classList.toggle('active', step === 1);
+      dot1.classList.toggle('complete', step === 2);
+      dot2.classList.toggle('active', step === 2);
+      dot2.classList.remove('complete');
+    }
+  }
+
+  function feedbackWizardNext() {
+    if (_feedbackRating < 1) {
+      showToast('Please pick a star rating first.', 'error');
+      return;
+    }
+    _showFeedbackStep(2);
+  }
+
+  function feedbackWizardBack() {
+    _showFeedbackStep(1);
+  }
+
+  function selectFeedbackRecommend(value) {
+    _feedbackRecommend = value;
+    const yesBtn = document.getElementById('fb-recommend-yes');
+    const noBtn  = document.getElementById('fb-recommend-no');
+    if (yesBtn) yesBtn.classList.toggle('selected', value === true);
+    if (noBtn)  noBtn.classList.toggle('selected', value === false);
+  }
+
+  /** Closes the modal without submitting anything. Since the server only
+   *  clears feedback_prompt once real feedback is on file, this is a
+   *  "not right now" — the prompt will simply appear again on the next
+   *  login for as long as this expiry cycle goes unrated. */
+  function dismissFeedbackModal() {
+    closeModal('feedback-modal');
+  }
+
+  function submitMemberFeedback() {
+    if (_feedbackRating < 1) {
+      showToast('Please pick a star rating first.', 'error');
+      _showFeedbackStep(1);
+      return;
+    }
+
+    const comment = _val('fb-comment');
+    const improvement = _val('fb-improvement');
+
+    showLoadingOverlay('Submitting your feedback...');
+    _apiJson('/member/submit-feedback', {
+      rating: _feedbackRating,
+      comment,
+      improvement,
+      would_recommend: _feedbackRecommend,
+    })
+      .then(({ ok, data }) => {
+        hideLoadingOverlay();
+        if (!ok || !data.success) {
+          showToast((data && data.error) || 'Could not submit your feedback. Please try again.', 'error');
+          return;
+        }
+        document.getElementById('fb-step-1').style.display = 'none';
+        document.getElementById('fb-step-2').style.display = 'none';
+        document.getElementById('fb-thanks').style.display = '';
+        const dot1 = document.getElementById('fb-dot-1');
+        const dot2 = document.getElementById('fb-dot-2');
+        if (dot1) { dot1.classList.remove('active'); dot1.classList.add('complete'); }
+        if (dot2) { dot2.classList.remove('active'); dot2.classList.add('complete'); }
+      })
+      .catch(() => {
+        hideLoadingOverlay();
+        showToast('Could not reach the server. Please try again.', 'error');
+      });
   }
 
   function withdrawPlanRequest(paymentId) {
@@ -2128,6 +2268,7 @@ const MemberModule = (() => {
     cancelPlanRequest, confirmPlanRequest, closePlanSuccessModal,
     closePlanApprovedModal, goToPaymentFromApproval, closePaymentApprovedModal,
     closePlanDeclinedModal, withdrawPlanRequest, cancelWithdrawRequest, confirmWithdrawRequest,
+    feedbackWizardNext, feedbackWizardBack, selectFeedbackRecommend, dismissFeedbackModal, submitMemberFeedback,
     togglePaymentProofField, previewGcashProof, removeGcashProof, openGcashProofPreview, submitPaymentMethod,
     copyGcashNumber, deferPaymentMethod,
     cancelSubmitPayment, confirmSubmitPayment, closePaymentSubmitSuccessModal,
@@ -2172,6 +2313,11 @@ document.addEventListener('DOMContentLoaded', () => {
   window.goToPaymentFromApproval = () => MemberModule.goToPaymentFromApproval();
   window.closePaymentApprovedModal = () => MemberModule.closePaymentApprovedModal();
   window.closePlanDeclinedModal  = () => MemberModule.closePlanDeclinedModal();
+  window.feedbackWizardNext      = () => MemberModule.feedbackWizardNext();
+  window.feedbackWizardBack      = () => MemberModule.feedbackWizardBack();
+  window.selectFeedbackRecommend = (v) => MemberModule.selectFeedbackRecommend(v);
+  window.dismissFeedbackModal    = () => MemberModule.dismissFeedbackModal();
+  window.submitMemberFeedback    = () => MemberModule.submitMemberFeedback();
   window.withdrawPlanRequest     = (paymentId) => MemberModule.withdrawPlanRequest(paymentId);
   window.cancelWithdrawRequest   = () => MemberModule.cancelWithdrawRequest();
   window.confirmWithdrawRequest  = () => MemberModule.confirmWithdrawRequest();

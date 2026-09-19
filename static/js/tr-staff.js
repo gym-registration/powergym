@@ -749,16 +749,19 @@ const StaffModule = (() => {
 
   // ── Walk In: guest info form -> /staff/walkin -> Recent Walk-Ins table ──
 
-  /** Which walk-in plan is currently chosen — 'Daily' or 'Boxing'.
+  /** Which walk-in plan is currently chosen — 'Daily', 'Boxing', or a custom
+   *  walk-in-only plan's key ('plan:<id>') added from Manage Content.
    *  Defaults to 'Daily' since that card starts pre-selected. */
   let _selectedWalkInPlan = 'Daily';
 
-  /** Selects a walk-in plan card (Daily / Boxing), updates the "Amount to
-   *  collect" base price, and swaps which plan's description/inclusions
-   *  are shown. Boxing's coach is included in its flat rate (not a paid
-   *  add-on), but staff still need to pick *which* coach — so Boxing hides
-   *  the "Avail a Coach?" yes/no toggle and shows the coach picker directly
-   *  and mandatorily, instead of hiding coach selection altogether. */
+  /** Selects a walk-in plan card and updates the "Amount to collect" base
+   *  price. (Description/inclusions now live in the "View Inclusions"
+   *  modal — see openWalkInPlanModal.) Boxing is the only plan whose coach
+   *  is included in its flat rate (not a paid add-on) — staff still need to
+   *  pick *which* coach, so Boxing hides the "Avail a Coach?" yes/no toggle
+   *  and shows the coach picker directly and mandatorily. Every other
+   *  plan — Daily, and any walk-in-only plan added from Manage Content —
+   *  uses the normal optional, paid add-on flow. */
   function selectWalkInPlan(card, planType, price) {
     const grid = card.closest('.plan-grid');
     if (grid) grid.querySelectorAll('.plan-card').forEach(c => c.classList.remove('selected'));
@@ -768,19 +771,15 @@ const StaffModule = (() => {
     const display = document.getElementById('walkin-amount-display');
     if (display) display.dataset.baseAmount = String(price);
 
-    const dailyInfo = document.getElementById('walkin-plan-daily-info');
-    const boxingInfo = document.getElementById('walkin-plan-boxing-info');
-    const isDaily = planType === 'Daily';
-    if (dailyInfo) dailyInfo.style.display = isDaily ? '' : 'none';
-    if (boxingInfo) boxingInfo.style.display = isDaily ? 'none' : '';
+    const isBoxing = planType === 'Boxing';
 
     const questionRow = document.getElementById('walkin-coach-question-row');
     const selectRow = document.getElementById('walkin-coach-select-row');
     const selectLabel = document.getElementById('walkin-coach-select-label');
 
-    if (isDaily) {
-      // Back to the normal optional, paid add-on flow — reset to "No"
-      // rather than carrying over Boxing's forced coach selection.
+    if (!isBoxing) {
+      // Normal optional, paid add-on flow — reset to "No" rather than
+      // carrying over Boxing's forced coach selection.
       if (questionRow) questionRow.style.display = '';
       const coachToggleEl = document.getElementById('walkin-wants-coach');
       if (coachToggleEl) coachToggleEl.selectedIndex = 0;
@@ -799,6 +798,68 @@ const StaffModule = (() => {
     }
 
     _updateWalkInAmount();
+  }
+
+  /** Opens the "View Inclusions" modal for a walk-in plan — 'Daily',
+   *  'Boxing', or a custom walk-in-only plan's key ('plan:<id>') added
+   *  from Manage Content. Daily/Boxing come from #walkin-plans-data; any
+   *  other key comes from #walkin-extra-plans-data. Mirrors the Member
+   *  portal's plan-inclusions modal. */
+  function openWalkInPlanModal(planType) {
+    let plans = {};
+    try {
+      plans = JSON.parse(document.getElementById('walkin-plans-data')?.textContent || '{}');
+    } catch (e) {
+      console.warn('openWalkInPlanModal: could not parse #walkin-plans-data', e);
+    }
+    let plan = plans[planType];
+    if (!plan) {
+      let extraPlans = {};
+      try {
+        extraPlans = JSON.parse(document.getElementById('walkin-extra-plans-data')?.textContent || '{}');
+      } catch (e) {
+        console.warn('openWalkInPlanModal: could not parse #walkin-extra-plans-data', e);
+      }
+      plan = extraPlans[planType];
+    }
+    if (!plan) {
+      if (typeof showToast === 'function') {
+        showToast('Could not load plan details. Please refresh the page and try again.', 'error');
+      }
+      return;
+    }
+
+    const modal = document.getElementById('walkin-plan-modal');
+    if (!modal) return;
+    modal.dataset.planType = planType;
+
+    const price = Number(plan.price) || 0;
+    document.getElementById('walkin-plan-modal-title').textContent = String(plan.name || planType).toUpperCase();
+    document.getElementById('walkin-plan-modal-price').textContent =
+      '₱' + price.toLocaleString('en-PH', { minimumFractionDigits: price % 1 ? 2 : 0 });
+    document.getElementById('walkin-plan-modal-subtitle').textContent =
+      plan.description || 'Single walk-in visit';
+
+    const raw = plan.inclusions;
+    const lines = (Array.isArray(raw) ? raw : (raw || '').split('\n'))
+      .map(l => (l || '').trim()).filter(Boolean);
+    document.getElementById('walkin-plan-modal-list').innerHTML = lines.length
+      ? lines.map(l => `<li>${_esc(l)}</li>`).join('')
+      : '<li>Gym access for the day.</li>';
+
+    openModal('walkin-plan-modal');
+  }
+
+  /** "SELECT THIS PLAN" inside the inclusions modal — closes it and picks
+   *  the matching plan card, same as clicking the card itself. Looks the
+   *  card up by its data-walkin-key so this works for Daily, Boxing, and
+   *  any custom walk-in-only plan alike. */
+  function selectWalkInPlanFromModal() {
+    const modal = document.getElementById('walkin-plan-modal');
+    const planType = modal?.dataset.planType || 'Daily';
+    closeModal('walkin-plan-modal');
+    const card = document.querySelector(`.plan-card[data-walkin-key="${CSS.escape(planType)}"]`);
+    if (card) selectWalkInPlan(card, planType, parseFloat(card.dataset.price || '0'));
   }
 
   /** Show/hide the coach picker when "Avail a Coach?" is toggled (Daily
@@ -928,6 +989,12 @@ const StaffModule = (() => {
     const originalLabel = btn ? btn.textContent : null;
     if (btn) { btn.disabled = true; btn.textContent = 'RECORDING...'; }
 
+    // A custom walk-in-only plan added from Manage Content is keyed
+    // "plan:<id>" (see the walkin_extra_items loop in staff-dashboard.html);
+    // the backend expects that in `walkin_item`, not `plan_type`, so it can
+    // re-check the plan is still active before trusting the price.
+    const isCustomWalkInItem = _selectedWalkInPlan.includes(':');
+
     fetch('/staff/walkin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -940,7 +1007,8 @@ const StaffModule = (() => {
         email: email,
         wants_coach: wantsCoach,
         coach_name: coachName,
-        plan_type: _selectedWalkInPlan
+        plan_type: isCustomWalkInItem ? '' : _selectedWalkInPlan,
+        walkin_item: isCustomWalkInItem ? _selectedWalkInPlan : ''
       })
     })
       .then(res => res.json().then(data => ({ ok: res.ok, data })))
@@ -1530,7 +1598,7 @@ const StaffModule = (() => {
   }
 
   return { init, tab, promptRecordPayment, confirmRecordPayment, cancelRecordPayment, closePaymentRecordedModal, checkInMember, checkOutMember, flatlineAndCheckOut, sendExpiryReminder, filterCheckinTable, filterCheckinByStatus, filterMembersByStatus, filterMembersTable, goToActiveMembers, toggleMemberIdColumn, toggleCheckinIdColumn, viewPaymentProof, viewStudentIdProof, onPayMemberInput, onPayStudentToggle, updatePayAmountDisplay, generateReport, submitCoachUpdate, confirmCoachUpdate, closeCoachSaveSuccessModal, toggleCoachEdit, addCoach, promptDeleteCoach, confirmDeleteCoach,
-           generateStaffAnalyticsReport, clearStaffReportDateRange, refreshStaffReport, exportStaffReportPDF, submitWalkIn, confirmWalkIn, confirmWalkInSubmit, toggleWalkInCoach, selectWalkInPlan, updateWalkInCoachNote,
+           generateStaffAnalyticsReport, clearStaffReportDateRange, refreshStaffReport, exportStaffReportPDF, submitWalkIn, confirmWalkIn, confirmWalkInSubmit, toggleWalkInCoach, selectWalkInPlan, openWalkInPlanModal, selectWalkInPlanFromModal, updateWalkInCoachNote,
            changeProfilePicture, toggleNotificationPanel, openNotifItem };
 })();
 
@@ -1560,6 +1628,8 @@ document.addEventListener('DOMContentLoaded', () => {
   window.toggleWalkInCoach    = () => StaffModule.toggleWalkInCoach();
   window.updateWalkInCoachNote = () => StaffModule.updateWalkInCoachNote();
   window.selectWalkInPlan     = (card, planType, price) => StaffModule.selectWalkInPlan(card, planType, price);
+  window.openWalkInPlanModal  = (planType) => StaffModule.openWalkInPlanModal(planType);
+  window.selectWalkInPlanFromModal = () => StaffModule.selectWalkInPlanFromModal();
   window.filterMembersByStatus = (status, el) => StaffModule.filterMembersByStatus(status, el);
   window.goToActiveMembers     = () => StaffModule.goToActiveMembers();
   window.filterMembersTable    = () => StaffModule.filterMembersTable();

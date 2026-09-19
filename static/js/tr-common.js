@@ -729,7 +729,7 @@ const ContentManager = (() => {
   // this lets the dashboard offer two focused tabs without a second backend
   // model. TYPES lists every tab the UI can show; ENDPOINTS/LABELS below
   // map each one to the request it should make and its display name.
-  const TYPES = ['plans', 'promos', 'services', 'facilities', 'machines'];
+  const TYPES = ['plans', 'promos', 'walkin', 'services', 'facilities', 'machines'];
   const ENDPOINTS = {
     plans:     { list: '/api/content/plans',     save: '/api/content/plans/save',     del: id => `/api/content/plans/${id}/delete` },
     promos:    { list: '/api/content/promos',    save: '/api/content/promos/save',    del: id => `/api/content/promos/${id}/delete` },
@@ -738,13 +738,18 @@ const ContentManager = (() => {
   };
   ENDPOINTS.facilities = ENDPOINTS.equipment;
   ENDPOINTS.machines   = ENDPOINTS.equipment;
-  const LABELS = { plans: 'Membership Plan', promos: 'Promo', services: 'Service', facilities: 'Facility Photo', machines: 'Equipment' };
+  const LABELS = { plans: 'Membership Plan', promos: 'Promo', walkin: 'Walk-In Item', services: 'Service', facilities: 'Facility Photo', machines: 'Equipment' };
+  // Form titles when a plan/promo belongs to the Walk-In tab instead of the member-facing tabs.
+  const WALKIN_LABELS = { plans: 'Walk-In Plan', promos: 'Walk-In Promo' };
   // Which value of is_facility each tab represents, and therefore which
   // value gets saved automatically when adding/editing from that tab.
   const IS_FACILITY_TYPE = { facilities: true, machines: false };
   const DEFAULT_CATEGORY_JS = 'General'; // mirrors app.py's DEFAULT_CATEGORY, used when an item has no category set
 
   let currentType = 'plans';
+  // The sub-tab that is actually on screen. Differs from currentType while
+  // the Walk-In tab is showing, because its forms are plan/promo forms.
+  let activeTab = 'plans';
   // cache.equipment holds the single raw list backing both the
   // "facilities" and "machines" tabs (and the Services equipment checklist);
   // it's filtered client-side per tab in _filterEquipment().
@@ -763,6 +768,7 @@ const ContentManager = (() => {
 
   function showType(type) {
     currentType = type;
+    activeTab = type;
     categoryFilter = 'ALL';
     document.querySelectorAll('.content-subtab').forEach(el => {
       el.classList.toggle('active', el.dataset.contentType === type);
@@ -771,9 +777,28 @@ const ContentManager = (() => {
       const grid = document.getElementById('content-grid-' + t);
       if (grid) grid.style.display = (t === type) ? 'grid' : 'none';
     });
+    // Today's actual recorded walk-ins — a plain panel (not part of the
+    // add/edit content grid), shown only while the Walk-In sub-tab is active.
+    const walkinTodayPanel = document.getElementById('walkin-today-panel');
+    if (walkinTodayPanel) walkinTodayPanel.style.display = (type === 'walkin') ? '' : 'none';
     const filterBar = document.getElementById('content-category-filters');
     if (filterBar) filterBar.style.display = (type === 'machines') ? 'flex' : 'none';
-    if (type === 'facilities' || type === 'machines') {
+
+    // The Walk-In tab has its own "+ Add" button inside each section, so the
+    // shared "+ ADD NEW" is hidden there and the hint explains the tab.
+    const toolbarHint = document.querySelector('.content-toolbar-hint');
+    if (toolbarHint) {
+      if (toolbarHint.dataset.defaultText === undefined) toolbarHint.dataset.defaultText = toolbarHint.textContent;
+      toolbarHint.textContent = (type === 'walkin')
+        ? 'Walk-in plans appear only in the staff Walk In tab — members never see them.'
+        : toolbarHint.dataset.defaultText;
+    }
+    const toolbarAddBtn = document.querySelector('.content-toolbar .btn');
+    if (toolbarAddBtn) toolbarAddBtn.style.display = (type === 'walkin') ? 'none' : '';
+
+    if (type === 'walkin') {
+      _showWalkIn();
+    } else if (type === 'facilities' || type === 'machines') {
       if (cache.equipment === null) _fetchEquipment();
       else {
         _renderGrid(type, _filterEquipment(type));
@@ -831,7 +856,7 @@ const ContentManager = (() => {
       .then(data => {
         if (!data.success) { showToast(data.error || 'Could not load content.', 'error'); return; }
         cache[type] = data.items;
-        if (currentType === type) _renderGrid(type, data.items);
+        if (activeTab === type) _renderGrid(type, data.items);
       })
       .catch(() => showToast('Could not reach the server.', 'error'));
   }
@@ -858,13 +883,68 @@ const ContentManager = (() => {
       if (currentType === 'facilities' || currentType === 'machines') _fetchEquipment();
     } else {
       cache[type] = null;
-      if (currentType === type) _fetchType(type);
+      // A plan/promo saved or deleted from the Walk-In tab re-draws that tab.
+      if (activeTab === 'walkin' && (type === 'plans' || type === 'promos')) _showWalkIn();
+      else if (activeTab === type) _fetchType(type);
     }
+  }
+
+  // ── Walk-In tab ─────────────────────────────────────────────────────
+  // Walk-in items are ordinary plans/promos flagged audience = 'walkin'
+  // (plus the built-in Daily day pass), so this tab is a filtered view of
+  // the same two lists — Membership Plans / Promos show the rest.
+  function _isWalkInPlan(p)  { return p.audience === 'walkin' || !!p.member_hidden; }
+  function _isWalkInPromo(p) { return p.audience === 'walkin'; }
+
+  /** What each member-facing tab should list — walk-in items live under Walk-In instead. */
+  function _viewItems(type, items) {
+    if (type === 'plans')  return items.filter(p => !_isWalkInPlan(p));
+    if (type === 'promos') return items.filter(p => !_isWalkInPromo(p));
+    return items;
+  }
+
+  function _showWalkIn() {
+    const grid = document.getElementById('content-grid-walkin');
+    if (!grid) return;
+    const missing = ['plans', 'promos'].filter(t => cache[t] === null);
+    if (!missing.length) { _renderWalkIn(); return; }
+    grid.innerHTML = '<div class="content-empty">Loading…</div>';
+    Promise.all(missing.map(t =>
+      fetch(ENDPOINTS[t].list)
+        .then(res => res.json())
+        .then(data => {
+          if (!data.success) throw new Error(data.error || 'Could not load content.');
+          cache[t] = data.items;
+        })
+    ))
+      .then(() => { if (activeTab === 'walkin') _renderWalkIn(); })
+      .catch(err => showToast((err && err.message) || 'Could not reach the server.', 'error'));
+  }
+
+  function _renderWalkIn() {
+    const grid = document.getElementById('content-grid-walkin');
+    if (!grid) return;
+    const section = (title, hint, type, addLabel, items, emptyText) => `
+      <div class="content-section-head">
+        <div>
+          <div class="content-section-title">${title}</div>
+          <div class="content-section-hint">${hint}</div>
+        </div>
+        <button class="btn btn-red" onclick="ContentManager.openForm('${type}', null, 'walkin')">${addLabel}</button>
+      </div>
+      ${items.length
+        ? items.map(item => _cardHtml(type, item)).join('')
+        : `<div class="content-empty">${emptyText}</div>`}`;
+    grid.innerHTML =
+      section('Walk-In Plans', 'Day-pass style plans for guests without an account, picked in the Walk In tab.',
+              'plans', '+ ADD WALK-IN PLAN', (cache.plans || []).filter(_isWalkInPlan),
+              'No walk-in plans yet. Click "+ Add Walk-In Plan" to create one.');
   }
 
   function _renderGrid(type, items) {
     const grid = document.getElementById('content-grid-' + type);
     if (!grid) return;
+    items = _viewItems(type, items);
     if (!items.length) {
       grid.innerHTML = `<div class="content-empty">No ${LABELS[type].toLowerCase()}s yet. Click "+ Add New" to create one.</div>`;
       return;
@@ -890,7 +970,10 @@ const ContentManager = (() => {
     } else if (isPromo) {
       const periodTxt = item.period ? ` · ${_esc(item.period)}` : '';
       const days = Number(item.duration_days) || 30;
-      priceLine = `<div class="content-card-price">₱${Number(item.price).toLocaleString()} / ${days} day${days == 1 ? '' : 's'}${periodTxt}</div>`;
+      // A walk-in promo has no membership length, so don't show the default "30 days".
+      priceLine = item.audience === 'walkin'
+        ? `<div class="content-card-price">₱${Number(item.price).toLocaleString()}${periodTxt}</div>`
+        : `<div class="content-card-price">₱${Number(item.price).toLocaleString()} / ${days} day${days == 1 ? '' : 's'}${periodTxt}</div>`;
     }
     const categoryBadge = (!isPlan && !isPromo && item.category)
       ? `<div style="font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);">${_esc(item.category)}</div>`
@@ -924,11 +1007,18 @@ const ContentManager = (() => {
       </div>`;
   }
 
-  function openForm(type, item) {
+  function openForm(type, item, presetAudience) {
     currentType = type;
+    // Plans/promos belong either to members or to the Walk-In tab. A new item
+    // takes the tab it was added from; an existing one keeps its own audience.
+    // (The built-in Daily day pass is member-hidden, so it counts as walk-in.)
+    const audience = item ? (item.audience === 'walkin' ? 'walkin' : 'member')
+                          : (presetAudience === 'walkin' ? 'walkin' : 'member');
+    const isWalkinCtx = (type === 'plans' || type === 'promos') && (audience === 'walkin' || !!(item && item.member_hidden));
+    const formLabel = isWalkinCtx ? WALKIN_LABELS[type] : LABELS[type];
     document.getElementById('cf-type').value = type;
     document.getElementById('cf-id').value = item ? item.id : '';
-    document.getElementById('content-form-title').textContent = item ? `EDIT ${LABELS[type].toUpperCase()}` : `ADD ${LABELS[type].toUpperCase()}`;
+    document.getElementById('content-form-title').textContent = item ? `EDIT ${formLabel.toUpperCase()}` : `ADD ${formLabel.toUpperCase()}`;
     document.getElementById('cf-description').value = item ? item.description : '';
     document.getElementById('cf-sort-order').value = item ? item.sort_order : 0;
     document.getElementById('cf-active').checked = item ? !!item.is_active : true;
@@ -972,15 +1062,33 @@ const ContentManager = (() => {
     // Student price (plans only) and access duration (promos only) — both
     // optional, both read back by the member-facing pricing/expiry logic.
     const studentPriceWrap = document.getElementById('cf-student-price-wrap');
-    if (studentPriceWrap) studentPriceWrap.style.display = isPlan ? 'block' : 'none';
+    if (studentPriceWrap) studentPriceWrap.style.display = (isPlan && !isWalkinCtx) ? 'block' : 'none';
     const promoDurationWrap = document.getElementById('cf-promo-duration-wrap');
-    if (promoDurationWrap) promoDurationWrap.style.display = isPromo ? 'block' : 'none';
+    if (promoDurationWrap) promoDurationWrap.style.display = (isPromo && !isWalkinCtx) ? 'block' : 'none';
     const validUntilWrap = document.getElementById('cf-valid-until-wrap');
     if (validUntilWrap) validUntilWrap.style.display = isPromo ? 'block' : 'none';
     document.getElementById('cf-inclusions-wrap').style.display = (isPlan || isPromo) ? 'block' : 'none';
+    // Which tab this plan/promo belongs to (sent to the server on save), plus
+    // wording that matches — walk-in items are never shown to members.
+    const audienceInput = document.getElementById('cf-audience');
+    if (audienceInput) audienceInput.value = audience;
+    const activeLabel = document.getElementById('cf-active-label');
+    if (activeLabel) {
+      if (activeLabel.dataset.defaultText === undefined) activeLabel.dataset.defaultText = activeLabel.textContent;
+      activeLabel.textContent = isWalkinCtx ? 'Active / shown in the staff Walk In tab' : activeLabel.dataset.defaultText;
+    }
+    const descInput = document.getElementById('cf-description');
+    if (descInput) {
+      if (descInput.dataset.defaultPlaceholder === undefined) descInput.dataset.defaultPlaceholder = descInput.placeholder;
+      descInput.placeholder = isWalkinCtx ? 'Short description shown in the Walk In tab' : descInput.dataset.defaultPlaceholder;
+    }
+    if (nameInput) {
+      if (nameInput.dataset.defaultPlaceholder === undefined) nameInput.dataset.defaultPlaceholder = nameInput.placeholder;
+      nameInput.placeholder = isWalkinCtx ? 'e.g. Student Day Pass' : nameInput.dataset.defaultPlaceholder;
+    }
     if (isPlan) {
       document.getElementById('cf-price').value = item ? item.price : '';
-      document.getElementById('cf-duration').value = item ? item.duration_days : '';
+      document.getElementById('cf-duration').value = item ? item.duration_days : (isWalkinCtx ? 1 : '');
       const studentPrice = document.getElementById('cf-student-price');
       if (studentPrice) studentPrice.value = item ? (item.student_price === '' || item.student_price == null ? '' : item.student_price) : '';
     }
@@ -1396,6 +1504,10 @@ const ContentManager = (() => {
     if (type === 'facilities' || type === 'machines') {
       // Determined by which tab the form was opened from, not a manual checkbox.
       fd.append('is_facility', IS_FACILITY_TYPE[type] ? 'true' : 'false');
+    }
+
+    if (type === 'plans' || type === 'promos') {
+      fd.append('audience', document.getElementById('cf-audience')?.value || 'member');
     }
 
     if (type === 'plans') {

@@ -293,45 +293,55 @@
         <div><div class="page-title">WALK IN</div><div class="page-subtitle">Record a walk-in guest or day-pass visit</div></div>
       </div>
 
-      <div class="panel">
+      <div class="panel" id="walkin-plan-panel">
         <div class="panel-header"><div class="panel-title">Select a Plan</div></div>
         <div class="panel-body">
           {% if daily_plan %}
-          <div class="plan-grid" style="grid-template-columns:1fr 1fr;max-width:560px;">
-            <div class="plan-card selected" id="walkin-plan-daily" data-price="{{ daily_plan.price }}"
+          <div class="plan-grid" style="grid-template-columns:repeat(auto-fill,minmax(240px,340px));">
+            <div class="plan-card selected" id="walkin-plan-daily" data-walkin-key="Daily" data-price="{{ daily_plan.price }}"
                  onclick="selectWalkInPlan(this,'Daily',{{ daily_plan.price }})">
               <div class="plan-name">{{ daily_plan.name }}</div>
               <div class="plan-price">₱{{ '{:,.0f}'.format(daily_plan.price) if daily_plan.price == daily_plan.price|int else '{:,.2f}'.format(daily_plan.price) }}</div>
+              <div class="plan-period">for {{ daily_plan.duration_days or 1 }} day{{ 's' if (daily_plan.duration_days or 1) != 1 else '' }}</div>
+              <div class="plan-view-link" onclick="event.stopPropagation();openWalkInPlanModal('Daily')">👁 View Inclusions</div>
             </div>
-            <div class="plan-card" id="walkin-plan-boxing" data-price="{{ WALKIN_BOXING_FEE }}"
-                 onclick="selectWalkInPlan(this,'Boxing',{{ WALKIN_BOXING_FEE }})">
-              <div class="plan-name">Boxing</div>
-              <div class="plan-price">₱{{ '{:,.0f}'.format(WALKIN_BOXING_FEE) if WALKIN_BOXING_FEE == WALKIN_BOXING_FEE|int else '{:,.2f}'.format(WALKIN_BOXING_FEE) }}</div>
+            {% if boxing_plan %}
+            <div class="plan-card" id="walkin-plan-boxing" data-walkin-key="Boxing" data-price="{{ boxing_plan.price }}"
+                 onclick="selectWalkInPlan(this,'Boxing',{{ boxing_plan.price }})">
+              <div class="plan-name">{{ boxing_plan.name }}</div>
+              <div class="plan-price">₱{{ '{:,.0f}'.format(boxing_plan.price) if boxing_plan.price == boxing_plan.price|int else '{:,.2f}'.format(boxing_plan.price) }}</div>
+              <div class="plan-period">single session, coach included</div>
+              <div class="plan-view-link" onclick="event.stopPropagation();openWalkInPlanModal('Boxing')">👁 View Inclusions</div>
             </div>
-          </div>
-          <div id="walkin-plan-daily-info">
-            <div style="margin-top:14px;color:var(--muted);font-size:15px;line-height:1.6;">
-              {% if daily_plan.description %}{{ daily_plan.description }}{% endif %}
-            </div>
-            {% if daily_plan.inclusions_list %}
-            <ul class="plan-features" style="margin-top:14px;">
-              {% for item in daily_plan.inclusions_list %}
-              <li>{{ item }}</li>
-              {% endfor %}
-            </ul>
             {% endif %}
-          </div>
-          <div id="walkin-plan-boxing-info" style="display:none;">
-            <div style="margin-top:14px;color:var(--muted);font-size:15px;line-height:1.6;">
-              Good for one day only — a single walk-in session, not a recurring membership.
+            {# Plans/promos an admin or staff member added in Manage Content as "Walk-ins only" #}
+            {% for it in walkin_extra_items %}
+            <div class="plan-card" data-walkin-key="{{ it.key }}" data-price="{{ it.price }}"
+                 onclick="selectWalkInPlan(this,'{{ it.key }}',{{ it.price }})">
+              <div class="plan-name">{{ it.name }}</div>
+              <div class="plan-price">₱{{ it.price_text }}</div>
+              <div class="plan-period">{{ it.period }}</div>
+              <div class="plan-view-link" onclick="event.stopPropagation();openWalkInPlanModal('{{ it.key }}')">👁 View Inclusions</div>
             </div>
-            <ul class="plan-features" style="margin-top:14px;">
-              <li>One day access only</li>
-              <li>Includes a boxing coach for the session</li>
-              <li>Shower room and locker access</li>
-              <li>Learn boxing skills and technique fundamentals</li>
-            </ul>
+            {% endfor %}
           </div>
+          <script id="walkin-extra-plans-data" type="application/json">{{ walkin_extra_data|tojson }}</script>
+          <!-- Description + inclusions for each walk-in plan — shown only in the
+               "View Inclusions" modal (same pattern as the Member portal). -->
+          <script id="walkin-plans-data" type="application/json">{{ {
+            'Daily': {
+              'name': daily_plan.name,
+              'price': daily_plan.price|float,
+              'description': daily_plan.description or '',
+              'inclusions': daily_plan.inclusions_list or []
+            },
+            'Boxing': {
+              'name': boxing_plan.name if boxing_plan else 'Boxing',
+              'price': boxing_plan.price|float if boxing_plan else 0,
+              'description': (boxing_plan.description if boxing_plan else '') or '',
+              'inclusions': (boxing_plan.inclusions_list if boxing_plan else []) or []
+            }
+          }|tojson }}</script>
           {% else %}
           <div style="text-align:center;color:var(--muted);padding:30px;">
             No "Daily" plan is set up yet. Add one from Admin → Plans to enable walk-ins.
@@ -976,6 +986,7 @@
           <div class="content-subtabs">
             <button class="content-subtab active" data-content-type="plans" onclick="ContentManager.showType('plans')">Membership Plans</button>
             <button class="content-subtab" data-content-type="promos" onclick="ContentManager.showType('promos')">Promos</button>
+            <button class="content-subtab" data-content-type="walkin" onclick="ContentManager.showType('walkin')">Walk-In</button>
             <button class="content-subtab" data-content-type="services" onclick="ContentManager.showType('services')">Services</button>
             <button class="content-subtab" data-content-type="facilities" onclick="ContentManager.showType('facilities')">Our Facilities</button>
             <button class="content-subtab" data-content-type="machines" onclick="ContentManager.showType('machines')">Equipments and Machines</button>
@@ -990,6 +1001,7 @@
 
           <div class="content-grid" id="content-grid-plans"></div>
           <div class="content-grid" id="content-grid-promos" style="display:none;"></div>
+          <div class="content-grid" id="content-grid-walkin" style="display:none;"></div>
           <div class="content-grid" id="content-grid-services" style="display:none;"></div>
           <div class="content-grid" id="content-grid-facilities" style="display:none;"></div>
           <div class="content-grid" id="content-grid-machines" style="display:none;"></div>
@@ -1092,6 +1104,10 @@
       <div style="font-size:12px;color:var(--muted);margin-top:4px;">Leave blank for an ongoing promo with no set end date.</div>
     </div>
 
+    <!-- Which tab the item belongs to: "member" (Membership Plans / Promos) or
+         "walkin" (the Walk-In tab). Set by ContentManager.openForm. -->
+    <input type="hidden" id="cf-audience" value="member">
+
     <div class="form-group">
       <label class="form-label">Description</label>
       <textarea class="form-input" id="cf-description" rows="2" style="resize:vertical;" placeholder="Short description shown to members"></textarea>
@@ -1135,7 +1151,7 @@
     </div>
 
     <label class="content-checkbox-row">
-      <input type="checkbox" id="cf-active" checked> Active / visible to members and on the home page
+      <input type="checkbox" id="cf-active" checked> <span id="cf-active-label">Active / visible to members and on the home page</span>
     </label>
 
     <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="ContentManager.submit()">SAVE</button>
@@ -1184,6 +1200,18 @@
       <button class="btn btn-outline" style="width:100%;justify-content:center;" onclick="cancelVerifyPayment()">NO</button>
       <button class="btn btn-red" id="confirm-verify-payment-btn" style="width:100%;justify-content:center;" onclick="confirmVerifyPayment()">YES</button>
     </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="walkin-plan-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('walkin-plan-modal')">✕</button>
+    <div class="modal-title" style="text-align:center;" id="walkin-plan-modal-title">DAILY</div>
+    <div style="font-family:'Bebas Neue';font-size:34px;color:var(--red);text-align:center;margin-bottom:4px;" id="walkin-plan-modal-price">₱100</div>
+    <div style="font-size:15px;color:var(--muted);text-align:center;margin-bottom:18px;" id="walkin-plan-modal-subtitle"></div>
+    <div class="panel-title" style="margin-bottom:4px;">What's included</div>
+    <ul class="plan-features" id="walkin-plan-modal-list"></ul>
+    <button class="btn btn-red" style="margin-top:18px;width:100%;" id="walkin-plan-modal-select-btn" onclick="selectWalkInPlanFromModal()">SELECT THIS PLAN</button>
   </div>
 </div>
 

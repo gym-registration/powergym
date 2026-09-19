@@ -57,6 +57,9 @@
       <div class="nav-item" id="nav-admin-coach" onclick="adminTab('coach',this)">
         <span class="nav-icon">🏋</span> Coach
       </div>
+      <div class="nav-item" id="nav-admin-feedback" onclick="adminTab('feedback',this)">
+        <span class="nav-icon">⭐</span> Feedback
+      </div>
       <div class="nav-item" id="nav-admin-profile" onclick="adminTab('profile',this)">
         <span class="nav-icon">👤</span> Profile
       </div>
@@ -86,7 +89,6 @@
           <div class="page-title">ADMIN DASHBOARD</div>
           <div class="page-subtitle">Welcome back — here's today's snapshot</div>
         </div>
-        <button class="btn btn-red" onclick="openModal('add-member-modal')">+ ADD MEMBER</button>
       </div>
 
       <div class="stats-grid">
@@ -613,6 +615,81 @@
       </div>
     </div><!-- /admin-coach -->
 
+    <!-- ── Member Feedback ──────────────────────── -->
+    <div id="admin-feedback" class="sub-panel">
+      <div class="page-header">
+        <div><div class="page-title">MEMBER FEEDBACK</div><div class="page-subtitle">Ratings & comments members leave once their plan expires</div></div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card gold">
+          <span class="stat-icon">⭐</span>
+          <div class="stat-value">{{ feedback_stats.average }}<span style="font-size:16px;color:var(--muted);"> / 5</span></div>
+          <div class="stat-label">Average Rating</div>
+        </div>
+        <div class="stat-card blue">
+          <span class="stat-icon">📝</span>
+          <div class="stat-value">{{ feedback_stats.count }}</div>
+          <div class="stat-label">Total Responses</div>
+        </div>
+        <div class="stat-card green">
+          <span class="stat-icon">👍</span>
+          <div class="stat-value">{{ feedback_stats.recommend_pct if feedback_stats.recommend_pct is not none else '—' }}{{ '%' if feedback_stats.recommend_pct is not none else '' }}</div>
+          <div class="stat-label">Would Recommend</div>
+        </div>
+      </div>
+
+      {% if feedback_stats.count %}
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Rating Breakdown</div></div>
+        <div class="panel-body">
+          {% for n in [5,4,3,2,1] %}
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:{{ '10px' if n != 1 else '0' }};">
+            <div style="width:44px;font-size:13px;color:var(--muted);white-space:nowrap;">{{ n }} ★</div>
+            <div style="flex:1;height:8px;background:rgba(255,255,255,0.06);border-radius:4px;overflow:hidden;">
+              <div style="height:100%;background:var(--gold);width:{{ ((feedback_stats.distribution[n] / feedback_stats.count) * 100) | round(1) }}%;"></div>
+            </div>
+            <div style="width:26px;font-size:13px;color:var(--white);text-align:right;">{{ feedback_stats.distribution[n] }}</div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">All Feedback</div></div>
+        <div class="panel-body">
+          {% for f in feedback_list %}
+          <div style="padding:14px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:6px;margin-bottom:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <div class="user-avatar" style="width:34px;height:34px;font-size:13px;{% if f.member_profile_picture %}background-image:url('{{ f.member_profile_picture }}');background-size:cover;background-position:center;color:transparent;{% endif %}">{{ f.member_name[0]|upper if f.member_name else '?' }}</div>
+                <div>
+                  <div style="font-weight:600;">{{ f.member_name }}</div>
+                  <div style="font-size:12px;color:var(--muted);">{{ f.plan_name }} · {{ f.date }}</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:var(--gold);letter-spacing:2px;">{{ '★' * f.rating }}{{ '☆' * (5 - f.rating) }}</span>
+                {% if f.would_recommend is not none %}
+                <span class="badge {{ 'badge-green' if f.would_recommend else 'badge-red' }}">{{ 'Would Recommend' if f.would_recommend else 'Not Likely' }}</span>
+                {% endif %}
+              </div>
+            </div>
+            {% if f.comment %}
+            <div style="font-size:14px;color:var(--white);margin-top:10px;line-height:1.6;white-space:pre-wrap;">{{ f.comment }}</div>
+            {% endif %}
+            {% if f.improvement %}
+            <div style="font-size:13px;color:var(--muted);margin-top:8px;line-height:1.6;white-space:pre-wrap;"><strong style="color:var(--gold);">Could improve:</strong> {{ f.improvement }}</div>
+            {% endif %}
+          </div>
+          {% else %}
+          <div style="color:var(--muted);font-size:15px;padding:14px 0;">No feedback submitted yet — it'll appear here once a member's plan expires and they rate their experience.</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div><!-- /admin-feedback -->
+
     <!-- ── Profile ──────────────────────── -->
     <div id="admin-profile" class="sub-panel">
       <div class="page-header">
@@ -927,6 +1004,7 @@
           <div class="content-subtabs">
             <button class="content-subtab active" data-content-type="plans" onclick="ContentManager.showType('plans')">Membership Plans</button>
             <button class="content-subtab" data-content-type="promos" onclick="ContentManager.showType('promos')">Promos</button>
+            <button class="content-subtab" data-content-type="walkin" onclick="ContentManager.showType('walkin')">Walk-In</button>
             <button class="content-subtab" data-content-type="services" onclick="ContentManager.showType('services')">Services</button>
             <button class="content-subtab" data-content-type="facilities" onclick="ContentManager.showType('facilities')">Our Facilities</button>
             <button class="content-subtab" data-content-type="machines" onclick="ContentManager.showType('machines')">Equipments and Machines</button>
@@ -942,6 +1020,36 @@
 
           <div class="content-grid" id="content-grid-plans"></div>
           <div class="content-grid" id="content-grid-promos" style="display:none;"></div>
+          <div class="content-grid" id="content-grid-walkin" style="display:none;"></div>
+
+          <!-- Today's Walk-Ins — actual guest visits recorded by staff from
+               the Walk In tab today (separate from the plan/promo cards
+               above, which just configure what staff can pick from). -->
+          <div class="panel" id="walkin-today-panel" style="display:none;margin-top:20px;">
+            <div class="panel-header">
+              <div class="panel-title">Today's Walk-Ins</div>
+              <div style="font-size:13px;color:var(--muted);">Today's total: <strong style="color:var(--white);">₱{{ walkin_total_today }}</strong></div>
+            </div>
+            <table class="data-table" id="admin-walkin-table">
+              <thead><tr><th>Name</th><th>Phone</th><th>Plan</th><th>Amount</th><th>Method</th><th>Coach</th><th>Recorded By</th><th>Time</th></tr></thead>
+              <tbody>
+                {% for w in walkins_today %}
+                <tr>
+                  <td>{{ w.name }}</td>
+                  <td>{{ w.phone }}</td>
+                  <td>{{ w.plan }}</td>
+                  <td>₱{{ w.amount }}</td>
+                  <td>{{ w.method }}</td>
+                  <td>{{ w.coach }}</td>
+                  <td>{{ w.staff }}</td>
+                  <td>{{ w.time }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="8" style="text-align:center;color:var(--muted);">No walk-ins recorded yet today.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
           <div class="content-grid" id="content-grid-services" style="display:none;"></div>
           <div class="content-grid" id="content-grid-facilities" style="display:none;"></div>
           <div class="content-grid" id="content-grid-machines" style="display:none;"></div>
@@ -1058,6 +1166,10 @@
       <div style="font-size:12px;color:var(--muted);margin-top:4px;">Leave blank for an ongoing promo with no set end date.</div>
     </div>
 
+    <!-- Which tab the item belongs to: "member" (Membership Plans / Promos) or
+         "walkin" (the Walk-In tab). Set by ContentManager.openForm. -->
+    <input type="hidden" id="cf-audience" value="member">
+
     <div class="form-group">
       <label class="form-label">Description</label>
       <textarea class="form-input" id="cf-description" rows="2" style="resize:vertical;" placeholder="Short description shown to members"></textarea>
@@ -1101,7 +1213,7 @@
     </div>
 
     <label class="content-checkbox-row">
-      <input type="checkbox" id="cf-active" checked> Active / visible to members and on the home page
+      <input type="checkbox" id="cf-active" checked> <span id="cf-active-label">Active / visible to members and on the home page</span>
     </label>
 
     <div style="display:flex;gap:10px;margin-top:4px;">
@@ -1316,12 +1428,12 @@
     <button class="modal-close" onclick="closeModal('delete-staff-modal')">✕</button>
     <div class="modal-title">DELETE STAFF ACCOUNT</div>
     <div style="font-size:14px;color:var(--white);margin-bottom:8px;line-height:1.6;" id="delete-staff-message"></div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:20px;line-height:1.6;">
+    <div style="font-size:13.5px;color:var(--muted);margin-bottom:20px;line-height:1.6;">
       This permanently removes their account and login access. This cannot be undone.
     </div>
     <div style="display:flex;gap:10px;">
-      <button class="btn btn-outline" style="flex:1;" onclick="closeModal('delete-staff-modal')">CANCEL</button>
-      <button class="btn btn-red" style="flex:1;" onclick="AdminModule.confirmDeleteStaff()">DELETE</button>
+      <button class="btn btn-outline" style="flex:1;justify-content:center;" onclick="closeModal('delete-staff-modal')">CANCEL</button>
+      <button class="btn btn-red" style="flex:1;justify-content:center;" onclick="AdminModule.confirmDeleteStaff()">DELETE</button>
     </div>
   </div>
 </div>
