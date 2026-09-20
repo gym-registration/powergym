@@ -2332,6 +2332,34 @@ body.home-page { overflow-x: hidden; }
   font-family: 'Barlow Condensed', sans-serif; font-weight: 700; color: var(--white); font-size: 13px;
 }
 
+/* ── Member Ratings & Feedback summary + pagination (home.html) ─────
+   The review cards themselves reuse .testimonial-* above (already
+   built for this purpose); these are just the average-rating headline
+   and the page controls tr-home-feedback.js renders under the grid. */
+.rf-summary { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.rf-summary-score { font-family: 'Bebas Neue', sans-serif; font-size: 28px; color: var(--white); line-height: 1; }
+.rf-summary-stars { color: var(--gold); font-size: 18px; letter-spacing: 2px; }
+.rf-summary-count { font-size: 14px; color: var(--muted); }
+
+.rf-pagination { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; margin-top: 28px; }
+.rf-page-btn {
+  min-width: 38px;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--white);
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.rf-page-btn:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
+.rf-page-btn.rf-page-num.active { background: var(--red); border-color: var(--red); color: #fff; }
+.rf-page-btn:disabled { opacity: 0.4; cursor: default; }
+
 /* ── Location ── */
 .location-grid { display: grid; grid-template-columns: 0.8fr 1.2fr; gap: 20px; }
 .location-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 26px; }
@@ -2592,6 +2620,38 @@ body.home-page { overflow-x: hidden; }
   color: var(--gold);
   background: rgba(255,171,64,0.1);
   box-shadow: 0 0 14px rgba(255,171,64,0.22);
+}
+
+/* ── Floating "Rate & Feedback" launcher (member-dashboard.html) ─────
+   Lets a member open the same rating/feedback wizard used after plan
+   expiry on their own, at any time. Mirrors the AI chat launcher's
+   floating-button pattern (see tr-chat.css) but sits on the opposite
+   (left) side, in gold rather than red, so both stay reachable together
+   without being mistaken for one another. */
+.fb-launcher {
+  position: fixed;
+  left: 24px;
+  bottom: 24px;
+  z-index: 900;
+  width: 56px;
+  height: 56px;
+  border: 2px solid var(--gold);
+  border-radius: 50%;
+  background: var(--card);
+  color: var(--gold);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+  transition: transform 0.15s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+.fb-launcher:hover  { transform: translateY(-2px) scale(1.05); filter: brightness(1.15); box-shadow: 0 10px 26px rgba(0,0,0,0.55), 0 0 16px rgba(255,171,64,0.25); }
+.fb-launcher:active { transform: scale(0.96); }
+.fb-launcher:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.fb-launcher svg { width: 25px; height: 25px; display: block; }
+
+@media (max-width: 480px) {
+  .fb-launcher { width: 50px; height: 50px; left: 16px; bottom: 16px; }
 }
 
 /* ── Personalized Fitness Plan — mini-dashboard tabs (Body Goals tab) ──

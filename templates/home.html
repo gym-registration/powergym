@@ -365,6 +365,37 @@
 </section>
 
 <!-- ═══════════════════════════════════════
+     MEMBER RATINGS & FEEDBACK
+     Real ratings/comments collected through the post-membership feedback
+     wizard on the member dashboard (see _public_feedback_data() in app.py).
+     Sits right under Announcements; paginated 5 at a time by tr-home-feedback.js.
+═══════════════════════════════════════ -->
+<section class="section" id="feedback">
+  <div class="section-wrap">
+    <div class="section-head">
+      <div class="section-eyebrow">What Our Members Say</div>
+      <div class="section-title">MEMBER <span class="accent">RATINGS &amp; FEEDBACK</span></div>
+      {% if public_feedback_stats.count %}
+      <div class="rf-summary">
+        <span class="rf-summary-score">{{ public_feedback_stats.average }}</span>
+        <span class="rf-summary-stars">{% for i in range(1, 6) %}{{ '★' if i <= public_feedback_stats.rounded else '☆' }}{% endfor %}</span>
+        <span class="rf-summary-count">from {{ public_feedback_stats.count }} member{{ 's' if public_feedback_stats.count != 1 else '' }}</span>
+      </div>
+      {% endif %}
+    </div>
+
+    {% if public_feedback %}
+    <div class="testimonial-grid" id="rf-grid"></div>
+    <div class="rf-pagination" id="rf-pagination"></div>
+    {% else %}
+    <div style="text-align:center;color:var(--muted);padding:30px;">No member feedback yet — be the first to share your experience!</div>
+    {% endif %}
+  </div>
+</section>
+
+<script id="home-feedback-data" type="application/json">{{ public_feedback|tojson }}</script>
+
+<!-- ═══════════════════════════════════════
      OUR FACILITIES / EQUIPMENT
 ═══════════════════════════════════════ -->
 <section class="section section-alt" id="programs">
@@ -531,6 +562,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 <script src="{{ url_for('static', filename='js/tr-common.js') }}"></script>
 <script src="{{ url_for('static', filename='js/tr-login.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tr-home-feedback.js') }}"></script>
 <script>
 /* Page-local helpers for the landing page's embedded login/register
    overlay. These keep the site header always visible and simply swap

@@ -949,12 +949,40 @@ const MemberModule = (() => {
   ════════════════════════════════════════════════ */
 
   function _openFeedbackPrompt(prompt) {
-    const nameEl = document.getElementById('fb-plan-name');
-    if (nameEl) nameEl.textContent = prompt.plan_name || 'membership';
+    const introEl = document.getElementById('fb-intro');
+    if (introEl) {
+      introEl.innerHTML = 'Your <strong id="fb-plan-name" style="color:var(--white);">'
+        + _esc(prompt.plan_name || 'membership') + '</strong> plan has ended — we\'d love to hear how it went.';
+    }
+    _resetFeedbackWizard();
+    openModal('feedback-modal');
+  }
 
-    // Reset wizard to a clean step 1 every time it opens, in case a
-    // previous visit this session got as far as picking a rating and then
-    // hit "Maybe Later".
+  /** Lets a member open the rating/feedback wizard on their own, any time —
+   *  bound to the floating "Rate & Feedback" launcher (#fb-launcher) in
+   *  member-dashboard.html. Reuses the exact same modal and submit endpoint
+   *  as the automatic post-expiry prompt above; only the intro wording
+   *  differs, since there's no specific expired plan to reference here.
+   *  Reads the plan name already on screen (.card-plan) rather than
+   *  calling the server, since that value is already loaded for this page. */
+  function openFeedbackOnDemand() {
+    const introEl = document.getElementById('fb-intro');
+    if (introEl) {
+      const planNameEl = document.querySelector('.card-plan');
+      const planName = planNameEl ? planNameEl.textContent.trim() : '';
+      introEl.innerHTML = (planName && planName !== 'No Active Plan')
+        ? 'How has your time on the <strong style="color:var(--white);">' + _esc(planName) + '</strong> plan been so far? We\'d love to hear from you.'
+        : 'We\'d love to hear about your experience at Power Gym so far.';
+    }
+    _resetFeedbackWizard();
+    openModal('feedback-modal');
+  }
+
+  /** Shared reset for #feedback-modal, used both by the automatic
+   *  post-expiry prompt and the on-demand launcher above, so the wizard
+   *  always opens on a clean step 1 — even if a previous visit this
+   *  session got partway through and hit "Maybe Later". */
+  function _resetFeedbackWizard() {
     _feedbackRating = 0;
     _feedbackRecommend = null;
     document.querySelectorAll('#fb-stars .fb-star').forEach(s => s.classList.remove('filled'));
@@ -966,9 +994,7 @@ const MemberModule = (() => {
     const step1Btn = document.getElementById('fb-step1-btn');
     if (step1Btn) step1Btn.disabled = true;
     _showFeedbackStep(1);
-
     _setupFeedbackStars();
-    openModal('feedback-modal');
   }
 
   /** Wires click/hover on the 5 star glyphs — done once per modal open
@@ -2269,6 +2295,7 @@ const MemberModule = (() => {
     closePlanApprovedModal, goToPaymentFromApproval, closePaymentApprovedModal,
     closePlanDeclinedModal, withdrawPlanRequest, cancelWithdrawRequest, confirmWithdrawRequest,
     feedbackWizardNext, feedbackWizardBack, selectFeedbackRecommend, dismissFeedbackModal, submitMemberFeedback,
+    openFeedbackOnDemand,
     togglePaymentProofField, previewGcashProof, removeGcashProof, openGcashProofPreview, submitPaymentMethod,
     copyGcashNumber, deferPaymentMethod,
     cancelSubmitPayment, confirmSubmitPayment, closePaymentSubmitSuccessModal,
@@ -2318,6 +2345,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.selectFeedbackRecommend = (v) => MemberModule.selectFeedbackRecommend(v);
   window.dismissFeedbackModal    = () => MemberModule.dismissFeedbackModal();
   window.submitMemberFeedback    = () => MemberModule.submitMemberFeedback();
+  window.openFeedbackOnDemand    = () => MemberModule.openFeedbackOnDemand();
   window.withdrawPlanRequest     = (paymentId) => MemberModule.withdrawPlanRequest(paymentId);
   window.cancelWithdrawRequest   = () => MemberModule.cancelWithdrawRequest();
   window.confirmWithdrawRequest  = () => MemberModule.confirmWithdrawRequest();

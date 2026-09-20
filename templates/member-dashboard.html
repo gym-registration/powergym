@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@300;400;500;600;700&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tr-styles.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tr-chat.css') }}">
 </head>
 <body>
 
@@ -1474,7 +1475,7 @@
     </div>
 
     <div class="modal-title" style="text-align:center;margin-bottom:6px;">RATE YOUR EXPERIENCE</div>
-    <div style="font-size:14px;color:var(--muted);text-align:center;margin-bottom:22px;">
+    <div id="fb-intro" style="font-size:14px;color:var(--muted);text-align:center;margin-bottom:22px;">
       Your <strong id="fb-plan-name" style="color:var(--white);">membership</strong> plan has ended
       — we'd love to hear how it went.
     </div>
@@ -1678,8 +1679,18 @@
   </div>
 </div>
 
+<!-- ── Floating "Rate & Feedback" launcher ──────────────────────────
+     Lets a member open the rating/feedback wizard above on their own,
+     any time — not just when the server auto-prompts them after their
+     plan expires. Sits on the opposite side from the AI chat launcher
+     (tr-chat.js) so both stay reachable together. -->
+<button type="button" class="fb-launcher" id="fb-launcher" aria-label="Rate & give feedback" title="Rate & Feedback" onclick="openFeedbackOnDemand()">
+  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.5l2.9 6.6 7.1.6-5.4 4.7 1.7 7-6.3-3.9-6.3 3.9 1.7-7-5.4-4.7 7.1-.6z"/></svg>
+</button>
+
 <script id="member-dashboard-data" type="application/json">{{ {'present_days': present_days, 'no_plan_days': no_plan_days, 'days_in_month': days_in_month, 'today_day': today_day, 'year': attendance_year, 'month': attendance_month, 'plan_approved_notice': plan_approved_notice, 'payment_verified_notice': payment_verified_notice, 'plan_declined_notice': plan_declined_notice, 'feedback_prompt': feedback_prompt, 'new_announcements': new_announcements, 'bot_reminders': bot_reminders, 'notification_center': notification_center, 'notification_unread_count': notification_unread_count}|tojson }}</script>
 <script src="{{ url_for('static', filename='js/tr-common.js') }}"></script>
 <script src="{{ url_for('static', filename='js/tr-member.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tr-chat.js') }}"></script>
 </body>
 </html>

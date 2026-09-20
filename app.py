@@ -2720,6 +2720,53 @@ def api_delete_announcement(item_id):
     return jsonify(success=True, message='Announcement deleted.')
 
 
+def _public_feedback_data(limit=60):
+    """Member ratings/comments for the public landing page (shown under the
+    Announcements section — see home.html). Reuses the same MemberFeedback
+    rows the post-membership feedback wizard writes (see member-dashboard.html
+    / /member/submit-feedback), so nothing new needs to be collected.
+
+    Two differences from the admin dashboard's own feedback_list:
+      - Only rows with an actual written comment are returned for display —
+        a bare star rating with nothing written makes a poor public review.
+      - Each member is shown as first name + last initial rather than their
+        full name, since this is visible to anyone, signed in or not.
+
+    The average/count in the returned stats are computed from EVERY rating
+    on file (commented or not), so the headline number reflects the gym's
+    real overall average rather than just the subset with a comment."""
+    all_ratings = [r for (r,) in db.session.query(MemberFeedback.rating).all() if r]
+    average = round(sum(all_ratings) / len(all_ratings), 1) if all_ratings else 0
+    stats = {
+        'count': len(all_ratings),
+        'average': average,
+        'rounded': round(average),  # nearest whole star, for the ★/☆ row next to the score
+    }
+
+    commented_rows = (
+        MemberFeedback.query
+        .options(joinedload(MemberFeedback.member))
+        .filter(MemberFeedback.comment.isnot(None), MemberFeedback.comment != '')
+        .order_by(MemberFeedback.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    feedback = []
+    for f in commented_rows:
+        if not f.member:
+            continue
+        last_initial = f'{f.member.last_name[0]}.' if f.member.last_name else ''
+        feedback.append({
+            'name': f'{f.member.first_name} {last_initial}'.strip(),
+            'initial': (f.member.first_name[:1] or '?').upper(),
+            'rating': f.rating,
+            'comment': f.comment,
+            'plan_name': f.plan_name,
+            'date': _to_manila(f.created_at).strftime('%B %Y'),
+        })
+    return feedback, stats
+
+
 # ── Routes ────────────────────────────────────────────────────
 def _home_context(open_screen=None):
     """Shared context for the landing page. open_screen ('login' or
@@ -2737,8 +2784,10 @@ def _home_context(open_screen=None):
     equipment = (GymEquipment.query
                  .filter_by(is_active=True, is_facility=True)
                  .order_by(GymEquipment.sort_order, GymEquipment.id).all())
+    public_feedback, public_feedback_stats = _public_feedback_data()
     return dict(plans=plans, services=services, equipment=equipment,
-                gcash_settings=_get_gym_settings(), open_screen=open_screen)
+                gcash_settings=_get_gym_settings(), open_screen=open_screen,
+                public_feedback=public_feedback, public_feedback_stats=public_feedback_stats)
 
 
 @app.route('/')
@@ -9108,6 +9157,14 @@ def _startup_with_retries(attempts=5, base_delay=2):
                   f"Retrying in {delay}s — check that MySQL is running and reachable "
                   f"(DB_HOST={DB_HOST}) if this keeps happening...")
             time.sleep(delay)
+
+
+# ---------------------------------------------------------------
+#  AI Assistant (Groq) - member dashboard chat box
+#  Must be registered after the models/helpers above are defined.
+# ---------------------------------------------------------------
+from gym_ai import register_gym_ai
+register_gym_ai(app, globals())
 
 
 if __name__ == '__main__':
