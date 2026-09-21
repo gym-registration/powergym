@@ -32,6 +32,7 @@ const MemberModule = (() => {
   let _pendingPaymentMethod = null; // { formData } staged between submitPaymentMethod() and confirmSubmitPayment()
   let _withdrawPaymentId = null;
 
+
   // Post-membership feedback wizard (#feedback-modal) staged state — held
   // here rather than read fresh off the DOM at submit time so a star pick
   // on step 1 survives navigating to step 2 and back.
@@ -54,11 +55,22 @@ const MemberModule = (() => {
 
   let _fitnessGoal = null; // currently-selected goal in the Step 2 grid ('CUT'|'BULK'|'MAINTAIN'|'RECOMP')
 
+
+  let _primaryObjective   = 'MAINTAIN'; // 'CUT' | 'BULK' | 'MAINTAIN' | 'RECOMP'
+
+
   // Attendance calendar month navigation state
   let _attYear = null;
   let _attMonth = null;
   let _attCurrentYear = null;  // the real "today" month — never navigate past this
   let _attCurrentMonth = null;
+
+  const OBJECTIVE_LABELS = {
+    CUT:      'Cut / Fat Loss',
+    BULK:     'Bulk / Muscle Mass',
+    MAINTAIN: 'Maintain & Tone',
+    RECOMP:   'Body Recomposition',
+  };
 
   const ACTIVITY_LABELS = {
     low_activity:      'Low Activity',
@@ -67,10 +79,18 @@ const MemberModule = (() => {
   };
 
   const GOAL_LABELS = {
-    CUT:      'CUT',
-    BULK:     'BULK',
-    MAINTAIN: 'MAINTAIN',
-    RECOMP:   'BODY RECOMPOSITION',
+    FULL_BODY: 'Full Body Workout',
+    CHEST:     'Chest Workout',
+    BACK:      'Back Workout',
+    ARMS:      'Arm Workout',
+    LEGS:      'Lower Body Workout',
+    SHOULDERS: 'Shoulders Workout',
+    CORE:      'Abs & Core Workout',
+    // Legacy fallback
+    CUT:       'Cut',
+    BULK:      'Bulk',
+    MAINTAIN:  'Maintain',
+    RECOMP:    'Body Recomposition',
   };
 
   /* ── "When do you want to start?" date guard ──────────────
@@ -1951,11 +1971,38 @@ const MemberModule = (() => {
     const subParts = [ex.target_area, ex.sub_target].filter(Boolean);
     document.getElementById('exercise-instructions-modal-subtitle').textContent = subParts.join(' · ');
 
+    const videoEl = document.getElementById('exercise-modal-video');
+    const imageEl = document.getElementById('exercise-modal-image');
+    const mediaUrl = (ex.media_url && typeof ex.media_url === 'string') ? ex.media_url.trim() : '';
+
+    if (videoEl) {
+      videoEl.pause();
+      videoEl.removeAttribute('src');
+      videoEl.style.display = 'none';
+    }
+    if (imageEl) {
+      imageEl.removeAttribute('src');
+      imageEl.style.display = 'none';
+    }
+
+    if (mediaUrl) {
+      const isVideo = /\.(mp4|webm)$/i.test(mediaUrl);
+      const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(mediaUrl);
+      if (isVideo && videoEl) {
+        videoEl.src = mediaUrl;
+        videoEl.style.display = 'block';
+        videoEl.play().catch(() => {});
+      } else if (isImage && imageEl) {
+        imageEl.src = mediaUrl;
+        imageEl.style.display = 'block';
+      }
+    }
+
     const list = document.getElementById('exercise-instructions-modal-steps');
     if (list) {
       const steps = (ex.instructions || '').split('\n').map(s => s.trim()).filter(Boolean);
       list.innerHTML = steps.length
-        ? steps.map(s => `<li>${_esc(s)}</li>`).join('')
+        ? steps.map(s => `<li>${_esc(s.replace(/^(\d+[\.\)\-]\s*)+/, ''))}</li>`).join('')
         : '<li>No detailed instructions available for this exercise yet.</li>';
     }
 
@@ -1963,46 +2010,150 @@ const MemberModule = (() => {
   }
 
   /* ════════════════════════════════════════════════
-     BODY GOALS — Fitness Goal Setup wizard (Steps 1–3)
+     BODY GOALS — Fitness Goal Setup wizard (2 Steps)
      + Personalized Fitness Plan (Stage 4)
   ════════════════════════════════════════════════ */
 
-  function _setWizardStep(step) {
-    ['fw-step-1', 'fw-step-2', 'fw-step-3', 'fw-confirm'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.style.display = 'none';
-    });
-    const target = document.getElementById(step === 'confirm' ? 'fw-confirm' : `fw-step-${step}`);
-    if (target) target.style.display = '';
+  let _step1Completed = false;
+  let _step2Completed = false;
+  let _isMinor = false;
 
-    const activeDot = step === 'confirm' ? 3 : step;
-    for (let i = 1; i <= 3; i++) {
-      const dot = document.getElementById(`fw-dot-${i}`);
-      if (dot) dot.classList.toggle('active', i <= activeDot);
-      const line = document.getElementById(`fw-line-${i}`);
-      if (line) line.classList.toggle('active', i < activeDot || (i === activeDot && step === 3));
+  function updateActivityHelperText() {
+    const sel = document.getElementById('fw-activity');
+    const helper = document.getElementById('fw-activity-helper');
+    if (!helper) return;
+    const val = sel ? sel.value : '';
+    const descMap = {
+      low_activity: 'Little to no exercise, or light activity 1–3 days/week.',
+      moderate_activity: 'Regular exercise 3–5 days/week.',
+      high_activity: 'Frequent, intense exercise or physically demanding work 6–7 days/week.',
+    };
+    helper.textContent = descMap[val] || 'Select your typical weekly activity level.';
+  }
+
+  function _setWizardStep(step) {
+    const p1 = document.getElementById('fw-step-1');
+    const p2 = document.getElementById('fw-step-2');
+    const pLoad = document.getElementById('fw-loading-screen');
+    const wizardPanel = document.getElementById('fitness-wizard-panel');
+
+    if (wizardPanel) wizardPanel.style.display = '';
+
+    if (p1) p1.style.display = (step === 1 ? '' : 'none');
+    if (p2) p2.style.display = (step === 2 ? '' : 'none');
+    if (pLoad) pLoad.style.display = (step === 'loading' ? '' : 'none');
+
+    const dot1 = document.getElementById('fw-dot-1');
+    const dot2 = document.getElementById('fw-dot-2');
+    const line1 = document.getElementById('fw-line-1');
+
+    if (step === 1) {
+      if (dot1) {
+        dot1.classList.add('active');
+        dot1.setAttribute('aria-current', 'step');
+      }
+      if (dot2) {
+        dot2.classList.remove('active');
+        dot2.removeAttribute('aria-current');
+      }
+      if (line1) {
+        line1.classList.toggle('active', _step1Completed);
+      }
+    } else if (step === 2) {
+      if (dot1) {
+        dot1.classList.remove('active');
+        dot1.classList.add('complete', 'completed');
+        dot1.disabled = false;
+        dot1.removeAttribute('aria-current');
+      }
+      if (dot2) {
+        dot2.classList.add('active');
+        dot2.disabled = false;
+        dot2.setAttribute('aria-current', 'step');
+      }
+      if (line1) {
+        line1.classList.add('active');
+      }
+      const helperLine = document.querySelector('.fw-goal-helper-line');
+      if (helperLine) {
+        if (_isMinor) {
+          helperLine.textContent = 'Your focus prioritizes exercises for that muscle group onto your training days (e.g. Chest packs your Chest & Legs days with pressing movements, while Abs & Core fills your Shoulders & Core days with core work).';
+        } else {
+          helperLine.textContent = 'Your focus prioritizes exercises for that muscle group onto your training days (e.g. Chest packs your Chest & Legs days with pressing movements, while Abs & Core fills your Shoulders & Core days with core work), and tailors your daily calorie target.';
+        }
+      }
+    } else if (step === 'loading') {
+      if (dot1) dot1.classList.remove('active');
+      if (dot2) dot2.classList.remove('active');
     }
   }
 
-  /** Restores the wizard to whatever stage the member's saved data
-   *  supports, and — if Step 3 is already calculated — loads the
-   *  Personalized Fitness Plan panel too. */
+  function goToFitnessStep(step) {
+    if (step === 1) {
+      _setWizardStep(1);
+    } else if (step === 2 && _step1Completed) {
+      _setWizardStep(2);
+    }
+  }
+
   function _initFitnessWizard() {
     const data = _parseJSON('member-fitness-data') || {};
+    _isMinor = Boolean(data.is_minor) || (!data.age || data.age < 18);
+
+    if (data.primary_objective) {
+      _primaryObjective = data.primary_objective;
+    } else {
+      _primaryObjective = 'MAINTAIN';
+    }
+
+    // Set initial selection on primary objective cards
+    document.querySelectorAll('.fw-objective-card').forEach(objCard => {
+      const isMatch = objCard.getAttribute('data-obj') === _primaryObjective;
+      objCard.classList.toggle('selected', isMatch);
+      objCard.setAttribute('aria-checked', isMatch ? 'true' : 'false');
+    });
 
     if (data.fitness_goal) {
       _fitnessGoal = data.fitness_goal;
+      const radio = document.querySelector(`input[name="fitness_goal"][value="${data.fitness_goal}"]`);
+      if (radio) radio.checked = true;
       const card = document.querySelector(`#fw-goal-grid [data-goal="${data.fitness_goal}"]`);
-      if (card) card.classList.add('selected');
+      if (card) {
+        card.classList.add('selected');
+        const ind = card.querySelector('.workout-select-indicator');
+        if (ind) ind.textContent = '✓';
+      }
     }
 
-    if (data.fitness_goal && data.calculations) {
-      _renderFitnessResults(data.calculations, data.fitness_goal);
-      _setWizardStep(3);
-      _loadFitnessPlan();
+    const btn = document.getElementById('fw-step2-btn');
+    if (btn) btn.disabled = !(_primaryObjective && _fitnessGoal);
+
+    if (data.height_cm && data.weight_kg && data.sex && data.activity_level) {
+      _step1Completed = true;
+      const dot2 = document.getElementById('fw-dot-2');
+      if (dot2) dot2.disabled = false;
     }
-    // Otherwise leave the wizard on its server-rendered default (Step 1,
-    // with height/weight/sex/activity pre-filled by Jinja where known).
+
+    updateActivityHelperText();
+
+    // Bind tab bar arrow key navigation for accessible tabs
+    _bindTabListKeyboard(document.querySelector('.fp-tabs'), '.fp-tab-btn');
+    _bindGoalGridKeyboard();
+    _bindObjectiveGridKeyboard();
+
+    if (data.fitness_goal && data.calculations) {
+      _step2Completed = true;
+      _renderFitnessResults(data.calculations, data.fitness_goal, _isMinor, data.primary_objective || _primaryObjective);
+      const wizardPanel = document.getElementById('fitness-wizard-panel');
+      if (wizardPanel) wizardPanel.style.display = 'none';
+      const planPanel = document.getElementById('fitness-plan-panel');
+      if (planPanel) planPanel.style.display = '';
+      const editBtn = document.getElementById('fw-edit-btn');
+      if (editBtn) editBtn.style.display = '';
+      _loadFitnessPlan();
+    } else {
+      _setWizardStep(1);
+    }
   }
 
   function submitFitnessStep1() {
@@ -2010,22 +2161,48 @@ const MemberModule = (() => {
     const weight = document.getElementById('fw-weight')?.value;
     const sex = document.getElementById('fw-sex')?.value;
     const activity = document.getElementById('fw-activity')?.value;
+    const bdayInput = document.getElementById('fw-birthday');
+    const birthday = bdayInput ? bdayInput.value : '';
+    const goalWeightInput = document.getElementById('fw-goal-weight');
+    const goalWeight = goalWeightInput ? parseFloat(goalWeightInput.value) : null;
 
     if (!height || !weight) { showToast('Please enter your height and weight.', 'error'); return; }
     if (!sex) { showToast('Please select your sex.', 'error'); return; }
     if (!activity) { showToast('Please select your activity level.', 'error'); return; }
+    if (bdayInput && !birthday) {
+      showToast('Please enter your birthday.', 'error');
+      bdayInput.focus();
+      return;
+    }
 
     const btn = document.getElementById('fw-step1-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'SAVING...'; }
 
-    _apiJson('/member/fitness/save-profile', {
-      height_cm: height, weight_kg: weight, sex, activity_level: activity,
-    }).then(({ ok, data }) => {
+    const payload = {
+      height_cm: height,
+      weight_kg: weight,
+      sex,
+      activity_level: activity,
+    };
+    if (birthday) {
+      payload.birthday = birthday;
+    }
+    if (goalWeight && !isNaN(goalWeight)) {
+      payload.goal_weight_kg = goalWeight;
+    }
+
+    _apiJson('/member/fitness/save-profile', payload).then(({ ok, data }) => {
       if (btn) { btn.disabled = false; btn.textContent = 'CONTINUE'; }
       if (!ok || !data.success) {
         showToast(data.error || 'Failed to save your information.', 'error');
         return;
       }
+      _step1Completed = true;
+      if (data.fitness_profile && data.fitness_profile.is_minor !== undefined) {
+        _isMinor = Boolean(data.fitness_profile.is_minor);
+      }
+      const dot2 = document.getElementById('fw-dot-2');
+      if (dot2) dot2.disabled = false;
       _setWizardStep(2);
     }).catch(() => {
       if (btn) { btn.disabled = false; btn.textContent = 'CONTINUE'; }
@@ -2033,12 +2210,120 @@ const MemberModule = (() => {
     });
   }
 
-  function selectFitnessGoal(card) {
-    document.querySelectorAll('#fw-goal-grid .plan-card').forEach(c => c.classList.remove('selected'));
-    card.classList.add('selected');
-    _fitnessGoal = card.dataset.goal;
+  function selectPrimaryObjective(code, el) {
+    if (!code) return;
+    _primaryObjective = code;
+    document.querySelectorAll('.fw-objective-card').forEach(c => {
+      const isMatch = c.getAttribute('data-obj') === code;
+      c.classList.toggle('selected', isMatch);
+      c.setAttribute('aria-checked', isMatch ? 'true' : 'false');
+    });
+
     const btn = document.getElementById('fw-step2-btn');
-    if (btn) btn.disabled = false;
+    if (btn) btn.disabled = !(_primaryObjective && _fitnessGoal);
+  }
+
+  function onFitnessGoalRadioChange(radio) {
+    if (!radio) return;
+    _fitnessGoal = radio.value;
+    document.querySelectorAll('#fw-goal-grid .workout-goal-card').forEach(c => {
+      c.classList.remove('selected');
+      c.setAttribute('tabindex', '-1');
+      const ind = c.querySelector('.workout-select-indicator');
+      if (ind) ind.textContent = '➔';
+    });
+    const card = radio.closest('.workout-goal-card');
+    if (card) {
+      card.classList.add('selected');
+      card.setAttribute('tabindex', '0');
+      const ind = card.querySelector('.workout-select-indicator');
+      if (ind) ind.textContent = '✓';
+    }
+
+    const btn = document.getElementById('fw-step2-btn');
+    if (btn) btn.disabled = !(_primaryObjective && _fitnessGoal);
+  }
+
+  function selectFitnessGoal(card) {
+    if (!card) return;
+    const radio = card.querySelector('input[type="radio"]');
+    if (radio) {
+      radio.checked = true;
+      onFitnessGoalRadioChange(radio);
+    }
+  }
+
+  function selectFitnessGoalByCode(goalCode) {
+    const card = document.querySelector(`#fw-goal-grid [data-goal="${goalCode}"]`);
+    if (card) {
+      selectFitnessGoal(card);
+      try {
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } catch (_) {}
+    }
+  }
+
+  function selectObjectiveCard(code, el) {
+    // Backward compatibility wrapper
+    if (['CUT', 'BULK', 'MAINTAIN', 'RECOMP'].includes(code)) {
+      selectPrimaryObjective(code, el);
+    } else {
+      selectFitnessGoalByCode(code);
+    }
+  }
+
+  function _bindObjectiveGridKeyboard() {
+    const cards = Array.from(document.querySelectorAll('.fw-objective-card'));
+    if (!cards.length) return;
+    cards.forEach((card, idx) => {
+      card.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+          e.preventDefault();
+          const nextIdx = (idx + 1) % cards.length;
+          cards[nextIdx].focus();
+          selectPrimaryObjective(cards[nextIdx].getAttribute('data-obj'), cards[nextIdx]);
+        } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+          e.preventDefault();
+          const prevIdx = (idx - 1 + cards.length) % cards.length;
+          cards[prevIdx].focus();
+          selectPrimaryObjective(cards[prevIdx].getAttribute('data-obj'), cards[prevIdx]);
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          selectPrimaryObjective(card.getAttribute('data-obj'), card);
+        }
+      });
+    });
+  }
+
+  function _bindGoalGridKeyboard() {
+    const grid = document.getElementById('fw-goal-grid');
+    if (!grid) return;
+
+    const cards = Array.from(grid.querySelectorAll('.workout-goal-card'));
+    cards.forEach((card, idx) => {
+      card.setAttribute('tabindex', card.classList.contains('selected') ? '0' : (idx === 0 ? '0' : '-1'));
+
+      card.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+          e.preventDefault();
+          const nextIdx = (idx + 1) % cards.length;
+          cards.forEach(c => c.setAttribute('tabindex', '-1'));
+          cards[nextIdx].setAttribute('tabindex', '0');
+          cards[nextIdx].focus();
+          selectFitnessGoal(cards[nextIdx]);
+        } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+          e.preventDefault();
+          const prevIdx = (idx - 1 + cards.length) % cards.length;
+          cards.forEach(c => c.setAttribute('tabindex', '-1'));
+          cards[prevIdx].setAttribute('tabindex', '0');
+          cards[prevIdx].focus();
+          selectFitnessGoal(cards[prevIdx]);
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          selectFitnessGoal(card);
+        }
+      });
+    });
   }
 
   function fitnessWizardBack() {
@@ -2046,83 +2331,308 @@ const MemberModule = (() => {
   }
 
   function submitFitnessStep2() {
-    if (!_fitnessGoal) { showToast('Please select a fitness goal.', 'error'); return; }
+    if (!_primaryObjective) { showToast('Please select your primary objective.', 'error'); return; }
+    if (!_fitnessGoal) { showToast('Please select your workout focus.', 'error'); return; }
+    _startPlanBuildingSequence();
+  }
 
-    const btn = document.getElementById('fw-step2-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'SAVING...'; }
+  function _setTickerState(idx, state, text) {
+    const item = document.getElementById(`fw-ticker-${idx}`);
+    if (!item) return;
+    item.classList.remove('active', 'pending', 'complete');
+    item.classList.add(state);
+    const icon = item.querySelector('.fw-ticker-icon');
+    const label = item.querySelector('.fw-ticker-text');
+    if (text && label) label.textContent = text;
+    if (icon) {
+      if (state === 'complete') icon.textContent = '✓';
+      else if (state === 'active') icon.textContent = '⏳';
+      else icon.textContent = '⏳';
+    }
+  }
 
-    _apiJson('/member/fitness/save-goal', { fitness_goal: _fitnessGoal })
+  function _startPlanBuildingSequence() {
+    _setWizardStep('loading');
+    const errEl = document.getElementById('fw-loading-error');
+    const retryBtn = document.getElementById('fw-loading-retry-btn');
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+    if (retryBtn) retryBtn.style.display = 'none';
+
+    _setTickerState(1, 'active', 'Saving your focus...');
+    _setTickerState(2, 'pending', 'Calculating your targets');
+    _setTickerState(3, 'pending', 'Loading your plan');
+
+    // 1. Save focus & objective
+    _apiJson('/member/fitness/save-goal', {
+      fitness_goal: _fitnessGoal,
+      primary_objective: _primaryObjective
+    })
       .then(({ ok, data }) => {
-        if (btn) { btn.disabled = false; btn.textContent = 'CONTINUE'; }
         if (!ok || !data.success) {
-          showToast(data.error || 'Failed to save your goal.', 'error');
-          return;
+          throw new Error(data.error || 'Failed to save your focus.');
         }
-        _showConfirmCalculating();
-        _runFitnessCalculation();
-      }).catch(() => {
-        if (btn) { btn.disabled = false; btn.textContent = 'CONTINUE'; }
-        showToast('Could not reach the server. Please try again.', 'error');
+        _setTickerState(1, 'complete', 'Saved your focus');
+        _setTickerState(2, 'active', 'Calculating your targets...');
+
+        // 2. Calculate targets
+        return _apiJson('/member/fitness/calculate', {});
+      })
+      .then(({ ok, data }) => {
+        if (!ok || !data.success) {
+          throw new Error(data.error || 'Could not calculate your targets.');
+        }
+
+        // Update local script tag cache
+        const fitScript = document.getElementById('member-fitness-data');
+        if (fitScript) {
+          try {
+            const fd = JSON.parse(fitScript.textContent);
+            fd.primary_objective = data.primary_objective || _primaryObjective;
+            fd.fitness_goal = data.goal || _fitnessGoal;
+            fd.calculations = data.calculations;
+            fitScript.textContent = JSON.stringify(fd);
+          } catch (e) {}
+        }
+
+        _renderFitnessResults(data.calculations, data.goal, _isMinor, data.primary_objective || _primaryObjective);
+        _setTickerState(2, 'complete', 'Calculated your targets');
+        _setTickerState(3, 'active', 'Loading your plan...');
+
+        // 3. Load plan recommendations
+        return fetch('/member/fitness/recommendations').then(res => res.json());
+      })
+      .then(recData => {
+        if (!recData || !recData.success) {
+          throw new Error((recData && recData.error) || 'Could not load your plan recommendations.');
+        }
+        _renderFitnessPlan(recData);
+        _setTickerState(3, 'complete', 'Loaded your plan');
+
+        _step2Completed = true;
+        setTimeout(() => {
+          const wizardPanel = document.getElementById('fitness-wizard-panel');
+          if (wizardPanel) wizardPanel.style.display = 'none';
+          const planPanel = document.getElementById('fitness-plan-panel');
+          if (planPanel) planPanel.style.display = '';
+          const editBtn = document.getElementById('fw-edit-btn');
+          if (editBtn) editBtn.style.display = '';
+          _loadAiCoachMessage();
+        }, 350);
+      })
+      .catch(err => {
+        const msg = err.message || 'An error occurred while building your plan.';
+        if (errEl) {
+          errEl.textContent = msg;
+          errEl.style.display = 'block';
+        }
+        if (retryBtn) retryBtn.style.display = 'inline-block';
       });
   }
 
-  function _showConfirmCalculating() {
-    const goalLabel = document.getElementById('fw-confirm-goal-label');
-    if (goalLabel) goalLabel.textContent = GOAL_LABELS[_fitnessGoal] || _fitnessGoal;
-    const msg = document.getElementById('fw-confirm-message');
-    if (msg) msg.textContent = 'Calculating your fitness targets...';
-    const retryBtn = document.getElementById('fw-confirm-retry-btn');
-    if (retryBtn) retryBtn.style.display = 'none';
-    _setWizardStep('confirm');
+  function retryFitnessSetup() {
+    _startPlanBuildingSequence();
   }
 
-  function _runFitnessCalculation() {
-    _apiJson('/member/fitness/calculate', {})
-      .then(({ ok, data }) => {
-        if (!ok || !data.success) {
-          const msg = document.getElementById('fw-confirm-message');
-          if (msg) msg.textContent = data.error || 'Could not calculate your targets. Please try again.';
-          const retryBtn = document.getElementById('fw-confirm-retry-btn');
-          if (retryBtn) retryBtn.style.display = '';
+  function editFitnessProfileAndFocus() {
+    const wizardPanel = document.getElementById('fitness-wizard-panel');
+    const planPanel = document.getElementById('fitness-plan-panel');
+    const editBtn = document.getElementById('fw-edit-btn');
+
+    if (planPanel) planPanel.style.display = 'none';
+    if (wizardPanel) wizardPanel.style.display = '';
+    if (editBtn) editBtn.style.display = 'none';
+
+    // Show cancel button only when editing an existing plan (not first-time setup)
+    const cancelBtn = document.getElementById('fw-cancel-edit-btn');
+    if (cancelBtn) cancelBtn.style.display = _step2Completed ? '' : 'none';
+
+    _setWizardStep(1);
+  }
+
+  function cancelFitnessEdit() {
+    const wizardPanel = document.getElementById('fitness-wizard-panel');
+    const planPanel   = document.getElementById('fitness-plan-panel');
+    const editBtn     = document.getElementById('fw-edit-btn');
+    const cancelBtn   = document.getElementById('fw-cancel-edit-btn');
+
+    if (wizardPanel) wizardPanel.style.display = 'none';
+    if (planPanel)   planPanel.style.display   = '';
+    if (editBtn)     editBtn.style.display      = '';
+    if (cancelBtn)   cancelBtn.style.display    = 'none';
+  }
+
+  function _updateMilestoneBar(startW, curW, goalW) {
+    const milestoneRow = document.getElementById('fw-hub-milestone-row');
+    if (!milestoneRow) return;
+    if (goalW != null && curW != null && startW != null) {
+      milestoneRow.style.display = '';
+      const totalChange = parseFloat(goalW) - parseFloat(startW);
+      let pct = 0;
+      if (Math.abs(totalChange) < 0.1) {
+        pct = 100;
+      } else {
+        const actualChange = parseFloat(curW) - parseFloat(startW);
+        const ratio = actualChange / totalChange;
+        pct = Math.round(ratio * 100);
+        pct = Math.max(0, Math.min(100, pct));
+      }
+      const fill = document.getElementById('fw-hub-milestone-fill');
+      if (fill) fill.style.width = `${pct}%`;
+      _setText('fw-hub-start-label', `Start: ${startW} kg`);
+      _setText('fw-hub-goal-label', `Goal: ${goalW} kg`);
+      _setText('fw-hub-progress-label', `${pct}% to goal`);
+    } else {
+      milestoneRow.style.display = 'none';
+    }
+  }
+
+  function _renderFitnessResults(calc, goal, isMinor, primaryObjective) {
+    const fitData = _parseJSON('member-fitness-data') || {};
+    const obj = primaryObjective || fitData.primary_objective || _primaryObjective || 'MAINTAIN';
+    const objLabel = OBJECTIVE_LABELS[obj] || obj;
+    const goalLabel = GOAL_LABELS[goal] || goal;
+
+    _setText('fp-target-calories', calc.calorie_target != null ? `${calc.calorie_target} kcal` : '—');
+    _setText('fp-target-protein', calc.protein_target_g != null ? `${calc.protein_target_g} g` : '—');
+    _setText('fp-daily-obj-label', objLabel);
+    _setText('fp-daily-goal-label', goalLabel);
+
+    _setText('fw-hub-obj-badge', objLabel);
+    _setText('fw-hub-focus-badge', goalLabel);
+
+    const act = fitData.activity_level;
+    _setText('fp-daily-activity-label', ACTIVITY_LABELS[act] || 'Active');
+
+    // How we calculated this section (native details)
+    const bmiRow = document.getElementById('fw-calc-bmi-row');
+    if (isMinor) {
+      if (bmiRow) bmiRow.style.display = 'none';
+    } else {
+      if (bmiRow) bmiRow.style.display = '';
+      const calcBmiEl = document.getElementById('fw-calc-bmi');
+      if (calcBmiEl && calc.bmi != null) {
+        calcBmiEl.textContent = calc.bmi;
+        const bVal = parseFloat(calc.bmi);
+        calcBmiEl.style.color = (!isNaN(bVal) && bVal >= 18.5 && bVal <= 24.9) ? 'var(--green)' : 'var(--white)';
+      }
+    }
+    _setText('fw-calc-bmr', calc.bmr != null ? `${calc.bmr} kcal` : '—');
+    _setText('fw-calc-tdee', calc.tdee != null ? `${calc.tdee} kcal` : '—');
+
+    // Current Measurements panel
+    const weightEl = document.getElementById('meas-weight');
+    if (weightEl) {
+      const w = fitData.weight_kg || document.getElementById('fw-weight')?.value;
+      weightEl.textContent = w ? `${w} kg` : '— kg';
+    }
+    const measBmiItem = document.getElementById('meas-bmi-item');
+    if (measBmiItem) {
+      if (isMinor) {
+        measBmiItem.style.display = 'none';
+      } else {
+        measBmiItem.style.display = '';
+        const measBmiVal = document.getElementById('meas-bmi');
+        if (measBmiVal && calc.bmi != null) {
+          measBmiVal.textContent = calc.bmi;
+          const bVal = parseFloat(calc.bmi);
+          measBmiVal.style.color = (!isNaN(bVal) && bVal >= 18.5 && bVal <= 24.9) ? 'var(--green)' : 'var(--white)';
+        }
+      }
+    }
+
+    // Nutrition tab
+    _setText('fp-nutrition-calorie', calc.calorie_target != null ? `${calc.calorie_target} kcal` : '—');
+    _setText('fp-nutrition-protein', calc.protein_target_g != null ? `${calc.protein_target_g} g` : '—');
+    _updateMacroSplit(calc.calorie_target, calc.protein_target_g);
+
+    // ── Hub Header metric chips ──
+    const curW = fitData.weight_kg || document.getElementById('fw-weight')?.value;
+    _setText('fw-hub-weight', curW ? `${curW} kg` : '—');
+    _setText('fw-hub-calories', calc.calorie_target != null ? `${calc.calorie_target} kcal` : '—');
+    _setText('fw-hub-protein', calc.protein_target_g != null ? `${calc.protein_target_g} g` : '—');
+
+    const bmiChip = document.getElementById('fw-hub-bmi-chip');
+    if (bmiChip) {
+      if (!isMinor && calc.bmi != null) {
+        bmiChip.style.display = '';
+        const bmiVal = parseFloat(calc.bmi);
+        let bmiLabel = 'BMI';
+        let isHealthy = false;
+        if (!isNaN(bmiVal)) {
+          if (bmiVal >= 18.5 && bmiVal <= 24.9) {
+            bmiLabel = 'BMI (Healthy)';
+            isHealthy = true;
+          } else if (bmiVal < 18.5) {
+            bmiLabel = 'BMI (Under)';
+          } else if (bmiVal <= 29.9) {
+            bmiLabel = 'BMI (Over)';
+          } else {
+            bmiLabel = 'BMI (High)';
+          }
+        }
+        const valEl = document.getElementById('fw-hub-bmi');
+        if (valEl) {
+          valEl.textContent = calc.bmi;
+          valEl.style.color = isHealthy ? 'var(--green)' : 'var(--white)';
+        }
+        const lblEl = bmiChip.querySelector('.fw-metric-lbl');
+        if (lblEl) {
+          lblEl.textContent = bmiLabel;
+          lblEl.style.color = isHealthy ? 'var(--green)' : '';
+        }
+      } else {
+        bmiChip.style.display = 'none';
+      }
+    }
+
+    // ── Hub Header milestone bar (only shown when goal weight is set) ──
+    const goalW = fitData.goal_weight;
+    const startW = fitData.calculated_weight || curW;
+    _updateMilestoneBar(startW, curW, goalW);
+
+    const contentEl = document.getElementById('fp-plan-content');
+    if (contentEl) contentEl.style.display = '';
+  }
+
+  function _loadAiCoachMessage() {
+    const banner = document.getElementById('ai-coach-message');
+    if (!banner) return;
+
+    banner.classList.add('loading');
+    banner.style.display = 'block';
+    banner.innerHTML = `
+      <div class="ai-banner-skeleton">
+        <div class="ai-skeleton-line"></div>
+        <div class="ai-skeleton-line short"></div>
+      </div>`;
+
+    fetch('/member/fitness/ai-coach', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    })
+      .then(res => res.json())
+      .then(data => {
+        banner.classList.remove('loading');
+        if (!data || !data.success || !data.message) {
+          banner.style.display = 'none';
+          banner.innerHTML = '';
           return;
         }
-        _renderFitnessResults(data.calculations, data.goal);
-        _setWizardStep(3);
-        _loadFitnessPlan();
+        banner.style.display = 'block';
+        banner.innerHTML = `
+          <div class="ai-banner-header">
+            <span class="ai-banner-icon" aria-hidden="true">🏋️</span>
+            <span class="ai-banner-label">COACH NOTE</span>
+          </div>
+          <div class="ai-banner-text">${_esc(data.message)}</div>
+        `;
       })
       .catch(() => {
-        const msg = document.getElementById('fw-confirm-message');
-        if (msg) msg.textContent = 'Could not reach the server. Please try again.';
-        const retryBtn = document.getElementById('fw-confirm-retry-btn');
-        if (retryBtn) retryBtn.style.display = '';
+        banner.classList.remove('loading');
+        banner.style.display = 'none';
+        banner.innerHTML = '';
       });
   }
-
-  function retryFitnessCalculation() {
-    _showConfirmCalculating();
-    _runFitnessCalculation();
-  }
-
-  function fitnessWizardEditGoal() {
-    _setWizardStep(2);
-  }
-
-  function _renderFitnessResults(calc, goal) {
-    const note = document.getElementById('fw-goal-note');
-    if (note) note.textContent = `Based on your ${GOAL_LABELS[goal] || goal} goal.`;
-    _setText('fw-result-bmi', calc.bmi);
-    _setText('fw-result-bmr', calc.bmr != null ? `${calc.bmr} kcal` : '—');
-    _setText('fw-result-tdee', calc.tdee != null ? `${calc.tdee} kcal` : '—');
-    _setText('fw-result-calorie', calc.calorie_target != null ? `${calc.calorie_target} kcal` : '—');
-    _setText('fw-result-protein', calc.protein_target_g != null ? `${calc.protein_target_g} g` : '—');
-  }
-
-  function _setText(id, value) {
-    const el = document.getElementById(id);
-    if (el) el.textContent = value == null ? '—' : value;
-  }
-
-  /* ── Personalized Fitness Plan (Stage 4) ────────────────── */
 
   function _loadFitnessPlan() {
     const panel = document.getElementById('fitness-plan-panel');
@@ -2137,13 +2647,14 @@ const MemberModule = (() => {
     fetch('/member/fitness/recommendations')
       .then(res => res.json())
       .then(data => {
-        if (!data.success) {
-          if (statusEl) statusEl.textContent = data.error || 'Your plan could not be loaded right now.';
+        if (!data || !data.success) {
+          if (statusEl) statusEl.textContent = (data && data.error) || 'Your plan could not be loaded right now.';
           return;
         }
         _renderFitnessPlan(data);
         if (statusEl) statusEl.style.display = 'none';
         if (contentEl) contentEl.style.display = '';
+        _loadAiCoachMessage();
       })
       .catch(() => {
         if (statusEl) statusEl.textContent = 'Could not reach the server. Please try again.';
@@ -2151,17 +2662,13 @@ const MemberModule = (() => {
   }
 
   function _renderFitnessPlan(data) {
-    // Summary strip
-    _setText('fp-summary-goal', GOAL_LABELS[data.goal] || data.goal);
-    _setText('fp-overview-goal-label', GOAL_LABELS[data.goal] || data.goal);
-    const activityLevel = (data.workouts && data.workouts.frequency_note) ? null : null; // frequency label handled below
-    _setText('fp-summary-calorie', data.nutrition_targets ? `${data.nutrition_targets.calorie_target} kcal` : '—');
-    _setText('fp-summary-protein', data.nutrition_targets ? `${data.nutrition_targets.protein_target_g} g` : '—');
-    _setText('fp-nutrition-calorie', data.nutrition_targets ? `${data.nutrition_targets.calorie_target} kcal` : '—');
-    _setText('fp-nutrition-protein', data.nutrition_targets ? `${data.nutrition_targets.protein_target_g} g` : '—');
+    const contentEl = document.getElementById('fp-plan-content');
+    if (contentEl) contentEl.style.display = '';
 
-    const fitnessProfileData = _parseJSON('member-fitness-data') || {};
-    _setText('fp-summary-activity', ACTIVITY_LABELS[fitnessProfileData.activity_level] || '—');
+    if (data.nutrition_targets) {
+      _setText('fp-nutrition-calorie', data.nutrition_targets.calorie_target ? `${data.nutrition_targets.calorie_target} kcal` : '—');
+      _setText('fp-nutrition-protein', data.nutrition_targets.protein_target_g ? `${data.nutrition_targets.protein_target_g} g` : '—');
+    }
 
     // Foods & Meals
     _renderMealPlan(data.meal_plan);
@@ -2175,7 +2682,7 @@ const MemberModule = (() => {
       const eq = data.equipment || [];
       eqList.innerHTML = eq.length
         ? eq.map(e => `<div class="fp-card"><div class="fp-card-title">🧰 ${_esc(e.name)}</div>${e.note ? `<div class="fp-card-note">${_esc(e.note)}</div>` : ''}</div>`).join('')
-        : '<div style="color:var(--muted);">No specific equipment needed.</div>';
+        : '<div style="color:var(--goals-muted, var(--muted));">No specific equipment needed.</div>';
     }
 
     // Tips
@@ -2187,25 +2694,116 @@ const MemberModule = (() => {
         : '<li>Stay consistent and listen to your body.</li>';
     }
 
-    // Default to Overview tab
-    switchFitnessPlanTab('overview', document.querySelector('[data-fp-tab=overview]'));
+    // Default to Workouts tab
+    switchFitnessPlanTab('workouts', document.querySelector('[data-fp-tab="workouts"]'));
+  }
+
+  const FOOD_META = {
+    'Whole Eggs': { icon: '🥚', category: 'protein' },
+    'Egg Whites': { icon: '🍳', category: 'protein' },
+    'Grilled Chicken Breast': { icon: '🍗', category: 'protein' },
+    'Canned Tuna': { icon: '🐟', category: 'protein' },
+    'Lean Beef (Sirloin)': { icon: '🥩', category: 'protein' },
+    'Greek Yogurt': { icon: '🥛', category: 'protein' },
+    'Low-Fat Milk': { icon: '🥛', category: 'protein' },
+    'Firm Tofu': { icon: '🧊', category: 'protein' },
+    'Cooked Lentils': { icon: '🫘', category: 'protein' },
+    'Whey Protein Shake': { icon: '🥤', category: 'protein' },
+    'Steamed Rice': { icon: '🍚', category: 'carbs' },
+    'Brown Rice': { icon: '🍚', category: 'carbs' },
+    'Oatmeal': { icon: '🥣', category: 'carbs' },
+    'Sweet Potato (Kamote)': { icon: '🍠', category: 'carbs' },
+    'Whole Wheat Bread': { icon: '🍞', category: 'carbs' },
+    'Whole-Wheat Pasta': { icon: '🍝', category: 'carbs' },
+    'Banana': { icon: '🍌', category: 'produce' },
+    'Apple': { icon: '🍎', category: 'produce' },
+    'Mango (sliced)': { icon: '🥭', category: 'produce' },
+    'Orange': { icon: '🍊', category: 'produce' },
+    'Steamed Mixed Vegetables': { icon: '🥦', category: 'produce' },
+    'Sautéed Leafy Greens': { icon: '🥬', category: 'produce' },
+    'Mixed Salad Greens': { icon: '🥗', category: 'produce' },
+    'Peanut Butter': { icon: '🥜', category: 'fats' },
+    'Avocado': { icon: '🥑', category: 'fats' },
+    'Mixed Nuts / Almonds': { icon: '🥜', category: 'fats' },
+    'Olive Oil (for cooking)': { icon: '🫒', category: 'fats' },
+  };
+
+  function _getFoodMeta(name, category) {
+    if (FOOD_META[name]) return FOOD_META[name];
+    const lower = (name || '').toLowerCase();
+    const cat = (category || '').toLowerCase();
+    if (cat === 'protein' || /chicken|beef|egg|tuna|fish|tofu|lentil|protein|turkey|salmon/i.test(lower)) {
+      return { icon: '🍗', category: 'protein' };
+    }
+    if (cat === 'carb' || /rice|oat|bread|pasta|potato|quinoa|cereal/i.test(lower)) {
+      return { icon: '🌾', category: 'carbs' };
+    }
+    if (cat === 'healthy_fat' || cat === 'fats' || /oil|butter|nut|almond|avocado|seed/i.test(lower)) {
+      return { icon: '🥑', category: 'fats' };
+    }
+    if (cat === 'fruit' || cat === 'vegetable' || /apple|banana|mango|orange|berry|greens|salad|vegetable|spinach|broccoli/i.test(lower)) {
+      return { icon: '🍎', category: 'produce' };
+    }
+    return { icon: '🥗', category: 'produce' };
+  }
+
+  function _updateMacroSplit(totalCal, totalPro) {
+    const cal = Number(totalCal) || 2000;
+    const pro = Number(totalPro) || 100;
+
+    const proCal = pro * 4;
+    const proPct = Math.max(12, Math.min(40, Math.round((proCal / cal) * 100)));
+    const fatPct = 28;
+    const carbPct = Math.max(15, 100 - proPct - fatPct);
+
+    const fatCal = cal * (fatPct / 100);
+    const fatG = Math.round(fatCal / 9);
+
+    const carbCal = cal * (carbPct / 100);
+    const carbG = Math.round(carbCal / 4);
+
+    _setText('fp-macro-pct-protein', `${proPct}%`);
+    _setText('fp-macro-g-protein', `(${pro}g)`);
+    _setText('fp-macro-pct-carbs', `${carbPct}%`);
+    _setText('fp-macro-g-carbs', `(${carbG}g)`);
+    _setText('fp-macro-pct-fats', `${fatPct}%`);
+    _setText('fp-macro-g-fats', `(${fatG}g)`);
+
+    const segPro = document.getElementById('fp-split-seg-pro');
+    const segCarb = document.getElementById('fp-split-seg-carb');
+    const segFat = document.getElementById('fp-split-seg-fat');
+    if (segPro) segPro.style.width = `${proPct}%`;
+    if (segCarb) segCarb.style.width = `${carbPct}%`;
+    if (segFat) segFat.style.width = `${fatPct}%`;
   }
 
   function _renderMealPlan(mealPlan) {
     const foodsList = document.getElementById('fp-foods-list');
     const mealPlanEl = document.getElementById('fp-meal-plan');
     const totalEl = document.getElementById('fp-meal-plan-total');
+    const allocBarEl = document.getElementById('fp-meal-alloc-bar');
+
     if (!mealPlan || !mealPlan.meals) {
-      if (foodsList) foodsList.innerHTML = '<div style="color:var(--muted);">No recommendations available yet.</div>';
+      if (foodsList) foodsList.innerHTML = '<div style="color:var(--goals-muted, var(--muted));">No recommendations available yet.</div>';
       if (mealPlanEl) mealPlanEl.innerHTML = '';
       if (totalEl) totalEl.textContent = '';
+      if (allocBarEl) allocBarEl.innerHTML = '';
       return;
     }
 
-    const mealOrder = ['breakfast', 'lunch', 'snack', 'dinner'];
-    const mealLabels = { breakfast: 'Breakfast', lunch: 'Lunch', snack: 'Snack', dinner: 'Dinner' };
+    const totalCal = Number(mealPlan.total_calories) || 2000;
+    const totalPro = Number(mealPlan.total_protein_g) || 100;
 
-    // Flat, de-duplicated "Recommended Foods" list across all meals
+    _updateMacroSplit(totalCal, totalPro);
+
+    const mealOrder = ['breakfast', 'lunch', 'snack', 'dinner'];
+    const mealMeta = {
+      breakfast: { label: 'Breakfast', icon: '🍳', color: '#ffc107' },
+      lunch: { label: 'Lunch', icon: '🥗', color: '#10b981' },
+      snack: { label: 'Afternoon Snack', icon: '🥜', color: '#f59e0b' },
+      dinner: { label: 'Dinner', icon: '🥩', color: '#e61e25' }
+    };
+
     const seenFoods = new Map();
     mealOrder.forEach(key => {
       const meal = mealPlan.meals[key];
@@ -2214,23 +2812,90 @@ const MemberModule = (() => {
         if (!seenFoods.has(item.name)) seenFoods.set(item.name, item);
       });
     });
+
     if (foodsList) {
       const foods = Array.from(seenFoods.values());
       foodsList.innerHTML = foods.length
-        ? foods.map(f => `<div class="fp-card"><div class="fp-card-title">🥗 ${_esc(f.name)}</div><div class="fp-card-note">${_esc(f.serving)} · ${f.calories} kcal · ${f.protein_g}g protein</div></div>`).join('')
-        : '<div style="color:var(--muted);">No food recommendations available yet.</div>';
+        ? foods.map(f => {
+            const meta = _getFoodMeta(f.name, f.category);
+            return `
+            <div class="fp-card fp-food-card" data-food-category="${meta.category}">
+              <div class="fp-food-card-top">
+                <div class="fp-food-icon" aria-hidden="true">${meta.icon}</div>
+                <div class="fp-food-info">
+                  <div class="fp-card-title fp-food-name">${_esc(f.name)}</div>
+                  <div class="fp-food-serving">${_esc(f.serving)}</div>
+                </div>
+              </div>
+              <div class="fp-card-note fp-food-chip-row">
+                <span class="fp-food-chip chip-cal" title="Calories">🔥 ${f.calories} kcal</span>
+                <span class="fp-food-chip chip-pro" title="Protein">💪 ${f.protein_g}g protein</span>
+              </div>
+            </div>`;
+          }).join('')
+        : '<div style="color:var(--goals-muted, var(--muted));">No food recommendations available yet.</div>';
     }
 
-    // Per-meal breakdown
+    // Set up food category filter buttons
+    const filterStrip = document.getElementById('fp-food-filter-strip');
+    if (filterStrip && !filterStrip.dataset.bound) {
+      filterStrip.dataset.bound = 'true';
+      filterStrip.querySelectorAll('.fp-food-filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          filterStrip.querySelectorAll('.fp-food-filter-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          const filter = btn.dataset.filter;
+          if (foodsList) {
+            foodsList.querySelectorAll('.fp-food-card').forEach(card => {
+              if (filter === 'all' || card.dataset.foodCategory === filter) {
+                card.style.display = '';
+              } else {
+                card.style.display = 'none';
+              }
+            });
+          }
+        });
+      });
+    }
+
     if (mealPlanEl) {
       mealPlanEl.innerHTML = mealOrder.map(key => {
         const meal = mealPlan.meals[key];
         if (!meal) return '';
-        const items = (meal.items || []).map(i => `<li>${_esc(i.name)} — ${_esc(i.serving)} (${i.calories} kcal, ${i.protein_g}g protein)</li>`).join('');
-        return `<div class="fp-card" style="grid-column:1/-1;">
-          <div class="fp-card-title">${mealLabels[key] || key}</div>
-          <ul style="margin:6px 0 0;padding-left:18px;font-size:13px;color:var(--white);line-height:1.7;">${items || '<li>No items selected.</li>'}</ul>
-          <div class="fp-card-note" style="margin-top:6px;">${meal.meal_calories} kcal · ${meal.meal_protein_g}g protein</div>
+        const meta = mealMeta[key] || { label: key, icon: '🍽️', color: '#e61e25' };
+        const items = (meal.items || []).map(i => {
+          const itemMeta = _getFoodMeta(i.name, i.category);
+          return `
+          <li class="fp-meal-item-row">
+            <span class="fp-meal-item-bullet" aria-hidden="true">${itemMeta.icon}</span>
+            <div class="fp-meal-item-body">
+              <span class="fp-meal-item-name">${_esc(i.name)}</span>
+              <span class="fp-meal-item-desc">${_esc(i.serving)}</span>
+            </div>
+            <div class="fp-meal-item-metrics">
+              <span class="fp-item-cal">${i.calories} kcal</span>
+              <span class="fp-item-pro">${i.protein_g}g</span>
+            </div>
+          </li>`;
+        }).join('');
+
+        return `
+        <div class="fp-card fp-meal-card">
+          <div class="fp-meal-card-header">
+            <div class="fp-card-title fp-meal-title">
+              <span class="fp-meal-icon" aria-hidden="true">${meta.icon}</span>
+              <span>${meta.label}</span>
+            </div>
+            <div class="fp-meal-subtotal-badge">
+              <span class="fp-sub-cal">${meal.meal_calories} kcal</span>
+              <span class="fp-sub-pro">${meal.meal_protein_g}g pro</span>
+            </div>
+          </div>
+          <ul class="fp-meal-items-list">${items || '<li class="fp-meal-item-row">No items selected.</li>'}</ul>
+          <div class="fp-card-note fp-meal-card-footer">
+            <div class="fp-meal-summary-chip">🔥 ${meal.meal_calories} kcal</div>
+            <div class="fp-meal-summary-chip pro">💪 ${meal.meal_protein_g}g protein</div>
+          </div>
         </div>`;
       }).join('');
     }
@@ -2238,6 +2903,38 @@ const MemberModule = (() => {
     if (totalEl) {
       totalEl.textContent = `Daily total across all meals: ${mealPlan.total_calories} kcal · ${mealPlan.total_protein_g}g protein.`;
     }
+
+    // Render Daily Calorie Meal Allocation Bar
+    if (allocBarEl) {
+      allocBarEl.innerHTML = mealOrder.map(key => {
+        const meal = mealPlan.meals[key];
+        if (!meal || !meal.meal_calories) return '';
+        const meta = mealMeta[key] || { label: key, color: '#e61e25' };
+        const pct = Math.max(5, Math.round((meal.meal_calories / totalCal) * 100));
+        return `<div class="fp-meal-alloc-seg" style="width:${pct}%;background:${meta.color};" title="${meta.label}: ${meal.meal_calories} kcal (${pct}%)"><span class="fp-alloc-lbl">${meta.label} ${pct}%</span></div>`;
+      }).join('');
+    }
+  }
+
+  function _setText(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value == null ? '—' : value;
+  }
+
+  function _bindTabListKeyboard(containerEl, tabSelector) {
+    if (!containerEl) return;
+    containerEl.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      const tabs = Array.from(containerEl.querySelectorAll(tabSelector));
+      const idx = tabs.indexOf(document.activeElement);
+      if (idx === -1) return;
+      e.preventDefault();
+      let nextIdx = e.key === 'ArrowRight' ? idx + 1 : idx - 1;
+      if (nextIdx >= tabs.length) nextIdx = 0;
+      if (nextIdx < 0) nextIdx = tabs.length - 1;
+      tabs[nextIdx].focus();
+      tabs[nextIdx].click();
+    });
   }
 
   function _renderWeeklyRoutine(routine, workouts) {
@@ -2254,7 +2951,7 @@ const MemberModule = (() => {
 
     if (!routine || !routine.days || !routine.days.length) {
       tabsEl.innerHTML = '';
-      panelsEl.innerHTML = '<div style="color:var(--muted);">No workout routine available yet.</div>';
+      panelsEl.innerHTML = '<div style="color:var(--goals-muted, var(--muted));">No workout routine available yet.</div>';
       return;
     }
 
@@ -2262,49 +2959,561 @@ const MemberModule = (() => {
     routine.days.forEach(day => (day.exercises || []).forEach(e => { _exercisesById[e.id] = e; }));
 
     tabsEl.innerHTML = routine.days.map(day => `
-      <button type="button" class="fp-tab-btn${day.day_number === 1 ? ' active' : ''}" data-fp-day="${day.day_number}">
+      <button type="button" class="fp-tab-btn fw-day-pill${day.day_number === 1 ? ' active' : ''}${day.type === 'rest' ? ' rest' : ''}"
+              role="tab"
+              id="fp-day-tab-${day.day_number}"
+              data-fp-day="${day.day_number}"
+              aria-selected="${day.day_number === 1 ? 'true' : 'false'}"
+              aria-controls="fp-day-panel-${day.day_number}"
+              tabindex="${day.day_number === 1 ? '0' : '-1'}">
         Day ${day.day_number}${day.type === 'rest' ? ' · Rest' : ''}
       </button>`).join('');
 
     panelsEl.innerHTML = routine.days.map(day => `
-      <div class="fp-day-panel" data-fp-day-panel="${day.day_number}" style="${day.day_number === 1 ? '' : 'display:none;'}">
+      <div class="fp-day-panel" id="fp-day-panel-${day.day_number}" role="tabpanel" aria-labelledby="fp-day-tab-${day.day_number}" data-fp-day-panel="${day.day_number}" style="${day.day_number === 1 ? '' : 'display:none;'}">
         <div class="panel-title" style="font-size:16px;margin-bottom:10px;">${_esc(day.focus)}</div>
         ${day.type === 'rest'
-          ? `<div style="font-size:15px;color:var(--muted);">${_esc(day.note || '')}</div>`
-          : `<div class="fp-card-grid">${(day.exercises || []).map(e => `
-              <div class="fp-card" data-exercise-id="${e.id}">
-                <div class="fp-card-title">🏋️ ${_esc(e.name)}</div>
-                <div class="fp-card-note">${_esc(e.target_area || '')}${e.sub_target ? ' · ' + _esc(e.sub_target) : ''}</div>
-                <div class="fp-card-note">${_esc(e.sets)} sets × ${_esc(e.reps)} reps${e.equipment_name ? ' · ' + _esc(e.equipment_name) : ''}</div>
-                <button type="button" class="btn btn-outline btn-sm fp-view-instructions-btn" style="margin-top:8px;" data-exercise-id="${e.id}">VIEW INSTRUCTIONS</button>
-              </div>`).join('')}
+          ? `<div style="font-size:15px;color:var(--goals-muted, var(--muted));">${_esc(day.note || '')}</div>`
+          : `<div class="workout-exercise-list">${(day.exercises || []).map(e => {
+              const targetSlug = (e.target_area || 'full-body').toLowerCase().replace(/\s+/g, '-');
+              const isImg = e.media_url && typeof e.media_url === 'string' && /\.(jpg|jpeg|png|gif|webp)$/i.test(e.media_url.trim());
+              const thumbSrc = isImg
+                ? e.media_url.trim()
+                : `/static/images/workouts/thumb-${targetSlug}.jpg`;
+              const fallbackText = (e.target_area || 'EXERCISE').toUpperCase();
+
+              return `
+              <div class="workout-exercise-card" data-exercise-id="${e.id}" role="button" tabindex="0" aria-label="View instructions for ${_esc(e.name)}">
+                <div class="workout-exercise-media">
+                  <img src="${thumbSrc}"
+                       alt="${_esc(e.name)}"
+                       class="workout-exercise-img"
+                       onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                  <div class="workout-exercise-fallback" style="display:none;">${_esc(fallbackText)}</div>
+                </div>
+                <div class="workout-exercise-content">
+                  <div class="workout-exercise-title">${_esc(e.name)}</div>
+                  <div class="workout-exercise-tags">
+                    <span class="workout-tag-area">${_esc(e.target_area || 'Workout')}</span>
+                    ${e.sub_target ? `<span class="workout-tag-sub">${_esc(e.sub_target)}</span>` : ''}
+                    ${e.equipment_name ? `<span class="workout-tag-equip">${_esc(e.equipment_name)}</span>` : ''}
+                  </div>
+                  <div class="workout-exercise-reps">${_esc(e.sets)} sets × ${_esc(e.reps)} reps</div>
+                </div>
+                <div class="workout-exercise-arrow" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                  </svg>
+                </div>
+              </div>`;
+            }).join('')}
             </div>`}
       </div>`).join('');
 
-    // Event delegation for the "View Instructions" buttons — avoids
-    // fragile inline-onclick string escaping for exercise data.
-    panelsEl.querySelectorAll('.fp-view-instructions-btn').forEach(btn => {
-      btn.addEventListener('click', () => openExerciseInstructionsModal(Number(btn.dataset.exerciseId)));
+    // Event handlers for clickable workout exercise cards
+    panelsEl.querySelectorAll('.workout-exercise-card').forEach(card => {
+      const openModal = () => openExerciseInstructionsModal(Number(card.dataset.exerciseId));
+      card.addEventListener('click', openModal);
+      card.addEventListener('keydown', (evt) => {
+        if (evt.key === 'Enter' || evt.key === ' ') {
+          evt.preventDefault();
+          openModal();
+        }
+      });
     });
 
     tabsEl.querySelectorAll('[data-fp-day]').forEach(btn => {
       btn.addEventListener('click', () => {
         const dayNum = btn.dataset.fpDay;
-        tabsEl.querySelectorAll('[data-fp-day]').forEach(b => b.classList.remove('active'));
+        tabsEl.querySelectorAll('[data-fp-day]').forEach(b => {
+          b.classList.remove('active');
+          b.setAttribute('aria-selected', 'false');
+          b.setAttribute('tabindex', '-1');
+        });
         btn.classList.add('active');
+        btn.setAttribute('aria-selected', 'true');
+        btn.setAttribute('tabindex', '0');
         panelsEl.querySelectorAll('[data-fp-day-panel]').forEach(p => {
           p.style.display = p.dataset.fpDayPanel === dayNum ? '' : 'none';
         });
       });
     });
+
+    // Arrow key navigation for day tabs
+    _bindTabListKeyboard(tabsEl, '[data-fp-day]');
   }
 
   function switchFitnessPlanTab(tabName, btnEl) {
-    document.querySelectorAll('.fp-tabs .fp-tab-btn').forEach(b => b.classList.remove('active'));
-    if (btnEl) btnEl.classList.add('active');
+    if (_isMinor && tabName === 'progress') return;
+
+    document.querySelectorAll('.fp-tabs .fp-tab-btn').forEach(b => {
+      b.classList.remove('active');
+      b.setAttribute('aria-selected', 'false');
+      b.setAttribute('tabindex', '-1');
+    });
+    if (!btnEl) {
+      btnEl = document.querySelector(`.fp-tabs [data-fp-tab="${tabName}"]`);
+    }
+    if (btnEl) {
+      btnEl.classList.add('active');
+      btnEl.setAttribute('aria-selected', 'true');
+      btnEl.setAttribute('tabindex', '0');
+    }
     document.querySelectorAll('.fp-tab-panel').forEach(p => {
       p.style.display = p.dataset.fpPanel === tabName ? '' : 'none';
     });
+    if (tabName === 'progress') {
+      loadFitnessProgress();
+    }
+  }
+
+  // ── Progress Tracking (Adults Only) ────────────────────────────────────
+
+  function loadFitnessProgress() {
+    const fitData = _parseJSON('member-fitness-data') || {};
+    if (fitData.is_minor || !fitData.age || fitData.age < 18) return;
+
+    fetch('/member/fitness/progress')
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to load progress');
+        return res.json();
+      })
+      .then(data => {
+        if (!data || !data.success) return;
+
+        // Synchronize current weight & milestone bar with Hub Header
+        if (data.current_weight != null) {
+          _setText('fw-hub-weight', `${data.current_weight} kg`);
+          _setText('meas-weight', `${data.current_weight} kg`);
+          const fitScript = document.getElementById('member-fitness-data');
+          if (fitScript) {
+            try {
+              const fd = JSON.parse(fitScript.textContent);
+              fd.weight_kg = data.current_weight;
+              if (data.goal_weight != null) fd.goal_weight = data.goal_weight;
+              if (data.starting_weight != null) fd.calculated_weight = data.starting_weight;
+              fitScript.textContent = JSON.stringify(fd);
+
+              if (fd.height_cm && !fd.is_minor) {
+                const hM = fd.height_cm / 100.0;
+                const bmiVal = (data.current_weight / (hM * hM)).toFixed(1);
+                _setText('meas-bmi', bmiVal);
+                _setText('fw-calc-bmi', bmiVal);
+                const b = parseFloat(bmiVal);
+                const hubBmiVal = document.getElementById('fw-hub-bmi');
+                if (hubBmiVal) {
+                  hubBmiVal.textContent = bmiVal;
+                  hubBmiVal.style.color = (b >= 18.5 && b <= 24.9) ? 'var(--green)' : 'var(--white)';
+                }
+              }
+            } catch (_) {}
+          }
+        }
+        _updateMilestoneBar(data.starting_weight || data.current_weight, data.current_weight, data.goal_weight);
+
+        // 1. Goal Progress Summary Card
+        const goalContainer = document.getElementById('fw-goal-progress-container');
+        if (goalContainer) {
+          if (data.goal_weight != null) {
+            const startW = data.starting_weight != null ? data.starting_weight : data.current_weight;
+            const curW = data.current_weight != null ? data.current_weight : startW;
+            const goalW = data.goal_weight;
+
+            let pct = 0;
+            const totalChange = parseFloat(goalW) - parseFloat(startW);
+            if (Math.abs(totalChange) < 0.1) {
+              pct = 100;
+            } else {
+              const actualChange = parseFloat(curW) - parseFloat(startW);
+              const ratio = actualChange / totalChange;
+              pct = Math.round(ratio * 100);
+              pct = Math.max(0, Math.min(100, pct));
+            }
+
+            goalContainer.innerHTML = `
+              <div class="fw-goal-stats-row">
+                <div><span class="fw-stat-sub">Starting</span> <strong style="color:var(--white);">${startW} kg</strong></div>
+                <div><span class="fw-stat-sub">Current</span> <strong style="color:var(--gold);">${curW} kg</strong></div>
+                <div><span class="fw-stat-sub">Goal</span> <strong style="color:var(--green);">${goalW} kg</strong></div>
+              </div>
+              <div class="fw-goal-progress-bar-wrap">
+                <div class="fw-goal-progress-bar">
+                  <div class="fw-progress-fill" style="width:${pct}%;"></div>
+                </div>
+                <div class="fw-goal-progress-pct">${pct}% to goal</div>
+              </div>
+            `;
+          } else {
+            goalContainer.innerHTML = `
+              <div class="fw-no-goal-notice" style="color:var(--goals-muted, var(--muted));font-size:14px;padding:8px 0;">
+                <span>No goal weight set yet.</span>
+                <button type="button" class="btn btn-outline btn-sm" style="margin-left:12px;" onclick="openGoalWeightModal()">Set Goal Weight</button>
+              </div>
+            `;
+          }
+        }
+
+        // 2. Weight Change Alert (>= 2 kg diff)
+        const alertEl = document.getElementById('fw-weight-change-alert');
+        const alertText = document.getElementById('fw-weight-change-text');
+        if (alertEl) {
+          if (data.needs_target_update) {
+            alertEl.style.display = 'flex';
+            if (alertText) {
+              alertText.textContent = `Your weight changed by ${data.weight_diff} kg since your last target calculation. Update your targets?`;
+            }
+          } else {
+            alertEl.style.display = 'none';
+          }
+        }
+
+        // 3. Weight Trend Chart (Inline SVG)
+        _renderWeightChart(data.chart_entries || [], data.goal_weight);
+
+        // 4. Recent Weigh-ins List
+        _renderRecentWeights(data.recent_entries || []);
+      })
+      .catch(err => {
+        console.error('Error loading fitness progress:', err);
+      });
+  }
+
+  function _renderWeightChart(entries, goalWeight) {
+    const chartContainer = document.getElementById('fw-chart-container');
+    if (!chartContainer) return;
+
+    if (!entries || entries.length < 2) {
+      chartContainer.innerHTML = `
+        <div class="fw-chart-empty" style="text-align:center;padding:40px 16px;color:var(--goals-muted, var(--muted));font-size:14px;background:rgba(255,255,255,0.02);border:1px dashed rgba(255,255,255,0.1);border-radius:10px;">
+          Log at least 2 weigh-ins to see your weight trend chart.
+        </div>
+      `;
+      return;
+    }
+
+    const W = 560;
+    const H = 240;
+    const padX = 45;
+    const padTop = 30;
+    const padBottom = 45;
+    const chartH = H - padTop - padBottom;
+
+    const weights = entries.map(e => e.weight_kg);
+    let minW = Math.min(...weights);
+    let maxW = Math.max(...weights);
+    if (goalWeight != null && !isNaN(goalWeight)) {
+      minW = Math.min(minW, parseFloat(goalWeight));
+      maxW = Math.max(maxW, parseFloat(goalWeight));
+    }
+    if (minW === maxW) {
+      minW -= 2;
+      maxW += 2;
+    } else {
+      const span = maxW - minW;
+      minW -= span * 0.15;
+      maxW += span * 0.15;
+    }
+
+    const n = entries.length;
+    const points = entries.map((e, i) => {
+      const x = padX + (i * (W - 2 * padX)) / (n - 1);
+      const y = H - padBottom - ((e.weight_kg - minW) / (maxW - minW)) * chartH;
+      return { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, entry: e };
+    });
+
+    const goalY = (goalWeight != null && !isNaN(goalWeight) && maxW > minW)
+      ? Math.round((H - padBottom - ((parseFloat(goalWeight) - minW) / (maxW - minW)) * chartH) * 10) / 10
+      : null;
+
+    const polyPoints = points.map(p => `${p.x},${p.y}`).join(' ');
+    const firstP = points[0];
+    const lastP = points[points.length - 1];
+
+    const areaPoints = `${firstP.x},${H - padBottom} ${polyPoints} ${lastP.x},${H - padBottom}`;
+
+    const svgHtml = `
+      <svg viewBox="0 0 ${W} ${H}" class="fw-weight-chart-svg" style="width:100%;height:auto;display:block;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;" role="img" aria-label="Weight Trend Chart">
+        <defs>
+          <linearGradient id="fwChartGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#e61e25" stop-opacity="0.3"/>
+            <stop offset="100%" stop-color="#e61e25" stop-opacity="0.0"/>
+          </linearGradient>
+        </defs>
+
+        <!-- Horizontal baseline guides -->
+        <line x1="${padX}" y1="${padTop}" x2="${W - padX}" y2="${padTop}" stroke="rgba(255,255,255,0.06)" stroke-dasharray="4"/>
+        <line x1="${padX}" y1="${padTop + chartH / 2}" x2="${W - padX}" y2="${padTop + chartH / 2}" stroke="rgba(255,255,255,0.06)" stroke-dasharray="4"/>
+        <line x1="${padX}" y1="${H - padBottom}" x2="${W - padX}" y2="${H - padBottom}" stroke="rgba(255,255,255,0.06)" stroke-dasharray="4"/>
+
+        ${goalY != null ? `
+        <!-- Goal weight dashed line (matching Mockup 3) -->
+        <line x1="${padX}" y1="${goalY}" x2="${W - padX}" y2="${goalY}" stroke="rgba(40,167,69,0.5)" stroke-width="1.5" stroke-dasharray="4 4" />
+        <text x="${W - padX}" y="${Math.max(14, goalY - 6)}" fill="#28a745" font-size="10" font-weight="600" text-anchor="end" font-family="sans-serif">Goal (${goalWeight} kg)</text>
+        ` : ''}
+
+        <!-- Area fill under line -->
+        <polygon points="${areaPoints}" fill="url(#fwChartGrad)" />
+
+        <!-- Polyline connecting points -->
+        <polyline points="${polyPoints}" fill="none" stroke="#e61e25" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+
+        <!-- Data circles -->
+        ${points.map(p => `
+          <circle cx="${p.x}" cy="${p.y}" r="4.5" fill="#e61e25" stroke="#121212" stroke-width="2" class="fw-chart-point">
+            <title>${p.entry.weight_kg} kg on ${p.entry.logged_at}</title>
+          </circle>
+        `).join('')}
+
+        <!-- First point label -->
+        <text x="${firstP.x}" y="${Math.max(16, firstP.y - 12)}" fill="#e0e0e0" font-size="12" font-weight="600" text-anchor="start" font-family="sans-serif">
+          ${firstP.entry.weight_kg} kg
+        </text>
+        <text x="${firstP.x}" y="${H - padBottom + 20}" fill="rgba(255,255,255,0.5)" font-size="11" text-anchor="start" font-family="sans-serif">
+          ${firstP.entry.logged_at}
+        </text>
+
+        <!-- Latest point label -->
+        <text x="${lastP.x}" y="${Math.max(16, lastP.y - 12)}" fill="#e61e25" font-size="12" font-weight="bold" text-anchor="end" font-family="sans-serif">
+          ${lastP.entry.weight_kg} kg
+        </text>
+        <text x="${lastP.x}" y="${H - padBottom + 20}" fill="#e61e25" font-size="11" text-anchor="end" font-family="sans-serif">
+          ${lastP.entry.logged_at}
+        </text>
+      </svg>
+    `;
+
+    chartContainer.innerHTML = svgHtml;
+  }
+
+  function _renderRecentWeights(entries) {
+    const listEl = document.getElementById('fw-recent-weights-list');
+    if (!listEl) return;
+
+    if (!entries || !entries.length) {
+      listEl.innerHTML = '<div style="color:var(--goals-muted, var(--muted));font-size:13px;padding:8px 0;">No weigh-ins recorded yet.</div>';
+      return;
+    }
+
+    listEl.innerHTML = entries.map(item => `
+      <div class="fw-recent-weight-row" data-log-id="${item.id}" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:8px;margin-bottom:8px;">
+        <div>
+          <span style="font-weight:600;color:var(--white);font-size:15px;">${item.weight_kg} kg</span>
+          <span style="font-size:12px;color:var(--goals-muted, var(--muted));margin-left:10px;">${item.full_date || item.logged_at}</span>
+        </div>
+        <button type="button" class="btn btn-outline btn-sm fw-delete-weight-btn" onclick="deleteWeightLog(${item.id})" style="color:var(--red);border-color:rgba(220,53,69,0.4);padding:4px 10px;font-size:12px;">Delete</button>
+      </div>
+    `).join('');
+  }
+
+  function submitWeightLog() {
+    const input = document.getElementById('fw-today-weight');
+    if (!input) return;
+    const weightVal = parseFloat(input.value);
+    if (isNaN(weightVal) || weightVal < 20 || weightVal > 300) {
+      showToast('Please enter a valid weight between 20.0 and 300.0 kg.', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('fw-log-weight-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'LOGGING...'; }
+
+    fetch('/member/fitness/log-weight', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ weight_kg: weightVal }),
+    })
+      .then(res => res.json().then(data => ({ ok: res.ok, status: res.status, data })))
+      .then(({ ok, data }) => {
+        if (!ok || !data.success) {
+          showToast(data.error || 'Failed to log weight.', 'error');
+          return;
+        }
+        showToast(data.message || 'Weight logged successfully.', 'success');
+        input.value = '';
+
+        // Update current measurements block
+        const measW = document.getElementById('meas-weight');
+        if (measW) measW.textContent = `${data.weight_kg} kg`;
+
+        loadFitnessProgress();
+      })
+      .catch(() => {
+        showToast('Could not reach server. Please try again.', 'error');
+      })
+      .finally(() => {
+        if (btn) { btn.disabled = false; btn.textContent = 'LOG WEIGHT'; }
+      });
+  }
+
+  function deleteWeightLog(logId) {
+    if (!confirm('Are you sure you want to delete this weight entry?')) return;
+
+    fetch(`/member/fitness/delete-weight/${logId}`, {
+      method: 'DELETE',
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (!data || !data.success) {
+          showToast(data.error || 'Failed to delete weight entry.', 'error');
+          return;
+        }
+        showToast('Weight entry deleted.', 'success');
+        if (data.current_weight != null) {
+          const measW = document.getElementById('meas-weight');
+          if (measW) measW.textContent = `${data.current_weight} kg`;
+        }
+        loadFitnessProgress();
+      })
+      .catch(() => {
+        showToast('Could not reach server. Please try again.', 'error');
+      });
+  }
+
+  function openGoalWeightModal() {
+    const modal = document.getElementById('goal-weight-modal');
+    if (!modal) return;
+    const errEl = document.getElementById('fw-modal-goal-error');
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+    const fitData = _parseJSON('member-fitness-data') || {};
+    const input = document.getElementById('fw-modal-goal-weight');
+    if (input) {
+      input.value = fitData.goal_weight != null ? fitData.goal_weight : '';
+      calculateModalGoalBmi();
+    }
+    modal.classList.add('open');
+  }
+
+  function closeGoalWeightModal() {
+    const modal = document.getElementById('goal-weight-modal');
+    if (modal) modal.classList.remove('open');
+  }
+
+  function calculateModalGoalBmi() {
+    const input = document.getElementById('fw-modal-goal-weight');
+    const hint = document.getElementById('fw-modal-goal-bmi-hint');
+    if (!input || !hint) return;
+
+    const fitData = _parseJSON('member-fitness-data') || {};
+    const heightCm = fitData.height_cm;
+    const val = parseFloat(input.value);
+
+    if (!heightCm || isNaN(val) || val <= 0) {
+      hint.style.display = 'none';
+      return;
+    }
+
+    const heightM = heightCm / 100.0;
+    const bmi = val / (heightM * heightM);
+    let category = '';
+    if (bmi < 18.5) category = '(Underweight - minimum safe BMI is 18.5)';
+    else if (bmi <= 24.9) category = '(Normal)';
+    else if (bmi <= 29.9) category = '(Overweight)';
+    else if (bmi <= 40.0) category = '(Obese)';
+    else category = '(Above maximum safe BMI 40.0)';
+
+    hint.style.display = '';
+    hint.textContent = `Implied BMI: ${bmi.toFixed(1)} ${category}`;
+    if (bmi < 18.5 || bmi > 40.0) {
+      hint.style.color = 'var(--red)';
+    } else {
+      hint.style.color = 'var(--gold)';
+    }
+  }
+
+  function submitGoalWeight() {
+    const input = document.getElementById('fw-modal-goal-weight');
+    const errEl = document.getElementById('fw-modal-goal-error');
+    if (!input) return;
+
+    const goalVal = parseFloat(input.value);
+    if (isNaN(goalVal) || goalVal < 30 || goalVal > 300) {
+      if (errEl) { errEl.style.display = ''; errEl.textContent = 'Please enter a goal weight between 30.0 and 300.0 kg.'; }
+      return;
+    }
+
+    const btn = document.getElementById('fw-modal-goal-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'SAVING...'; }
+
+    fetch('/member/fitness/set-goal-weight', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal_weight_kg: goalVal }),
+    })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok || !data.success) {
+          if (errEl) {
+            errEl.style.display = '';
+            errEl.textContent = data.error || 'Failed to update goal weight.';
+          }
+          return;
+        }
+        closeGoalWeightModal();
+        showToast('Goal weight updated.', 'success');
+
+        // Update local fitData cache if present
+        const fitScript = document.getElementById('member-fitness-data');
+        if (fitScript) {
+          try {
+            const fd = JSON.parse(fitScript.textContent);
+            fd.goal_weight = data.goal_weight_kg;
+            fitScript.textContent = JSON.stringify(fd);
+          } catch (e) {}
+        }
+
+        loadFitnessProgress();
+      })
+      .catch(() => {
+        if (errEl) { errEl.style.display = ''; errEl.textContent = 'Could not reach server. Please try again.'; }
+      })
+      .finally(() => {
+        if (btn) { btn.disabled = false; btn.textContent = 'SAVE GOAL'; }
+      });
+  }
+
+  function recalculateFromProgress() {
+    const btn = document.getElementById('fw-update-targets-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'UPDATING...'; }
+
+    fetch('/member/fitness/calculate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok || !data.success) {
+          showToast(data.error || 'Failed to update targets.', 'error');
+          return;
+        }
+        const calc = data.calculations || {};
+        _setText('fp-target-calories', calc.calorie_target != null ? `${calc.calorie_target} kcal` : '—');
+        _setText('fp-target-protein', calc.protein_target_g != null ? `${calc.protein_target_g} g` : '—');
+        _setText('fp-nutrition-calorie', calc.calorie_target != null ? `${calc.calorie_target} kcal` : '—');
+        _setText('fp-nutrition-protein', calc.protein_target_g != null ? `${calc.protein_target_g} g` : '—');
+        _updateMacroSplit(calc.calorie_target, calc.protein_target_g);
+        _setText('fw-calc-bmr', calc.bmr != null ? `${calc.bmr} kcal` : '—');
+        _setText('fw-calc-tdee', calc.tdee != null ? `${calc.tdee} kcal` : '—');
+        _setText('fw-calc-bmi', calc.bmi != null ? calc.bmi : '—');
+
+        const alertEl = document.getElementById('fw-weight-change-alert');
+        if (alertEl) alertEl.style.display = 'none';
+
+        showToast('Your daily targets have been updated to match your current weight!', 'success');
+        loadFitnessProgress();
+      })
+      .catch(() => {
+        showToast('Could not reach server. Please try again.', 'error');
+      })
+      .finally(() => {
+        if (btn) { btn.disabled = false; btn.textContent = 'UPDATE TARGETS'; }
+      });
+  }
+
+  function dismissWeightChangeAlert() {
+    const alertEl = document.getElementById('fw-weight-change-alert');
+    if (alertEl) alertEl.style.display = 'none';
   }
 
   return {
@@ -2322,8 +3531,16 @@ const MemberModule = (() => {
     changeProfilePicture,
     changeAttendanceMonth, openServiceModal, openEquipmentModal, openExerciseInstructionsModal,
     submitFitnessStep1, selectFitnessGoal, fitnessWizardBack, submitFitnessStep2,
-    retryFitnessCalculation, fitnessWizardEditGoal, switchFitnessPlanTab,
+    retryFitnessCalculation: retryFitnessSetup,
+    fitnessWizardEditGoal: editFitnessProfileAndFocus,
+    switchFitnessPlanTab,
+    editFitnessProfileAndFocus, goToFitnessStep, retryFitnessSetup, cancelFitnessEdit,
+    updateActivityHelperText, onFitnessGoalRadioChange,
+    selectFitnessGoalByCode, selectObjectiveCard, selectPrimaryObjective,
     toggleNotificationPanel, openNotifItem,
+    loadFitnessProgress, submitWeightLog, deleteWeightLog,
+    openGoalWeightModal, closeGoalWeightModal, calculateModalGoalBmi, submitGoalWeight,
+    recalculateFromProgress, dismissWeightChangeAlert,
   };
 })();
 
@@ -2385,12 +3602,31 @@ document.addEventListener('DOMContentLoaded', () => {
   window.openEquipmentModal      = (id) => MemberModule.openEquipmentModal(id);
   window.submitFitnessStep1      = () => MemberModule.submitFitnessStep1();
   window.selectFitnessGoal       = (card) => MemberModule.selectFitnessGoal(card);
+  window.selectFitnessGoalByCode = (code) => MemberModule.selectFitnessGoalByCode(code);
+  window.selectPrimaryObjective  = (code, el) => MemberModule.selectPrimaryObjective(code, el);
+  window.selectObjectiveCard     = (code, el) => MemberModule.selectObjectiveCard(code, el);
   window.fitnessWizardBack       = () => MemberModule.fitnessWizardBack();
   window.submitFitnessStep2      = () => MemberModule.submitFitnessStep2();
-  window.retryFitnessCalculation = () => MemberModule.retryFitnessCalculation();
-  window.fitnessWizardEditGoal   = () => MemberModule.fitnessWizardEditGoal();
+  window.retryFitnessCalculation = () => MemberModule.retryFitnessSetup();
+  window.retryFitnessSetup       = () => MemberModule.retryFitnessSetup();
+  window.fitnessWizardEditGoal   = () => MemberModule.editFitnessProfileAndFocus();
+  window.editFitnessProfileAndFocus = () => MemberModule.editFitnessProfileAndFocus();
+  window.cancelFitnessEdit       = () => MemberModule.cancelFitnessEdit();
+  window.goToFitnessStep         = (step) => MemberModule.goToFitnessStep(step);
+  window.updateActivityHelperText = () => MemberModule.updateActivityHelperText();
+  window.onFitnessGoalRadioChange = (radio) => MemberModule.onFitnessGoalRadioChange(radio);
+  window.openExerciseInstructionsModal = (id) => MemberModule.openExerciseInstructionsModal(id);
   window.switchFitnessPlanTab    = (tabName, btnEl) => MemberModule.switchFitnessPlanTab(tabName, btnEl);
   window.toggleNotificationPanel = () => MemberModule.toggleNotificationPanel();
+  window.loadFitnessProgress     = () => MemberModule.loadFitnessProgress();
+  window.submitWeightLog         = () => MemberModule.submitWeightLog();
+  window.deleteWeightLog         = (id) => MemberModule.deleteWeightLog(id);
+  window.openGoalWeightModal     = () => MemberModule.openGoalWeightModal();
+  window.closeGoalWeightModal    = () => MemberModule.closeGoalWeightModal();
+  window.calculateModalGoalBmi   = () => MemberModule.calculateModalGoalBmi();
+  window.submitGoalWeight        = () => MemberModule.submitGoalWeight();
+  window.recalculateFromProgress = () => MemberModule.recalculateFromProgress();
+  window.dismissWeightChangeAlert= () => MemberModule.dismissWeightChangeAlert();
 
   try {
     MemberModule.init();

@@ -1,4 +1,8 @@
 import os
+from dotenv import load_dotenv
+load_dotenv()  # Reads variables from a .env file in the project root, if present
+
+import math
 import re
 import secrets
 import string
@@ -9,8 +13,12 @@ import tempfile
 import time
 import numpy as np
 from collections import OrderedDict
+
 from dotenv import load_dotenv
 load_dotenv(override=True)  # Reads variables from a .env file in the project root, if present
+
+
+
 
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response
 from markupsafe import Markup, escape
@@ -22,6 +30,17 @@ from flask_mail import Mail, Message
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from datetime import datetime, timezone, date, timedelta
+
+try:
+    import google.generativeai as genai
+    GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+    if GEMINI_API_KEY:
+        genai.configure(api_key=GEMINI_API_KEY)
+except ImportError:
+    genai = None
+    GEMINI_API_KEY = None
+
+print(f"[ai-coach] Gemini key loaded: {'yes' if GEMINI_API_KEY else 'no'}")
 
 # ── School ID sanity checks (opencv-python-headless + pytesseract) ──
 # Runs fully offline (no external API calls) — flags an uploaded "school ID"
@@ -1259,6 +1278,7 @@ class User(db.Model):
     recorded_payments= db.relationship('Payment', foreign_keys='Payment.recorded_by_id', back_populates='recorded_by')
     attendance       = db.relationship('Attendance', foreign_keys='Attendance.member_id', back_populates='member', cascade='all, delete-orphan')
     body_goals       = db.relationship('BodyGoal', back_populates='member', cascade='all, delete-orphan')
+    weight_logs      = db.relationship('WeightLog', back_populates='member', cascade='all, delete-orphan')
     fitness_profile  = db.relationship('FitnessProfile', back_populates='member', uselist=False, cascade='all, delete-orphan')
 
     @property
@@ -1571,6 +1591,33 @@ class BodyGoal(db.Model):
     member = db.relationship('User', back_populates='body_goals')
 
 
+class WeightLog(db.Model):
+    """Historical weight entries for tracking progress over time.
+    Preserved across membership expiration/lapses."""
+    __tablename__ = 'weight_logs'
+    __table_args__ = (
+        db.UniqueConstraint('member_id', 'log_date', name='uq_weight_logs_member_log_date'),
+    )
+    id            = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    member_id     = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    weight_kg     = db.Column(db.Numeric(5, 2), nullable=False)
+    logged_at     = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    log_date      = db.Column(db.Date, nullable=False, default=_today_manila)
+
+    member = db.relationship('User', back_populates='weight_logs')
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.log_date is None:
+            if self.logged_at is not None:
+                self.log_date = _to_manila(self.logged_at).date()
+            else:
+                self.log_date = _today_manila()
+
+    def __repr__(self):
+        return f"<WeightLog member_id={self.member_id} weight={self.weight_kg} log_date={self.log_date} logged_at={self.logged_at}>"
+
+
 class FitnessProfile(db.Model):
     """The member's current fitness-intake profile for the AI Fitness Goal
     and Recommendation feature — one row per member, holding the relatively
@@ -1594,15 +1641,24 @@ class FitnessProfile(db.Model):
     height_cm          = db.Column(db.Numeric(5, 2), nullable=False)
     sex                = db.Column(db.String(10), nullable=False)   # 'male' | 'female'
     activity_level     = db.Column(db.String(20), nullable=False)   # 'low_activity' | 'moderate_activity' | 'high_activity'
-    fitness_goal       = db.Column(db.String(10), nullable=True)    # 'CUT' | 'BULK' | 'MAINTAIN' | 'RECOMP' — NULL until Step 2 is completed
+    fitness_goal       = db.Column(db.String(30), nullable=True)    # Target body-part focus (e.g. 'CHEST', 'FULL_BODY', 'BACK') — NULL until Step 2 is completed
+    primary_objective  = db.Column(db.String(20), nullable=True, default='MAINTAIN') # 'CUT' | 'BULK' | 'MAINTAIN' | 'RECOMP'
     created_at         = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at         = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
-                                    onupdate=lambda: datetime.now(timezone.utc))
+                                     onupdate=lambda: datetime.now(timezone.utc))
+    # ── AI Coach cache — stores the Gemini-generated motivational summary
+    #    so subsequent page loads return it instantly without another API
+    #    call. Cleared (set to NULL) whenever the member changes their
+    #    fitness_goal in Step 2, ensuring they always see a fresh message
+    #    that matches their current goal. ──
+    ai_recommendation  = db.Column(db.Text, nullable=True)
+    # Weight snapshot when targets were last calculated
+    calculated_weight  = db.Column(db.Numeric(5, 2), nullable=True)
 
     member = db.relationship('User', back_populates='fitness_profile')
 
     def __repr__(self):
-        return f"<FitnessProfile member_id={self.member_id} goal={self.fitness_goal}>"
+        return f"<FitnessProfile member_id={self.member_id} obj={self.primary_objective} goal={self.fitness_goal}>"
 
 
 class FoodItem(db.Model):
@@ -1648,6 +1704,7 @@ class Exercise(db.Model):
     sub_target        = db.Column(db.String(60), nullable=True)    # finer-grained area within target_area, e.g. "Upper Chest"
     specific_target   = db.Column(db.String(60), nullable=True)    # Level-3 detail within sub_target — currently populated only for Biceps/Triceps (e.g. "Long Head"); NULL elsewhere
     instructions      = db.Column(db.Text, nullable=True)          # rule-based, curated step-by-step instructions (NOT AI-generated)
+    media_url         = db.Column(db.String(255), nullable=True)   # optional MP4/GIF demonstration URL (relative static path or absolute CDN URL)
     is_active         = db.Column(db.Boolean, nullable=False, default=True)
 
     def __repr__(self):
@@ -3810,7 +3867,52 @@ FITNESS_HEIGHT_CM_MIN, FITNESS_HEIGHT_CM_MAX = 100.0, 250.0
 FITNESS_WEIGHT_KG_MIN, FITNESS_WEIGHT_KG_MAX = 20.0, 300.0
 FITNESS_VALID_SEXES           = {'male', 'female'}
 FITNESS_VALID_ACTIVITY_LEVELS = {'low_activity', 'moderate_activity', 'high_activity'}
-FITNESS_VALID_GOALS           = {'CUT', 'BULK', 'MAINTAIN', 'RECOMP'}
+FITNESS_VALID_OBJECTIVES = {'CUT', 'BULK', 'MAINTAIN', 'RECOMP'}
+
+FITNESS_OBJECTIVE_LABELS = {
+    'CUT':      'Cut / Fat Loss',
+    'BULK':     'Bulk / Muscle Mass',
+    'MAINTAIN': 'Maintain & Tone',
+    'RECOMP':   'Body Recomposition',
+}
+
+FITNESS_OBJECTIVE_OFFSETS = {
+    'CUT':      -500,
+    'BULK':      300,
+    'MAINTAIN':    0,
+    'RECOMP':   -200,
+}
+
+FITNESS_VALID_GOALS = {
+    'FULL_BODY', 'CHEST', 'BACK', 'ARMS', 'LEGS', 'SHOULDERS', 'CORE',
+    # Legacy goals supported for backward compatibility
+    'CUT', 'BULK', 'MAINTAIN', 'RECOMP',
+}
+
+FITNESS_GOAL_LABELS = {
+    'FULL_BODY': 'Full Body Workout',
+    'CHEST':     'Chest Workout',
+    'BACK':      'Back Workout',
+    'ARMS':      'Arm Workout',
+    'LEGS':      'Lower Body Workout',
+    'SHOULDERS': 'Shoulders Workout',
+    'CORE':      'Abs & Core Workout',
+    # Legacy
+    'CUT':       'Cut',
+    'BULK':      'Bulk',
+    'MAINTAIN':  'Maintain',
+    'RECOMP':    'Body Recomposition',
+}
+
+FITNESS_TARGET_AREA_MAP = {
+    'FULL_BODY': ['Chest', 'Back', 'Arms', 'Legs', 'Shoulders', 'Core'],
+    'CHEST':     ['Chest'],
+    'BACK':      ['Back'],
+    'ARMS':      ['Arms'],
+    'LEGS':      ['Legs'],
+    'SHOULDERS': ['Shoulders'],
+    'CORE':      ['Core'],
+}
 
 
 def _valid_fitness_height(height_cm):
@@ -3846,21 +3948,33 @@ FITNESS_ACTIVITY_MULTIPLIERS = {
     'high_activity':     1.80,  # combines former Very Active (1.725) + Extra Active (1.90)
 }
 FITNESS_GOAL_CALORIE_OFFSETS = {
-    'CUT':      -500,
-    'BULK':      300,
-    'MAINTAIN':    0,
-    'RECOMP':   -200,
+    'FULL_BODY':      0,
+    'CHEST':        150,
+    'BACK':         150,
+    'ARMS':           0,
+    'LEGS':         200,
+    'SHOULDERS':    100,
+    'CORE':        -300,
+    # Legacy
+    'CUT':         -500,
+    'BULK':         300,
+    'MAINTAIN':       0,
+    'RECOMP':      -200,
 }
 FITNESS_MIN_CALORIES = {'male': 1500, 'female': 1200}
 FITNESS_PROTEIN_G_PER_KG = 1.6
 
 
-def _calculate_fitness_targets(height_cm, weight_kg, sex, age, activity_level, goal):
+def _calculate_fitness_targets(height_cm, weight_kg, sex, age, activity_level, goal=None, primary_objective=None):
     """BMI, BMR (Mifflin-St Jeor), TDEE, goal-based calorie target (with a
     safety-floor minimum), and protein target — general fitness estimates
     for this capstone system, not medical prescriptions. Returns a dict of
     plain floats/ints, rounded as specified, ready to store and to return
-    as JSON."""
+    as JSON.
+
+    Primary objective (CUT/BULK/MAINTAIN/RECOMP) drives metabolic calorie offsets,
+    while goal represents workout focus (e.g. CHEST/FULL_BODY).
+    """
     height_m = height_cm / 100.0
     bmi = weight_kg / (height_m * height_m)
 
@@ -3872,7 +3986,18 @@ def _calculate_fitness_targets(height_cm, weight_kg, sex, age, activity_level, g
     multiplier = FITNESS_ACTIVITY_MULTIPLIERS.get(activity_level, 1.20)
     tdee = bmr * multiplier
 
-    offset = FITNESS_GOAL_CALORIE_OFFSETS.get(goal, 0)
+    # Adolescents (< 18) should not undergo calorie restriction or surplus offsets;
+    # maintenance at TDEE supports healthy growth, developmental needs, and avoids
+    # energy restriction during puberty.
+    if age < 18:
+        offset = 0
+    else:
+        if primary_objective and primary_objective in FITNESS_OBJECTIVE_OFFSETS:
+            offset = FITNESS_OBJECTIVE_OFFSETS[primary_objective]
+        elif goal and goal in FITNESS_OBJECTIVE_OFFSETS:
+            offset = FITNESS_OBJECTIVE_OFFSETS[goal]
+        else:
+            offset = FITNESS_GOAL_CALORIE_OFFSETS.get(goal, 0)
     calorie_target = tdee + offset
     min_calories = FITNESS_MIN_CALORIES.get(sex, 1200)
     if calorie_target < min_calories:
@@ -3912,6 +4037,42 @@ FITNESS_ACTIVITY_FREQUENCY_NOTES = {
 }
 
 FITNESS_GOAL_TIPS = {
+    'FULL_BODY': [
+        'Focus on compound movements to maximize muscle engagement across multiple joints.',
+        'Ensure at least 48 hours of recovery between intense full-body sessions.',
+        'Stay consistent with hydration and hit your daily protein target to support total body repair.',
+    ],
+    'CHEST': [
+        'Control the eccentric (lowering) phase on all pressing movements for maximum pectoral stretch.',
+        'Vary your incline angles to target both upper and lower chest fibers.',
+        'Squeeze and pause at peak contraction on flyes and cable crossovers.',
+    ],
+    'BACK': [
+        'Initiate every pull by retracting your shoulder blades rather than pulling with your arms.',
+        'Incorporate both horizontal rows and vertical pulldowns for balanced back thickness and width.',
+        'Maintain a neutral spine during rows and back extensions to safeguard lower back health.',
+    ],
+    'ARMS': [
+        'Keep your elbows pinned to your sides during curls to isolate the biceps.',
+        'Train both the long and lateral heads of your triceps with overhead extensions and pushdowns.',
+        'Focus on controlled tempo and avoid swinging weights with momentum.',
+    ],
+    'LEGS': [
+        'Push through your heels and maintain knee alignment over toes during squats and presses.',
+        'Incorporate hinge movements like Romanian Deadlifts to strengthen hamstrings and glutes.',
+        'Progressive overload is key — focus on gradual weight or rep increases week to week.',
+    ],
+    'SHOULDERS': [
+        'Lead with your elbows on lateral raises to keep tension squarely on the lateral deltoid.',
+        'Don\u2019t neglect rear delts — face pulls and reverse flyes build balanced shoulder joint stability.',
+        'Warm up rotator cuffs with light band work before heavy overhead pressing.',
+    ],
+    'CORE': [
+        'Focus on breathing out and contracting your abdominal wall at the peak of each crunch or raise.',
+        'Quality beats quantity: 15 slow, controlled reps activate more deep core fibers than 50 rushed reps.',
+        'Complement direct abdominal training with a balanced diet to enhance midsection definition.',
+    ],
+    # Legacy
     'CUT': [
         'Stay in a moderate calorie deficit and keep protein high to help preserve muscle while losing fat.',
         'Combine resistance training with sustainable cardio, like brisk walking, rather than extreme cardio volume.',
@@ -4077,10 +4238,11 @@ def _recommend_meal_plan(calorie_target, protein_target_g):
 
 
 def _goal_tagged_exercises(goal):
-    """All active Exercise rows tagged for this goal, in stable catalog
-    order (by id). Single source of truth for "which exercises match a
-    goal" — used by both the flat top-N Workouts list and the weekly
-    routine generator below, so there is exactly one filtering rule."""
+    """All active Exercise rows matching the goal. If goal is a target body
+    part, returns all active exercises so that the 7-day routine maintains
+    balanced coverage across all scheduled training days."""
+    if goal in FITNESS_TARGET_AREA_MAP:
+        return Exercise.query.filter_by(is_active=True).order_by(Exercise.id).all()
     return [
         e for e in Exercise.query.filter_by(is_active=True).order_by(Exercise.id).all()
         if goal in (e.goal_tags or '').split(',')
@@ -4088,9 +4250,24 @@ def _goal_tagged_exercises(goal):
 
 
 def _select_exercises_for_goal(goal):
-    """Filters the Exercise catalog to whichever rows are tagged for this
-    goal, preserving a stable, curated order (by id) and capped at a
-    reasonable count so the flat list stays practical, not exhaustive."""
+    """Filters the Exercise catalog specifically for the chosen workout focus
+    (e.g. Chest, Back, Arms, Legs, Core, Shoulders, or Full Body). Used by
+    _recommend_workouts() and the AI coach summary."""
+    if goal in FITNESS_TARGET_AREA_MAP:
+        target_areas = FITNESS_TARGET_AREA_MAP[goal]
+        if goal == 'FULL_BODY':
+            compound_names = [
+                'Barbell Bench Press', 'Barbell Deadlift', 'Barbell Back Squat',
+                'Lat Pulldown', 'Overhead Shoulder Press', 'Dumbbell Bicep Curl',
+                'Tricep Rope Pushdown', 'Plank'
+            ]
+            compounds = Exercise.query.filter_by(is_active=True).filter(Exercise.name.in_(compound_names)).all()
+            if len(compounds) >= 5:
+                return compounds[:8]
+            return Exercise.query.filter_by(is_active=True).order_by(Exercise.id).limit(8).all()
+        return Exercise.query.filter_by(is_active=True).filter(Exercise.target_area.in_(target_areas)).order_by(Exercise.id).limit(8).all()
+
+    # Legacy fallback
     return _goal_tagged_exercises(goal)[:8]
 
 
@@ -4125,25 +4302,20 @@ FITNESS_MAX_EXERCISES_PER_DAY = 5
 FITNESS_REST_DAY_NOTE = 'Allow your muscles to recover and avoid unnecessary training on this day.'
 
 
-def _pick_day_exercises(goal_exercises, primary_areas,
+def _pick_day_exercises(goal_exercises, primary_areas, goal=None,
                          min_count=FITNESS_MIN_EXERCISES_PER_DAY,
                          max_count=FITNESS_MAX_EXERCISES_PER_DAY):
     """Selects exercises for one training day, sourced ONLY from the day's
     own primary_areas (e.g. Shoulders & Core -> Shoulders or Core only) —
-    never from another Main Area. This is intentional: a training day must
-    only ever contain exercises from the Main Areas explicitly assigned to
-    it, so an exercise from an unrelated area (e.g. Arms exercises like
-    Bicep Curls/Tricep Pushdowns showing up on a Shoulders & Core day) can
-    never be selected, regardless of goal or how few matching exercises
-    exist for that goal/area combination.
+    never from another Main Area. Prioritizes the member's target focus on
+    relevant days."""
+    target_focus_area = None
+    if goal in FITNESS_TARGET_AREA_MAP and goal != 'FULL_BODY':
+        target_focus_area = FITNESS_TARGET_AREA_MAP[goal][0]
 
-    min_count is intentionally NOT backfilled from any other area. If the
-    goal-filtered catalog has fewer than min_count exercises within
-    primary_areas, this simply returns whatever valid (in-area) exercises
-    are available — a short but correctly-scoped day, rather than padding
-    it with exercises from a different Main Area. Capped at max_count so a
-    day stays compact, not exhaustive."""
     selected = [e for e in goal_exercises if e.target_area in primary_areas]
+    if target_focus_area and target_focus_area in primary_areas:
+        selected.sort(key=lambda e: 0 if e.target_area == target_focus_area else 1)
     return selected[:max_count]
 
 
@@ -4182,13 +4354,21 @@ def _recommend_weekly_routine(goal, activity_level):
             })
             continue
 
-        day_exercises = _pick_day_exercises(goal_exercises, focus_areas)
+        day_exercises = _pick_day_exercises(goal_exercises, focus_areas, goal=goal)
         used_exercises.extend(day_exercises)
+
+        # Derive display focus from the target areas actually present in this day's exercises
+        areas_present = []
+        for e in day_exercises:
+            area = (e.target_area or '').strip()
+            if area and area not in areas_present:
+                areas_present.append(area)
+        derived_focus = " & ".join(areas_present) if areas_present else focus_name
 
         days.append({
             'day_number': day_number,
             'type':       'train',
-            'focus':      focus_name,
+            'focus':      derived_focus,
             'note':       None,
             'exercises': [
                 {
@@ -4202,6 +4382,7 @@ def _recommend_weekly_routine(goal, activity_level):
                     'purpose':         e.purpose,
                     'equipment_name':  e.equipment_name,
                     'instructions':    e.instructions,
+                    'media_url':       e.media_url,
                 }
                 for e in day_exercises
             ],
@@ -4235,6 +4416,7 @@ def _recommend_workouts(goal, activity_level):
                 'reps':         e.default_reps,
                 'purpose':      e.purpose,
                 'instructions': e.instructions,
+                'media_url':    e.media_url,
             }
             for e in exercises
         ],
@@ -4254,6 +4436,122 @@ def _recommend_equipment(exercises):
 
 def _fitness_tips(goal):
     return FITNESS_GOAL_TIPS.get(goal, [])
+
+
+def _select_banner_highlights(weekly_routine, goal):
+    """Pick 1-2 exercise names for the banner Highlights field.
+    Prefers exercises from the day type / target area that best matches
+    the member's goal; falls back to the first exercise of the first training day.
+    """
+    target_areas = set(FITNESS_TARGET_AREA_MAP.get(goal, []))
+    matched_exercises = []
+
+    for day in weekly_routine.get('days', []):
+        if day.get('type') != 'train':
+            continue
+        for ex in day.get('exercises', []):
+            name = ex.get('name')
+            if ex.get('target_area') in target_areas and name and name not in matched_exercises:
+                matched_exercises.append(name)
+                if len(matched_exercises) == 2:
+                    break
+        if len(matched_exercises) == 2:
+            break
+
+    if matched_exercises:
+        return ", ".join(matched_exercises)
+
+    for day in weekly_routine.get('days', []):
+        if day.get('type') == 'train' and day.get('exercises'):
+            first_ex = day['exercises'][0].get('name')
+            if first_ex:
+                return first_ex
+
+    return "Compound movements"
+
+
+def validate_banner(text, allowed_numbers, known_exercise_names, finish_reason=None):
+    """Validates the generated AI coach banner against strict constraints.
+    Rejects the output if any of these are true:
+    - word count > 70 or < 20
+    - contains markdown characters (*, #, -, bullets) or a newline-separated multi-paragraph structure
+    - contains any digit sequence not in allowed_numbers (n_train, n_rest)
+    - mentions more than one exercise name from the full catalog
+    - empty, or finish_reason is not STOP
+    Returns (is_valid: bool, reason: str).
+    """
+    if not text or not str(text).strip():
+        return False, "Output is empty"
+
+    if finish_reason is not None:
+        fr_str = str(finish_reason).upper()
+        if finish_reason != 1 and "STOP" not in fr_str:
+            return False, f"finish_reason is not STOP ({finish_reason})"
+
+    cleaned_text = str(text).strip()
+
+    # Reject markdown characters (*, #, -, bullets)
+    if any(c in cleaned_text for c in ['*', '#', '•', '●', '▪', '◦', '‣', '⁃', '`', '>']):
+        return False, "Contains markdown formatting or bullet characters (*, #, •)"
+
+    # Reject markdown bullet / dash markers (- item or ---)
+    if re.search(r'(?:^|\n)\s*[-]\s+', cleaned_text) or ' - ' in cleaned_text or '--' in cleaned_text:
+        return False, "Contains markdown bullet or dash (-)"
+
+    # Reject multi-paragraph structure
+    if '\n\n' in cleaned_text:
+        return False, "Contains multi-paragraph structure"
+    lines = [l.strip() for l in cleaned_text.splitlines() if l.strip()]
+    if len(lines) > 1:
+        return False, "Contains newline-separated multi-paragraph or multi-line structure"
+
+    # Word count: 20 <= words <= 70
+    words = cleaned_text.split()
+    if len(words) < 20 or len(words) > 70:
+        return False, f"Word count {len(words)} is out of bounds (allowed: 20-70 words)"
+
+    # Number verification: all digit sequences must be in allowed_numbers
+    allowed_set = {str(n) for n in allowed_numbers}
+    found_digits = re.findall(r'\b\d+\b', cleaned_text)
+    for d in found_digits:
+        if d not in allowed_set:
+            return False, f"Disallowed number '{d}' found (allowed: {sorted(allowed_set)})"
+
+    # Exercise mentions: at most ONE exercise name from the full catalog
+    text_lower = cleaned_text.lower()
+    sorted_names = sorted(set(known_exercise_names), key=len, reverse=True)
+    matched_exercises = []
+    temp_text = text_lower
+    for name in sorted_names:
+        if not name or len(name.strip()) < 3:
+            continue
+        pattern = r'\b' + re.escape(name.lower().strip()) + r'\b'
+        if re.search(pattern, temp_text):
+            matched_exercises.append(name)
+            temp_text = re.sub(pattern, ' ___EX___ ', temp_text)
+
+    if len(matched_exercises) > 1:
+        return False, f"Mentions more than one exercise name: {matched_exercises}"
+
+    return True, "Valid"
+
+
+def _generate_fallback_banner(first_name, n_train, n_rest, goal_label):
+    """Deterministic fallback when AI generation or validation fails."""
+    rest_str = f"{n_rest} rest day" if n_rest == 1 else f"{n_rest} rest days"
+    return (
+        f"Hey {first_name}! You've got {n_train} training days and {rest_str} lined up "
+        f"for your {goal_label} goal. Focus on steady, controlled reps and treat your "
+        f"rest day as part of the plan."
+    )
+
+
+# In-memory outage guard: member_id -> timestamp of last failed generation.
+# Skips API calls for 60 seconds after a failure and serves the fallback banner.
+_AI_COACH_LAST_FAILURE = {}
+_AI_COACH_COOLDOWN_SECONDS = 60
+
+
 
 
 @app.route('/admin/add-member', methods=['POST'])
@@ -6444,6 +6742,25 @@ def member_fitness_save_profile():
     profile.sex             = sex
     profile.activity_level  = activity_level
     # fitness_goal is untouched here — Step 2 owns it.
+    # Clear the cached AI recommendation so the next plan load regenerates
+    # it using the updated physical inputs (height, weight, sex, activity level).
+    profile.ai_recommendation = None
+
+    # Step 1 inline birthday saving: if the member has no birthday on file,
+    # save and validate it here so Step 3 never hits a late missing-birthday error.
+    birthday_raw = (data.get('birthday') or '').strip()
+    if user.birthday is None:
+        if not birthday_raw:
+            return jsonify(success=False, error='Please enter your birthday.'), 400
+        try:
+            bday_date = datetime.strptime(birthday_raw, '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify(success=False, error='Please enter a valid birthday.'), 400
+        if bday_date > date.today():
+            return jsonify(success=False, error='Birthday cannot be in the future.'), 400
+        if _calculate_age(bday_date) < 14:
+            return jsonify(success=False, error='Body Goals is available for members aged 14 and older.'), 400
+        user.birthday = bday_date
 
     # Keep the member's most recent progress row's current_weight in sync
     # with Step 1 — updates the SAME row on every resubmission, never
@@ -6456,27 +6773,51 @@ def member_fitness_save_profile():
         .first()
     )
     if latest_body_goal is None:
-        db.session.add(BodyGoal(member_id=user.id, current_weight=weight_kg))
+        latest_body_goal = BodyGoal(member_id=user.id, current_weight=weight_kg)
+        db.session.add(latest_body_goal)
     else:
         latest_body_goal.current_weight = weight_kg
+    derived_age = _calculate_age(user.birthday)
+    is_minor_flag = bool(derived_age is None or derived_age < 18)
+
+    goal_weight_raw = data.get('goal_weight_kg')
+    if not is_minor_flag and goal_weight_raw not in (None, ''):
+        try:
+            gw = round(float(goal_weight_raw), 1)
+            if 30.0 <= gw <= 300.0:
+                h_m = height_cm / 100.0
+                i_bmi = round(gw / (h_m * h_m), 1)
+                if 18.5 <= i_bmi <= 40.0:
+                    latest_body_goal.goal_weight = gw
+        except (ValueError, TypeError):
+            pass
 
     db.session.commit()
-
-    return jsonify(success=True, message='Information saved.', fitness_profile={
-        'height_cm':      float(profile.height_cm),
-        'sex':             profile.sex,
-        'activity_level':  profile.activity_level,
-        'fitness_goal':    profile.fitness_goal,
-    })
+    return jsonify(
+        success=True,
+        message='Information saved.',
+        has_birthday=user.birthday is not None,
+        age=derived_age,
+        is_minor=is_minor_flag,
+        fitness_profile={
+            'height_cm':         float(profile.height_cm),
+            'sex':                profile.sex,
+            'activity_level':     profile.activity_level,
+            'fitness_goal':       profile.fitness_goal,
+            'primary_objective':  profile.primary_objective or 'MAINTAIN',
+            'age':                derived_age,
+            'is_minor':           is_minor_flag,
+        }
+    )
 
 
 @app.route('/member/fitness/save-goal', methods=['POST'])
 def member_fitness_save_goal():
-    """Step 2 — Fitness Goal Selection.
-    Requires Step 1 (FitnessProfile) to already exist. Stores the member's
-    chosen goal as one of CUT / BULK / MAINTAIN / RECOMP — no goal-history
-    table; this is always just the current active goal, same as how the
-    rest of the schema tracks a member's current Membership."""
+    """Step 2 — Fitness Goal & Primary Objective Selection.
+    Requires Step 1 (FitnessProfile) to already exist. Stores both:
+      1. primary_objective: CUT | BULK | MAINTAIN | RECOMP (controls caloric targets)
+      2. fitness_goal: FULL_BODY | CHEST | BACK | ARMS | LEGS | SHOULDERS | CORE (controls training split)
+    """
     if 'user_id' not in session or session.get('role') != 'member':
         return jsonify(success=False, error='Not logged in.'), 401
 
@@ -6493,18 +6834,40 @@ def member_fitness_save_goal():
 
     data = request.get_json(silent=True) or {}
     goal = (data.get('fitness_goal') or '').strip().upper()
+    primary_obj = (data.get('primary_objective') or '').strip().upper()
+
+    if not goal and not primary_obj:
+        return jsonify(success=False, error='Please select a fitness goal or objective.'), 400
+
+    # Auto-resolve defaults if one is passed without the other for backward compatibility
+    if primary_obj and not goal:
+        goal = 'FULL_BODY'
+    elif goal and not primary_obj:
+        if goal in FITNESS_VALID_OBJECTIVES:
+            primary_obj = goal
+        else:
+            primary_obj = 'MAINTAIN'
 
     if goal not in FITNESS_VALID_GOALS:
         return jsonify(success=False, error='Please select a valid fitness goal.'), 400
+    if primary_obj not in FITNESS_VALID_OBJECTIVES:
+        return jsonify(success=False, error='Please select a valid primary objective.'), 400
 
     profile = FitnessProfile.query.filter_by(member_id=user.id).first()
     if profile is None:
         return jsonify(success=False, error='Please complete Step 1 first.'), 400
 
     profile.fitness_goal = goal
+    profile.primary_objective = primary_obj
+    profile.ai_recommendation = None
     db.session.commit()
 
-    return jsonify(success=True, message=f'Your goal is set to {goal}.', fitness_goal=goal)
+    return jsonify(
+        success=True,
+        message=f'Your objective is set to {primary_obj} and workout focus to {goal}.',
+        fitness_goal=goal,
+        primary_objective=primary_obj
+    )
 
 
 @app.route('/member/fitness/calculate', methods=['POST'])
@@ -6557,6 +6920,7 @@ def member_fitness_calculate():
         age=age,
         activity_level=profile.activity_level,
         goal=profile.fitness_goal,
+        primary_objective=profile.primary_objective,
     )
 
     # Write onto the SAME progress row — updates only, never a new insert.
@@ -6565,9 +6929,15 @@ def member_fitness_calculate():
     body_goal.tdee             = results['tdee']
     body_goal.calorie_target   = results['calorie_target']
     body_goal.protein_target_g = results['protein_target_g']
+    profile.calculated_weight  = body_goal.current_weight
     db.session.commit()
 
-    return jsonify(success=True, calculations=results, goal=profile.fitness_goal)
+    return jsonify(
+        success=True,
+        calculations=results,
+        goal=profile.fitness_goal,
+        primary_objective=profile.primary_objective or 'MAINTAIN'
+    )
 
 
 @app.route('/member/fitness/recommendations', methods=['GET'])
@@ -6619,6 +6989,7 @@ def member_fitness_recommendations():
     return jsonify(
         success=True,
         goal=profile.fitness_goal,
+        primary_objective=profile.primary_objective or 'MAINTAIN',
         nutrition_targets={
             'calorie_target':   body_goal.calorie_target,
             'protein_target_g': body_goal.protein_target_g,
@@ -6628,6 +6999,535 @@ def member_fitness_recommendations():
         weekly_routine=weekly_routine,
         equipment=equipment,
         tips=tips,
+    )
+
+
+@app.route('/member/fitness/ai-coach', methods=['POST'])
+def member_fitness_ai_coach():
+    """Stage 4 — AI Presentation Layer.
+    Personalized motivational coach summary generated by Google Gemini.
+    Cached on FitnessProfile.ai_recommendation until the member's goal changes.
+    """
+    if 'user_id' not in session or session.get('role') != 'member':
+        return jsonify(success=False, error='Not logged in.'), 401
+
+    user = User.query.get(session['user_id'])
+    if user is None:
+        session.clear()
+        return jsonify(success=False, error='User not found.'), 404
+
+    # Subscription-expiration guard
+    if not _member_plan_active(user):
+        _reset_expired_fitness_plan(user)
+        return jsonify(success=False, error='Membership not active.'), 403
+
+    profile = FitnessProfile.query.filter_by(member_id=user.id).first()
+    if profile is None or not profile.fitness_goal or not profile.activity_level:
+        return jsonify(success=False, error='Please complete your fitness profile and goal first.'), 400
+
+    # Cache check: return cached banner only if it is already in the new short format.
+    # If the stored banner is in the old long format (>70 words or multi-paragraph), clear it
+    # so it gets transparently regenerated in the new concise format.
+    if profile.ai_recommendation:
+        stored_text = profile.ai_recommendation.strip()
+        words_count = len(stored_text.split())
+        if words_count <= 70 and '\n\n' not in stored_text:
+            return jsonify(success=True, message=profile.ai_recommendation, cached=True)
+        profile.ai_recommendation = None
+        db.session.commit()
+
+    # ── Gather distilled context (do NOT pass raw 7-day routine, BMI, calories, protein) ──
+    first_name = user.first_name or 'Member'
+    goal = profile.fitness_goal
+    goal_label = FITNESS_GOAL_LABELS.get(goal, goal)
+    obj = profile.primary_objective or 'MAINTAIN'
+    obj_label = FITNESS_OBJECTIVE_LABELS.get(obj, obj)
+
+    activity_label = {
+        'low_activity':      'Beginner / Low Activity',
+        'moderate_activity': 'Moderate Activity',
+        'high_activity':     'High Activity',
+    }.get(profile.activity_level, profile.activity_level)
+
+    weekly_routine, _routine_exercises = _recommend_weekly_routine(
+        profile.fitness_goal, profile.activity_level
+    )
+
+    training_days = [d for d in weekly_routine.get('days', []) if d.get('type') == 'train']
+    rest_days     = [d for d in weekly_routine.get('days', []) if d.get('type') == 'rest']
+    n_train = len(training_days)
+    n_rest  = len(rest_days)
+
+    unique_focuses = []
+    for d in training_days:
+        f = d.get('focus')
+        if f and f not in unique_focuses:
+            unique_focuses.append(f)
+    day_labels = ", ".join(unique_focuses)
+
+    highlights = _select_banner_highlights(weekly_routine, goal)
+
+    allowed_numbers = [n_train, n_rest]
+    known_exercises = [e.name for e in Exercise.query.filter_by(is_active=True).all()]
+
+    age = _calculate_age(user.birthday)
+    is_minor = (age is not None and age < 18)
+
+    system_instruction = (
+        "You write the short coach note at the top of a gym member's dashboard. "
+        "The dashboard already shows the full workout plan and nutrition targets below your note, so do not repeat them.\n\n"
+        "Write ONE paragraph of 2-3 sentences, 35-60 words total, in a warm, energetic, plain-spoken coach voice.\n\n"
+        "Structure:\n"
+        "- Sentence 1: greet the member by first name and reflect their goal or workout focus and weekly training rhythm (use the training days and rest days provided).\n"
+        "- Sentence 2-3: give ONE or TWO coaching cues chosen from: form and control, breathing, consistency, recovery, or fueling. Keep cues general and practical.\n\n"
+        "Rules:\n"
+        "- Do not list exercises. You may name at most one exercise, and only from the \"Highlights\" field.\n"
+        "- Do not state any numbers except the training-day and rest-day counts provided. Never mention calories, protein, BMI, or weight.\n"
+        "- Do not claim the routine is \"perfect\" or \"ideal\" for the goal; describe what the week includes instead.\n"
+        "- Never invent exercises, sets, reps, or targets.\n"
+        "- Plain text only: no markdown, bullets, emojis, or headers.\n"
+        "- Output the note only, with no preamble."
+    )
+
+    if is_minor:
+        system_instruction += (
+            "\n\nSpecial rule for this member: The member is under 18. "
+            "Do not comment on their body, weight, or appearance. "
+            "Keep cues focused on technique, safety, consistency, and rest. "
+            "Encourage them to train with a coach or supervised."
+        )
+
+    user_content = (
+        f"First name: {first_name}\n"
+        f"Primary Objective: {obj_label}\n"
+        f"Workout Focus: {goal_label}\n"
+        f"Activity level: {activity_label}\n"
+        f"Training days per week: {n_train}\n"
+        f"Rest days per week: {n_rest}\n"
+        f"Weekly focus: {day_labels}\n"
+        f"Highlights: {highlights}"
+    )
+
+    generation_config = {
+        'temperature':       0.5,
+        'max_output_tokens': 2048,
+        'candidate_count':   1,
+    }
+
+    # ── Outage / failure cooldown guard ────────────────────────────────────
+    now = time.time()
+    last_fail = _AI_COACH_LAST_FAILURE.get(user.id)
+    if last_fail and (now - last_fail) < _AI_COACH_COOLDOWN_SECONDS:
+        remaining = int(_AI_COACH_COOLDOWN_SECONDS - (now - last_fail))
+        print(f"[ai-coach] Outage cooldown active for member {user.id} ({remaining}s remaining); serving fallback.")
+        fallback_banner = _generate_fallback_banner(first_name, n_train, n_rest, goal_label)
+        return jsonify(success=True, message=fallback_banner, cached=False)
+
+    api_key = os.environ.get('GEMINI_API_KEY')
+    if not api_key:
+        _AI_COACH_LAST_FAILURE[user.id] = now
+        print("[ai-coach] Warning: GEMINI_API_KEY not found in environment; skipping AI call and using fallback banner.")
+        fallback_banner = _generate_fallback_banner(first_name, n_train, n_rest, goal_label)
+        return jsonify(success=True, message=fallback_banner, cached=False)
+
+    if genai is None:
+        _AI_COACH_LAST_FAILURE[user.id] = now
+        print("[ai-coach] Warning: google.generativeai SDK is not installed; skipping AI call and using fallback banner.")
+        fallback_banner = _generate_fallback_banner(first_name, n_train, n_rest, goal_label)
+        return jsonify(success=True, message=fallback_banner, cached=False)
+
+    try:
+        genai.configure(api_key=api_key)
+    except Exception as e:
+        print(f"[ai-coach] Error configuring Gemini: {e}")
+
+    final_banner = None
+
+    for attempt in range(1, 3):  # Initial attempt + 1 retry on validation failure
+        try:
+            model_name = os.environ.get('GEMINI_MODEL', 'gemini-3.5-flash-lite')
+            if attempt == 2 and model_name != 'gemini-3.5-flash-lite':
+                model_name = 'gemini-3.5-flash-lite'
+            model = genai.GenerativeModel(model_name, system_instruction=system_instruction)
+            response = model.generate_content(user_content, generation_config=generation_config)
+
+            candidate_text = None
+            finish_reason = None
+
+            if response and response.candidates:
+                cand = response.candidates[0]
+                finish_reason = cand.finish_reason
+                if cand.content and cand.content.parts:
+                    parts = [p.text for p in cand.content.parts if hasattr(p, 'text') and p.text]
+                    if parts:
+                        candidate_text = "".join(parts).strip()
+
+            if not candidate_text and response and hasattr(response, 'text'):
+                try:
+                    candidate_text = response.text.strip() if response.text else None
+                except Exception:
+                    pass
+
+            is_valid, reason = validate_banner(
+                candidate_text,
+                allowed_numbers=allowed_numbers,
+                known_exercise_names=known_exercises,
+                finish_reason=finish_reason,
+            )
+
+            if is_valid:
+                final_banner = candidate_text
+                break
+            else:
+                print(f"[ai-coach] Attempt {attempt} validation failed: {reason}")
+        except Exception as e:
+            print(f"[ai-coach] Attempt {attempt} Gemini error: {e}")
+
+    if final_banner:
+        # Clear failure tracker and cache ONLY validated banners
+        _AI_COACH_LAST_FAILURE.pop(user.id, None)
+        profile.ai_recommendation = final_banner
+        db.session.commit()
+        return jsonify(success=True, message=final_banner, cached=False)
+
+    # Fallback if AI was unavailable, errored, or failed validation both times:
+    # Set failure cooldown so API is not hammered; do NOT write fallback to DB.
+    _AI_COACH_LAST_FAILURE[user.id] = time.time()
+    print("[ai-coach] Generation failed; serving fallback banner (not saved to DB).")
+    fallback_banner = _generate_fallback_banner(first_name, n_train, n_rest, goal_label)
+
+    return jsonify(success=True, message=fallback_banner, cached=False)
+
+
+# ── Progress Tracking Endpoints (Adults Only) ─────────────────────────────
+
+@app.route('/member/fitness/log-weight', methods=['POST'])
+def member_fitness_log_weight():
+    """Logs a new weight entry for the authenticated adult member.
+    Enforces active membership and excludes minors (<18).
+    Updates body_goal.current_weight and checks if diff from calculated_weight >= 2.0 kg."""
+    if 'user_id' not in session or session.get('role') != 'member':
+        return jsonify(success=False, error='Not logged in.'), 401
+
+    user = User.query.get(session['user_id'])
+    if user is None:
+        session.clear()
+        return jsonify(success=False, error='User not found.'), 404
+
+    if not _member_plan_active(user):
+        _reset_expired_fitness_plan(user)
+        return jsonify(success=False, error='Your membership is not active. Please renew your subscription to log progress.'), 403
+
+    age = _calculate_age(user.birthday)
+    if age is None or age < 18:
+        return jsonify(success=False, error='Weight tracking is available for adult members only.'), 403
+
+    data = request.get_json(silent=True) or {}
+    weight_raw = data.get('weight_kg')
+    if weight_raw in (None, ''):
+        return jsonify(success=False, error='Please enter your weight.'), 400
+
+    try:
+        val = float(weight_raw)
+        if math.isnan(val) or math.isinf(val):
+            return jsonify(success=False, error='Weight must be a valid number.'), 400
+        weight_kg = round(val, 1)
+    except (TypeError, ValueError):
+        return jsonify(success=False, error='Weight must be a number.'), 400
+
+    if not (20.0 <= weight_kg <= 300.0):
+        return jsonify(success=False, error='Weight must be between 20.0 and 300.0 kg.'), 400
+
+    today_manila = _today_manila()
+    start_manila = datetime.combine(today_manila, datetime.min.time(), tzinfo=MANILA_TZ)
+    end_manila = datetime.combine(today_manila, datetime.max.time(), tzinfo=MANILA_TZ)
+    start_utc = start_manila.astimezone(timezone.utc).replace(tzinfo=None)
+    end_utc = end_manila.astimezone(timezone.utc).replace(tzinfo=None)
+    now_utc = datetime.now(timezone.utc)
+
+    existing_log = (
+        WeightLog.query
+        .filter(
+            WeightLog.member_id == user.id,
+            db.or_(
+                WeightLog.log_date == today_manila,
+                db.and_(WeightLog.logged_at >= start_utc, WeightLog.logged_at <= end_utc)
+            )
+        )
+        .order_by(WeightLog.logged_at.desc())
+        .first()
+    )
+
+    if existing_log:
+        existing_log.weight_kg = weight_kg
+        existing_log.logged_at = now_utc
+        existing_log.log_date = today_manila
+        log_entry = existing_log
+        is_update = True
+        message = "Updated today's weight."
+    else:
+        log_entry = WeightLog(
+            member_id=user.id,
+            weight_kg=weight_kg,
+            logged_at=now_utc,
+            log_date=today_manila,
+        )
+        db.session.add(log_entry)
+        is_update = False
+        message = "Weight logged successfully."
+
+    latest_body_goal = (
+        BodyGoal.query
+        .filter_by(member_id=user.id)
+        .order_by(BodyGoal.recorded_at.desc(), BodyGoal.id.desc())
+        .first()
+    )
+    if latest_body_goal is None:
+        latest_body_goal = BodyGoal(member_id=user.id, current_weight=weight_kg)
+        db.session.add(latest_body_goal)
+    else:
+        latest_body_goal.current_weight = weight_kg
+
+    profile = FitnessProfile.query.filter_by(member_id=user.id).first()
+    if profile is not None and profile.calculated_weight is None:
+        profile.calculated_weight = weight_kg
+
+    calc_w = float(profile.calculated_weight) if (profile and profile.calculated_weight is not None) else weight_kg
+    weight_diff = round(abs(weight_kg - calc_w), 1)
+    needs_target_update = weight_diff >= 2.0
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        # Handle concurrent insert race condition caught by UNIQUE constraint
+        existing_log = WeightLog.query.filter_by(member_id=user.id, log_date=today_manila).first()
+        if existing_log:
+            existing_log.weight_kg = weight_kg
+            existing_log.logged_at = now_utc
+            log_entry = existing_log
+            is_update = True
+            message = "Updated today's weight."
+            if latest_body_goal is not None:
+                latest_body_goal.current_weight = weight_kg
+            db.session.commit()
+        else:
+            raise
+
+    return jsonify(
+        success=True,
+        message=message,
+        is_update=is_update,
+        log_id=log_entry.id,
+        weight_kg=weight_kg,
+        logged_at=_to_manila(log_entry.logged_at).strftime('%b %d, %Y'),
+        weight_diff=weight_diff,
+        needs_target_update=needs_target_update,
+    )
+
+
+@app.route('/member/fitness/delete-weight/<int:log_id>', methods=['DELETE'])
+def member_fitness_delete_weight(log_id):
+    """Deletes a logged weight entry belonging to the authenticated member.
+    Syncs BodyGoal.current_weight to the latest remaining log, or falls back to profile.calculated_weight."""
+    if 'user_id' not in session or session.get('role') != 'member':
+        return jsonify(success=False, error='Not logged in.'), 401
+
+    user = User.query.get(session['user_id'])
+    if user is None:
+        session.clear()
+        return jsonify(success=False, error='User not found.'), 404
+
+    if not _member_plan_active(user):
+        _reset_expired_fitness_plan(user)
+        return jsonify(success=False, error='Your membership is not active. Please renew your subscription to manage progress.'), 403
+
+    age = _calculate_age(user.birthday)
+    if age is None or age < 18:
+        return jsonify(success=False, error='Progress tracking is available for adult members only.'), 403
+
+    log_entry = WeightLog.query.filter_by(id=log_id, member_id=user.id).first()
+    if log_entry is None:
+        return jsonify(success=False, error='Weight entry not found.'), 404
+
+    db.session.delete(log_entry)
+
+    latest_remaining = (
+        WeightLog.query
+        .filter(WeightLog.member_id == user.id, WeightLog.id != log_id)
+        .order_by(WeightLog.logged_at.desc(), WeightLog.id.desc())
+        .first()
+    )
+    latest_body_goal = (
+        BodyGoal.query
+        .filter_by(member_id=user.id)
+        .order_by(BodyGoal.recorded_at.desc(), BodyGoal.id.desc())
+        .first()
+    )
+    profile = FitnessProfile.query.filter_by(member_id=user.id).first()
+    fallback_weight = float(profile.calculated_weight) if (profile and profile.calculated_weight is not None) else None
+
+    if latest_body_goal is not None:
+        if latest_remaining is not None:
+            latest_body_goal.current_weight = latest_remaining.weight_kg
+        else:
+            latest_body_goal.current_weight = fallback_weight
+
+    db.session.commit()
+
+    active_weight = float(latest_body_goal.current_weight) if (latest_body_goal and latest_body_goal.current_weight is not None) else fallback_weight
+    return jsonify(success=True, message='Weight entry deleted.', current_weight=active_weight)
+
+
+@app.route('/member/fitness/set-goal-weight', methods=['POST'])
+def member_fitness_set_goal_weight():
+    """Sets the goal weight for an adult member.
+    Validates 30.0-300.0 kg and implied BMI between 18.5 and 40.0."""
+    if 'user_id' not in session or session.get('role') != 'member':
+        return jsonify(success=False, error='Not logged in.'), 401
+
+    user = User.query.get(session['user_id'])
+    if user is None:
+        session.clear()
+        return jsonify(success=False, error='User not found.'), 404
+
+    if not _member_plan_active(user):
+        _reset_expired_fitness_plan(user)
+        return jsonify(success=False, error='Your membership is not active. Please renew your subscription to set goals.'), 403
+
+    age = _calculate_age(user.birthday)
+    if age is None or age < 18:
+        return jsonify(success=False, error='Goal weight is available for adult members only.'), 403
+
+    profile = FitnessProfile.query.filter_by(member_id=user.id).first()
+    if profile is None or not profile.height_cm:
+        return jsonify(success=False, error='Please complete Step 1 first.'), 400
+
+    data = request.get_json(silent=True) or {}
+    raw_goal = data.get('goal_weight_kg')
+    if raw_goal in (None, ''):
+        return jsonify(success=False, error='Please enter a goal weight.'), 400
+
+    try:
+        val = float(raw_goal)
+        if math.isnan(val) or math.isinf(val):
+            return jsonify(success=False, error='Goal weight must be a valid number.'), 400
+        goal_weight = round(val, 1)
+    except (TypeError, ValueError):
+        return jsonify(success=False, error='Goal weight must be a number.'), 400
+
+    if not (30.0 <= goal_weight <= 300.0):
+        return jsonify(success=False, error='Goal weight must be between 30.0 and 300.0 kg.'), 400
+
+    height_m = float(profile.height_cm) / 100.0
+    implied_bmi = round(goal_weight / (height_m * height_m), 1)
+
+    min_safe_kg = round(18.5 * (height_m * height_m), 1)
+    max_safe_kg = round(40.0 * (height_m * height_m), 1)
+
+    if implied_bmi < 18.5 or implied_bmi > 40.0:
+        return jsonify(
+            success=False,
+            error=f'Goal weight must be between {min_safe_kg:.1f} and {max_safe_kg:.1f} kg for your height (BMI 18.5-40).',
+            implied_bmi=implied_bmi,
+            min_safe_kg=min_safe_kg,
+            max_safe_kg=max_safe_kg,
+        ), 400
+
+    latest_body_goal = (
+        BodyGoal.query
+        .filter_by(member_id=user.id)
+        .order_by(BodyGoal.recorded_at.desc(), BodyGoal.id.desc())
+        .first()
+    )
+    if latest_body_goal is None:
+        latest_body_goal = BodyGoal(member_id=user.id, goal_weight=goal_weight)
+        db.session.add(latest_body_goal)
+    else:
+        latest_body_goal.goal_weight = goal_weight
+
+    db.session.commit()
+
+    return jsonify(
+        success=True,
+        message='Goal weight updated.',
+        goal_weight_kg=goal_weight,
+        implied_bmi=implied_bmi,
+    )
+
+
+@app.route('/member/fitness/progress', methods=['GET'])
+def member_fitness_progress():
+    """Returns historical weight logs and goal progress for an adult member."""
+    if 'user_id' not in session or session.get('role') != 'member':
+        return jsonify(success=False, error='Not logged in.'), 401
+
+    user = User.query.get(session['user_id'])
+    if user is None:
+        session.clear()
+        return jsonify(success=False, error='User not found.'), 404
+
+    if not _member_plan_active(user):
+        _reset_expired_fitness_plan(user)
+        return jsonify(success=False, error='Your membership is not active.'), 403
+
+    age = _calculate_age(user.birthday)
+    if age is None or age < 18:
+        return jsonify(success=False, error='Progress tracking is available for adult members only.'), 403
+
+    logs = (
+        WeightLog.query
+        .filter_by(member_id=user.id)
+        .order_by(WeightLog.logged_at.asc(), WeightLog.id.asc())
+        .all()
+    )
+
+    body_goal = (
+        BodyGoal.query
+        .filter_by(member_id=user.id)
+        .order_by(BodyGoal.recorded_at.desc(), BodyGoal.id.desc())
+        .first()
+    )
+    profile = FitnessProfile.query.filter_by(member_id=user.id).first()
+
+    all_entries = [{
+        'id': l.id,
+        'weight_kg': float(l.weight_kg),
+        'logged_at': _to_manila(l.logged_at).strftime('%b %d'),
+        'full_date': _to_manila(l.logged_at).strftime('%b %d, %Y · %I:%M %p'),
+    } for l in logs]
+
+    chart_entries = all_entries[-12:]
+    recent_entries = list(reversed(all_entries[-5:]))
+
+    calc_w = float(profile.calculated_weight) if (profile and profile.calculated_weight is not None) else None
+
+    if body_goal and body_goal.current_weight is not None:
+        current_weight = float(body_goal.current_weight)
+    elif all_entries:
+        current_weight = all_entries[-1]['weight_kg']
+    else:
+        current_weight = calc_w
+
+    goal_weight = float(body_goal.goal_weight) if (body_goal and body_goal.goal_weight is not None) else None
+    starting_weight = all_entries[0]['weight_kg'] if all_entries else current_weight
+
+    if not all_entries:
+        weight_diff = 0.0
+        needs_target_update = False
+    else:
+        weight_diff = round(abs(current_weight - calc_w), 1) if (current_weight is not None and calc_w is not None) else 0.0
+        needs_target_update = weight_diff >= 2.0
+
+    return jsonify(
+        success=True,
+        chart_entries=chart_entries,
+        recent_entries=recent_entries,
+        current_weight=current_weight,
+        goal_weight=goal_weight,
+        starting_weight=starting_weight,
+        weight_diff=weight_diff,
+        needs_target_update=needs_target_update,
     )
 
 
@@ -7693,6 +8593,23 @@ def staff():
 
     picture_can_change, picture_available_at = _profile_picture_cooldown(staff_user)
 
+    # ── Payment Record tab: plan options for the Plan <select> dropdown.
+    #    Includes all active plans (staff can record cash for any plan,
+    #    including Daily). Student prices are passed as data attributes so
+    #    the JS can swap the displayed amount when the Student checkbox is
+    #    ticked without a round-trip to the server. ──
+    payment_plan_options = [
+        {
+            'name':          p.name,
+            'price':         float(p.price),
+            'student_price': float(STUDENT_PLAN_PRICES.get(p.name, p.price)),
+        }
+        for p in MembershipPlan.query
+                                .filter_by(is_active=True)
+                                .order_by(MembershipPlan.sort_order, MembershipPlan.id)
+                                .all()
+    ]
+
     return render_template(
         'staff-dashboard.html',
         attendance_today=attendance_today,
@@ -7714,11 +8631,15 @@ def staff():
         walkin_total_today=walkin_total_today,
         WALKIN_COACH_FEE=WALKIN_COACH_FEE,
         payment_members=payment_members,
+
         # Plan dropdown for the Payment Record form — read live from the
         # plans table, so a plan added in Manage Content is recordable here
         # immediately. Walk-in-only plans (Daily) are included on purpose:
         # staff do record those at the front desk.
         payment_plan_options=_plan_options_data(),
+
+
+
         analytics=analytics,
         report_ranges=REPORT_RANGES,
         announcements=announcements,
@@ -9338,6 +10259,30 @@ def seed_default_fitness_catalog():
             db.session.commit()
             print(f"Migration: set {name}.specific_target = '{specific_target_value}'")
 
+    # ── Stage E — media_url slug backfill. Sets the relative path that the
+    #    exercise video modal (exercise-modal-video) will use as its src.
+    #    Only fills NULL rows — never overwrites a value already set (e.g.
+    #    an admin who has manually set a CDN URL for a specific exercise).
+    #    The convention is /static/media/exercises/<slug>.mp4 where <slug>
+    #    is the exercise name lowercased, spaces replaced by hyphens, and
+    #    non-alphanumeric characters stripped.
+    #    IMPORTANT: this migration only stores the path; the actual MP4/GIF
+    #    files must be placed in static/media/exercises/ by the operator.
+    #    The video player already gracefully falls back to a thumbnail if a
+    #    file is absent, so this is safe to run even before videos exist. ──
+    import re as _re
+    def _exercise_slug(name):
+        return _re.sub(r'[^a-z0-9\-]', '', name.lower().replace(' ', '-').replace('/', '-'))
+
+    media_url_updated = 0
+    for ex in Exercise.query.filter(Exercise.media_url.is_(None)).all():
+        slug = _exercise_slug(ex.name)
+        ex.media_url = f'/static/media/exercises/{slug}.mp4'
+        media_url_updated += 1
+    if media_url_updated:
+        db.session.commit()
+        print(f"Migration: seeded media_url for {media_url_updated} exercise row(s)")
+
 
 def _run_startup_migrations():
     """db.create_all() only creates brand-new tables — it won't add columns
@@ -9392,6 +10337,7 @@ def _run_startup_migrations():
         # ── Up to 3 GCash receipt screenshots per payment (was 1) ──
         ('payments', 'proof_image_path_2', "ALTER TABLE payments ADD COLUMN proof_image_path_2 VARCHAR(255) NULL"),
         ('payments', 'proof_image_path_3', "ALTER TABLE payments ADD COLUMN proof_image_path_3 VARCHAR(255) NULL"),
+
         # ── School ID proof now captures both sides, not just the front ──
         ('payments', 'student_id_back_image_path', "ALTER TABLE payments ADD COLUMN student_id_back_image_path VARCHAR(255) NULL"),
         # ── Declined payment re-opens the payment step instead of killing the
@@ -9412,6 +10358,17 @@ def _run_startup_migrations():
         ('gym_settings', 'schedule_weekday_hours', "ALTER TABLE gym_settings ADD COLUMN schedule_weekday_hours VARCHAR(60) NOT NULL DEFAULT '6:00 AM – 10:00 PM'"),
         ('gym_settings', 'schedule_weekend_label', "ALTER TABLE gym_settings ADD COLUMN schedule_weekend_label VARCHAR(60) NOT NULL DEFAULT 'Sunday'"),
         ('gym_settings', 'schedule_weekend_hours', "ALTER TABLE gym_settings ADD COLUMN schedule_weekend_hours VARCHAR(60) NOT NULL DEFAULT '7:00 AM – 8:00 PM'"),
+
+
+        # ── AI Coach — Gemini response cache on the member's fitness profile ──
+        ('fitness_profiles', 'ai_recommendation', "ALTER TABLE fitness_profiles ADD COLUMN ai_recommendation TEXT NULL"),
+        # ── Exercise media — optional MP4/GIF demo URL per exercise ──
+        ('exercises', 'media_url', "ALTER TABLE exercises ADD COLUMN media_url VARCHAR(255) NULL"),
+        # ── Progress tracking — calculated weight snapshot ──
+        ('fitness_profiles', 'calculated_weight', "ALTER TABLE fitness_profiles ADD COLUMN calculated_weight DECIMAL(5,2) NULL"),
+        # ── Primary Objective decoupled from workout focus ──
+        ('fitness_profiles', 'primary_objective', "ALTER TABLE fitness_profiles ADD COLUMN primary_objective VARCHAR(20) NULL DEFAULT 'MAINTAIN'"),
+
     ]
     with db.engine.connect() as conn:
         for table, column, ddl in migrations:
@@ -9453,6 +10410,73 @@ def _run_startup_migrations():
                     conn.commit()
                     print("Migration: '16 Sessions' promo is now a 16-session promo with no expiration")
 
+        # ── Historical weight logs table ──
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS weight_logs (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                member_id INT NOT NULL,
+                weight_kg DECIMAL(5,2) NOT NULL,
+                logged_at DATETIME NOT NULL,
+                log_date DATE NOT NULL,
+                FOREIGN KEY (member_id) REFERENCES users(id) ON DELETE CASCADE,
+                INDEX (member_id),
+                UNIQUE KEY uq_weight_logs_member_log_date (member_id, log_date)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """))
+        conn.commit()
+
+        # ── Ensure log_date column, backfill, deduplication, and unique key for existing installs ──
+        res_col = conn.execute(text("SHOW COLUMNS FROM weight_logs LIKE 'log_date'"))
+        if res_col.fetchone() is None:
+            conn.execute(text("ALTER TABLE weight_logs ADD COLUMN log_date DATE NULL"))
+            conn.commit()
+            conn.execute(text("UPDATE weight_logs SET log_date = DATE(DATE_ADD(logged_at, INTERVAL 8 HOUR)) WHERE log_date IS NULL"))
+            conn.commit()
+            print("Migration: added and backfilled weight_logs.log_date")
+
+        # Prune duplicate entries if any exist (dry-run check + keep latest logged_at/highest id)
+        dups = conn.execute(text("""
+            SELECT member_id, log_date, COUNT(*) as cnt
+            FROM weight_logs
+            GROUP BY member_id, log_date
+            HAVING cnt > 1
+        """)).fetchall()
+        if dups:
+            for d in dups:
+                print(f"[migration] Pruning duplicate weight logs for member_id={d[0]} on {d[1]} (count={d[2]})")
+            conn.execute(text("""
+                DELETE w1 FROM weight_logs w1
+                INNER JOIN weight_logs w2
+                    ON w1.member_id = w2.member_id
+                    AND w1.log_date = w2.log_date
+                    AND (w1.logged_at < w2.logged_at OR (w1.logged_at = w2.logged_at AND w1.id < w2.id))
+            """))
+            conn.commit()
+
+        # Ensure log_date is NOT NULL
+        res_col = conn.execute(text("SHOW COLUMNS FROM weight_logs LIKE 'log_date'"))
+        col_row = res_col.fetchone()
+        if col_row and col_row[2] == 'YES':
+            conn.execute(text("ALTER TABLE weight_logs MODIFY COLUMN log_date DATE NOT NULL"))
+            conn.commit()
+
+        # Ensure unique key uq_weight_logs_member_log_date exists
+        res_idx = conn.execute(text("SHOW INDEX FROM weight_logs WHERE Key_name = 'uq_weight_logs_member_log_date'"))
+        if res_idx.fetchone() is None:
+            conn.execute(text("ALTER TABLE weight_logs ADD UNIQUE KEY uq_weight_logs_member_log_date (member_id, log_date)"))
+            conn.commit()
+            print("Migration: added UNIQUE KEY uq_weight_logs_member_log_date on weight_logs(member_id, log_date)")
+
+        # ── Invalidate legacy long-form AI coach banners ──
+        # Existing cached banners are in the old ~200-word, multi-paragraph format.
+        # Clearing them here allows them to transparently regenerate in the new,
+        # validated concise format on the member's next visit.
+        conn.execute(text(
+            "UPDATE fitness_profiles SET ai_recommendation = NULL "
+            "WHERE ai_recommendation IS NOT NULL AND (ai_recommendation LIKE '%\\n\\n%' OR LENGTH(ai_recommendation) > 450)"
+        ))
+        conn.commit()
+
         # ── Widen food_items.suitable_meal if it's still the original,
         #    too-narrow VARCHAR(20) from an earlier version of this
         #    feature. VARCHAR(20) was too short for combined values like
@@ -9477,6 +10501,7 @@ def _run_startup_migrations():
                 conn.commit()
                 print("Migration: widened food_items.suitable_meal to VARCHAR(40)")
 
+
         # ── Widen walk_ins.plan_type (was VARCHAR(20)) so a walk-in-only
         #    plan/promo with a longer name can be recorded. Widening only,
         #    and only when still narrower than needed — safe on every startup. ──
@@ -9495,6 +10520,23 @@ def _run_startup_migrations():
                 conn.commit()
                 print("Migration: widened walk_ins.plan_type to VARCHAR(100)")
 
+
+        # ── Widen fitness_profiles.fitness_goal to VARCHAR(30) if narrower ──
+        result = conn.execute(text("SHOW COLUMNS FROM fitness_profiles LIKE 'fitness_goal'"))
+        row = result.fetchone()
+        if row is not None:
+            type_str = str(row[1]).lower()
+            current_length = 0
+            if 'varchar' in type_str and '(' in type_str and ')' in type_str:
+                try:
+                    current_length = int(type_str.split('(')[1].split(')')[0])
+                except (ValueError, IndexError):
+                    current_length = 0
+            if current_length < 30:
+                conn.execute(text("ALTER TABLE fitness_profiles MODIFY COLUMN fitness_goal VARCHAR(30) NULL"))
+                conn.commit()
+                print("Migration: widened fitness_profiles.fitness_goal to VARCHAR(30)")
+
         # ── payments.member_id used to be NOT NULL with ON DELETE CASCADE —
         #    deleting a member silently deleted their whole payment history
         #    with them, which meant a deleted member's contribution to past
@@ -9510,7 +10552,6 @@ def _run_startup_migrations():
             conn.execute(text("ALTER TABLE payments MODIFY COLUMN member_id INT NULL"))
             conn.commit()
             print("Migration: payments.member_id is now nullable (preserves history after member deletion)")
-
         # ── Normalize fitness_profiles.activity_level from the original
         #    5-value vocabulary (sedentary/lightly_active/moderately_active/
         #    very_active/extra_active) to the current 3-tier vocabulary

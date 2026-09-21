@@ -2187,7 +2187,7 @@ body.role-member .sidebar-role           { color: var(--green); }
   .sidebar          { width: 100%; min-height: auto; position: relative; flex-direction: row; flex-wrap: wrap; }
   .main-content     { margin-left: 0; max-width: 100vw; padding: 20px 16px; }
   .dashboard-layout { flex-direction: column; }
-  .grid-2, .grid-3, .grid-4  { grid-template-columns: 1fr; }
+  .grid-2, .grid-3, .grid-4, .fw-targets-grid { grid-template-columns: 1fr; }
   .form-row         { grid-template-columns: 1fr; }
   .form-row-4       { grid-template-columns: 1fr 1fr; }
   .stats-grid       { grid-template-columns: 1fr 1fr; }
@@ -2713,23 +2713,343 @@ body.home-page { overflow-x: hidden; }
    new; the wizard itself is built from existing .panel/.form-group/
    .form-input/.plan-card/.plan-grid/.btn classes so it matches the rest of
    the dashboard without any redesign. ── */
+/* Module-scoped contrast token for Body Goals without modifying global --muted */
+#member-goals {
+  --goals-muted: #abb5cf;
+}
+#member-goals .form-label {
+  color: var(--goals-muted);
+}
+#member-goals .fw-field-helper {
+  font-size: 12px;
+  color: var(--goals-muted);
+  margin-top: 4px;
+}
+
+/* ── Hub Header & Milestone Hero Card ── */
+.fw-hub-hero-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px 24px;
+  margin-bottom: 24px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+}
+.fw-metric-chips-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+@media (max-width: 860px) {
+  .fw-metric-chips-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 480px) {
+  .fw-metric-chips-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.fw-metric-chip {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+  text-align: center;
+  transition: all 0.2s ease;
+}
+.fw-metric-chip:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.05);
+}
+.fw-metric-val {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--white);
+  line-height: 1.2;
+  margin-bottom: 3px;
+}
+.fw-metric-lbl {
+  font-size: 11px;
+  color: var(--goals-muted, var(--muted));
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  font-weight: 600;
+}
+
+/* ── 4 Primary Objective Cards (Cut / Bulk / Maintain / Recomp) ── */
+.fw-objective-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+@media (max-width: 640px) {
+  .fw-objective-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.fw-objective-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px 20px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+  position: relative;
+  text-align: left;
+  user-select: none;
+}
+.fw-objective-card:hover {
+  border-color: rgba(230, 30, 37, 0.45);
+  transform: translateY(-2px);
+  background: linear-gradient(145deg, rgba(230, 30, 37, 0.04), var(--card));
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+}
+.fw-objective-card.selected {
+  border-color: var(--red);
+  background: linear-gradient(145deg, rgba(230, 30, 37, 0.12) 0%, rgba(20, 24, 32, 0.98) 100%);
+  box-shadow: 0 4px 20px rgba(230, 30, 37, 0.25);
+}
+.fw-objective-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.fw-objective-card-icon {
+  font-size: 28px;
+  line-height: 1;
+}
+.fw-objective-card-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--white);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.fw-objective-card.selected .fw-objective-card-badge {
+  background: rgba(230, 30, 37, 0.2);
+  border-color: rgba(230, 30, 37, 0.4);
+  color: #ff757a;
+}
+.fw-objective-card-title {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 700;
+  font-size: 19px;
+  color: var(--white);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+.fw-objective-card-desc {
+  font-size: 13px;
+  color: var(--goals-muted, var(--muted));
+  line-height: 1.45;
+}
+
+/* Accessible focus-visible rings on interactive elements in Body Goals */
+#member-goals button:focus-visible,
+#member-goals input:focus-visible,
+#member-goals select:focus-visible,
+#member-goals .workout-goal-card:has(:focus-visible),
+#member-goals .fp-tab-btn:focus-visible,
+#member-goals .fw-step-dot:focus-visible,
+#member-goals .fw-calc-summary:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+}
+
 .fw-steps { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 22px; }
+.fw-step-label-text {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 700;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--goals-muted, var(--muted));
+  margin: 0 4px;
+}
 .fw-step-dot {
   width: 28px; height: 28px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 15px;
-  border: 1px solid var(--border); color: var(--muted);
-  transition: background 0.2s, border-color 0.2s, color 0.2s;
+  border: 1px solid var(--border); color: var(--goals-muted, var(--muted));
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.2s, border-color 0.2s, color 0.2s, transform 0.15s;
+}
+.fw-step-dot:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 .fw-step-dot.active   { border-color: var(--red); background: var(--red); color: #fff; }
-.fw-step-dot.complete { border-color: var(--red); color: var(--red); }
+.fw-step-dot.complete,
+.fw-step-dot.completed { border-color: var(--red); color: var(--red); cursor: pointer; }
 .fw-step-line { width: 40px; height: 1px; background: var(--border); }
+.fw-step-line.active { background: var(--red); }
 
 .fw-step-panel { animation: fwFadeIn 0.2s ease; }
 @keyframes fwFadeIn { from { opacity: 0; } to { opacity: 1; } }
 
-.fw-goal-desc { font-size: 13px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+/* ── Ticker Loading Screen ("Building your plan") ── */
+.fw-ticker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 320px;
+  margin: 0 auto;
+  text-align: left;
+}
+.fw-ticker-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--white);
+  transition: all 0.25s ease;
+}
+.fw-ticker-item.pending {
+  color: var(--goals-muted, var(--muted));
+  opacity: 0.45;
+}
+.fw-ticker-item.active {
+  border-color: rgba(230, 30, 37, 0.45);
+  background: rgba(230, 30, 37, 0.08);
+  color: var(--white);
+}
+.fw-ticker-item.complete {
+  border-color: rgba(46, 204, 113, 0.4);
+  background: rgba(46, 204, 113, 0.08);
+  color: #fff;
+}
+.fw-ticker-item.complete .fw-ticker-icon {
+  color: var(--green);
+}
+.fw-ticker-icon {
+  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+}
+
+/* ── Daily Targets Primary Block & Collapsed Details ── */
+.fw-daily-targets-block {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px 20px;
+}
+.fw-daily-targets-header {
+  margin-bottom: 16px;
+}
+.fw-daily-targets-title {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 1px;
+  color: var(--white);
+}
+.fw-primary-targets-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.fp-stat-primary {
+  padding: 16px 20px;
+  border-radius: 10px;
+}
+.fp-stat-primary .stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.fw-calc-details {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.fw-calc-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--goals-muted, var(--muted));
+  user-select: none;
+  padding: 4px 0;
+}
+.fw-calc-summary:hover {
+  color: var(--white);
+}
+.fw-calc-details[open] .fw-calc-chevron {
+  transform: rotate(180deg);
+}
+.fw-calc-chevron {
+  transition: transform 0.2s ease;
+  font-size: 11px;
+}
+.fw-calc-body {
+  padding-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.fw-calc-item {
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.fw-calc-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.fw-calc-label {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--white);
+}
+.fw-calc-val {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--white);
+}
+.fw-calc-desc {
+  font-size: 12px;
+  color: var(--goals-muted, var(--muted));
+}
+.goal-val.white {
+  color: var(--white) !important;
+}
+.goal-val.gold {
+  color: var(--gold) !important;
+}
+.goal-val.green {
+  color: var(--green) !important;
+}
+
+.fw-goal-desc { font-size: 13px; color: var(--goals-muted, var(--muted)); margin-top: 6px; line-height: 1.5; }
 .plan-card .plan-name { margin-bottom: 0; }
+
 
 /* ── Post-membership Rating & Feedback modal (#feedback-modal) ──
    Reuses .fw-step-dot/.fw-step-panel from the Fitness wizard above for the
@@ -2779,6 +3099,36 @@ body.home-page { overflow-x: hidden; }
 .fb-launcher:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
 .fb-launcher svg { width: 22px; height: 22px; display: block; }
 
+
+.fw-targets-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 18px;
+  margin-bottom: 16px;
+}
+.fw-target-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  transition: border-color 0.2s, background 0.2s;
+}
+.fw-target-card:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.fw-target-card .goal-header {
+  margin-bottom: 4px;
+}
+.fw-target-desc {
+  font-size: 12px;
+  color: var(--goals-muted, var(--muted));
+  line-height: 1.4;
+}
+
+
 /* ── Personalized Fitness Plan — mini-dashboard tabs (Body Goals tab) ──
    Presentation only: turns the plan into a compact summary strip + tabbed
    panels instead of one long scroll. Reuses .stat-card for the summary
@@ -2792,6 +3142,15 @@ body.home-page { overflow-x: hidden; }
 .fp-tabs {
   display: flex; gap: 10px; margin-bottom: 20px; padding: 4px 4px 10px;
   overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin;
+}
+.fp-tabs .fp-tab-btn {
+  flex-direction: row;
+  min-width: auto;
+  padding: 10px 22px;
+  border-radius: 8px;
+  font-size: 14px;
+  gap: 8px;
+  line-height: 1;
 }
 .fp-tab-btn {
   flex: 0 0 auto; white-space: nowrap; cursor: pointer;
@@ -2817,19 +3176,535 @@ body.home-page { overflow-x: hidden; }
 .fp-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
 
 .fp-card {
-  background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px;
   transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 .fp-card:hover { transform: translateY(-2px); border-color: rgba(255,255,255,0.2); box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
 
-.fp-food-name, .fp-exercise-name, .fp-equipment-name, .fp-meal-name {
-  font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 16px; color: var(--white); letter-spacing: 0.5px;
+/* ── Enhanced Nutrition Dashboard Styles ── */
+.fp-nutrition-macro-strip {
+  display: grid;
+  grid-template-columns: 1fr 1.6fr 1fr;
+  gap: 14px;
+  margin-bottom: 24px;
 }
-.fp-food-serving, .fp-exercise-purpose, .fp-equipment-note { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.5; }
-.fp-food-macros { font-size: 13px; margin-top: 8px; font-weight: 600; }
-.fp-macro-cal { color: var(--red); }
-.fp-macro-sep { color: var(--border); margin: 0 6px; }
-.fp-macro-protein { color: var(--green); }
+
+.fp-macro-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.18s ease, border-color 0.18s ease;
+}
+
+.fp-macro-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.fp-macro-cal-card {
+  border-left: 3px solid var(--gold);
+}
+
+.fp-macro-pro-card {
+  border-left: 3px solid var(--green);
+}
+
+.fp-macro-card-icon {
+  font-size: 28px;
+  margin-right: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.fp-macro-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.fp-macro-val {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--white);
+  line-height: 1.1;
+  letter-spacing: -0.5px;
+}
+
+.fp-macro-cal-card .fp-macro-val { color: var(--gold); }
+.fp-macro-pro-card .fp-macro-val { color: var(--green); }
+
+.fp-macro-lbl {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--white);
+  margin-top: 4px;
+  letter-spacing: 0.3px;
+}
+
+.fp-macro-sublbl {
+  font-size: 11px;
+  color: var(--goals-muted, var(--muted));
+  margin-top: 2px;
+}
+
+.fp-macro-ring-wrap {
+  width: 44px;
+  height: 44px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.fp-macro-ring-svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.fp-macro-ring-bg {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 3.5;
+}
+
+.fp-macro-ring-fill {
+  fill: none;
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-dasharray: 113;
+  stroke-dashoffset: 0;
+}
+
+.fp-ring-gold { stroke: var(--gold); }
+.fp-ring-green { stroke: var(--green); }
+
+.fp-macro-ring-text {
+  position: absolute;
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--white);
+  letter-spacing: -0.2px;
+}
+
+/* Macro Distribution Split Bar Card */
+.fp-macro-split-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 16px 20px;
+}
+
+.fp-split-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.fp-split-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--white);
+}
+
+.fp-split-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.dot-pro { background: var(--green); box-shadow: 0 0 6px rgba(16, 185, 129, 0.5); }
+.dot-carb { background: var(--gold); box-shadow: 0 0 6px rgba(255, 193, 7, 0.5); }
+.dot-fat { background: #3b82f6; box-shadow: 0 0 6px rgba(59, 130, 246, 0.5); }
+
+.fp-split-grams {
+  color: var(--goals-muted, var(--muted));
+  font-size: 11px;
+}
+
+.fp-split-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+  gap: 2px;
+}
+
+.fp-split-seg {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.seg-pro { background: var(--green); }
+.seg-carb { background: var(--gold); }
+.seg-fat { background: #3b82f6; }
+
+.fp-split-sub {
+  font-size: 11px;
+  color: var(--goals-muted, var(--muted));
+  margin-top: 8px;
+  line-height: 1.3;
+}
+
+/* Section Header & Filter Pills */
+.fp-section-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.fp-food-filter-strip {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.fp-food-filter-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.fp-food-filter-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--white);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.fp-food-filter-btn.active {
+  background: var(--red);
+  color: #fff;
+  border-color: var(--red);
+  box-shadow: 0 2px 8px var(--red-glow);
+}
+
+/* Recommended Foods Grid & Cards */
+.fp-foods-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+}
+
+.fp-food-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 10px;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.fp-food-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+}
+
+.fp-food-card-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.fp-food-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+.fp-food-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.fp-food-name {
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--white);
+  line-height: 1.3;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fp-food-serving {
+  font-size: 11px;
+  color: var(--goals-muted, var(--muted));
+  line-height: 1.3;
+}
+
+.fp-food-chip-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.fp-food-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.fp-food-chip.chip-cal {
+  color: var(--gold);
+  background: rgba(255, 193, 7, 0.1);
+  border: 1px solid rgba(255, 193, 7, 0.22);
+}
+
+.fp-food-chip.chip-pro {
+  color: var(--green);
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.22);
+}
+
+/* Meals Grid & Cards */
+.fp-meals-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.fp-meal-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: transform 0.18s ease, border-color 0.18s ease;
+}
+
+.fp-meal-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.fp-meal-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 12px;
+}
+
+.fp-meal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--white);
+  margin: 0;
+}
+
+.fp-meal-icon {
+  font-size: 20px;
+}
+
+.fp-meal-subtotal-badge {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.fp-sub-cal {
+  color: var(--gold);
+  background: rgba(255, 193, 7, 0.1);
+  border: 1px solid rgba(255, 193, 7, 0.2);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.fp-sub-pro {
+  color: var(--green);
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.fp-meal-items-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+
+.fp-meal-item-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 4px 0;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.05);
+}
+
+.fp-meal-item-row:last-child {
+  border-bottom: none;
+}
+
+.fp-meal-item-bullet {
+  font-size: 14px;
+  flex-shrink: 0;
+  line-height: 1.2;
+}
+
+.fp-meal-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.fp-meal-item-name {
+  color: var(--white);
+  font-weight: 600;
+}
+
+.fp-meal-item-desc {
+  font-size: 11px;
+  color: var(--goals-muted, var(--muted));
+}
+
+.fp-meal-item-metrics {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.fp-item-cal {
+  color: var(--gold);
+  font-weight: 700;
+}
+
+.fp-item-pro {
+  color: var(--green);
+  font-weight: 600;
+}
+
+.fp-meal-card-footer {
+  display: flex;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  margin-top: auto;
+}
+
+.fp-meal-summary-chip {
+  flex: 1;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold);
+  background: rgba(255, 193, 7, 0.08);
+  border: 1px solid rgba(255, 193, 7, 0.18);
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.fp-meal-summary-chip.pro {
+  color: var(--green);
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.18);
+}
+
+/* Daily Meal Allocation Bar & Total Card */
+.fp-meal-plan-total-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-top: 20px;
+}
+
+.fp-total-header {
+  margin-bottom: 10px;
+}
+
+.fp-total-label {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--white);
+}
+
+.fp-meal-alloc-bar {
+  display: flex;
+  height: 24px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+  gap: 2px;
+}
+
+.fp-meal-alloc-seg {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 4px;
+  transition: width 0.3s ease;
+}
 
 .fp-exercise-header, .fp-meal-card-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .fp-exercise-area {
@@ -2837,10 +3712,6 @@ body.home-page { overflow-x: hidden; }
   border: 1px solid var(--border); border-radius: 10px; padding: 2px 8px; flex-shrink: 0;
 }
 .fp-exercise-sets { font-size: 13px; color: var(--red); font-weight: 600; margin-top: 8px; }
-
-.fp-meal-macros { font-size: 12px; color: var(--muted); flex-shrink: 0; }
-.fp-meal-items { margin-top: 8px; }
-.fp-meal-item { font-size: 13px; color: var(--white); margin-bottom: 3px; }
 
 .fp-overview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
 .fp-overview-tile {
@@ -2852,8 +3723,21 @@ body.home-page { overflow-x: hidden; }
 .fp-overview-tile:hover { transform: translateY(-2px); border-color: var(--red); color: var(--white); }
 .fp-overview-icon { font-size: 25px; }
 
+@media (max-width: 992px) {
+  .fp-nutrition-macro-strip {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 640px) {
   .fp-summary-grid { grid-template-columns: repeat(2, 1fr); }
+  .fp-section-header-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .fp-meals-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ── 7-Day Workout Routine — Day 1–7 nav inside the existing Workouts tab.
@@ -2961,6 +3845,7 @@ body.home-page { overflow-x: hidden; }
   color: var(--muted);
   cursor: pointer;
 }
+
 /* ══════════════════════════════════
    Session-based promos (e.g. "16 Sessions") — no expiration; only
    coach-guided visits use up a session.
@@ -3006,3 +3891,565 @@ body.home-page { overflow-x: hidden; }
 .coach-toggle:disabled { opacity: 0.6; cursor: wait; }
 .coach-left { margin-top: 4px; font-size: 12px; color: var(--muted); }
 .coach-left.low { color: var(--red); font-weight: 700; }
+
+
+
+/* ══════════════════════════════════
+   20. AI Coach Presentation Banner
+══════════════════════════════════ */
+.ai-banner {
+  display: none;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--gold);
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  color: var(--white);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+.ai-banner.loading {
+  display: block;
+  padding: 16px 20px;
+}
+.ai-banner-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+.ai-banner-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+.ai-banner-label {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+.ai-banner-text {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--white);
+  white-space: pre-line;
+}
+.ai-banner-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ai-skeleton-line {
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.04) 25%, rgba(255, 255, 255, 0.14) 50%, rgba(255, 255, 255, 0.04) 75%);
+  background-size: 200% 100%;
+  animation: aiShimmer 1.5s infinite linear;
+}
+.ai-skeleton-line.short {
+  width: 65%;
+}
+@keyframes aiShimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ══════════════════════════════════
+   21. Workout Target Cards (Body Goals)
+══════════════════════════════════ */
+.workout-goal-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+@media (min-width: 768px) {
+  .workout-goal-list {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.workout-goal-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 4px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+  user-select: none;
+  position: relative;
+}
+
+.workout-goal-card:hover {
+  border-color: rgba(230, 30, 37, 0.45);
+  border-left-color: var(--red);
+  transform: translateY(-2px);
+  background: linear-gradient(145deg, rgba(230, 30, 37, 0.04), var(--card));
+}
+
+.workout-goal-card.selected,
+.workout-goal-card:has(.workout-goal-radio:checked) {
+  border-color: var(--red);
+  border-left-color: var(--red);
+  background: linear-gradient(145deg, rgba(230, 30, 37, 0.10) 0%, rgba(20, 24, 32, 0.98) 100%);
+  box-shadow: 0 4px 18px rgba(230, 30, 37, 0.22);
+}
+
+.workout-goal-card:has(.workout-goal-radio:focus-visible) {
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+}
+
+.workout-goal-card.selected .workout-count-badge,
+.workout-goal-card:has(.workout-goal-radio:checked) .workout-count-badge {
+  background: rgba(230, 30, 37, 0.18);
+  border-color: rgba(230, 30, 37, 0.35);
+  color: #ff757a;
+}
+
+.workout-goal-media {
+  width: 64px;
+  height: 64px;
+  flex: none;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #090c12;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.workout-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.workout-thumb-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--red);
+  background: rgba(230, 30, 37, 0.08);
+  text-align: center;
+  padding: 4px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.workout-goal-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.workout-goal-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--white);
+  margin-bottom: 4px;
+  letter-spacing: 0.3px;
+}
+
+.workout-goal-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.workout-count-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--white);
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.workout-goal-card.selected .workout-count-badge {
+  background: rgba(230, 30, 37, 0.18);
+  border-color: rgba(230, 30, 37, 0.35);
+  color: #ff757a;
+}
+
+.workout-meta-desc {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.workout-goal-action {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 13px;
+  transition: all 0.18s ease;
+}
+
+.workout-goal-card:hover .workout-goal-action {
+  color: var(--white);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.workout-goal-card.selected .workout-goal-action {
+  background: var(--red);
+  color: var(--white);
+  box-shadow: 0 0 10px rgba(230, 30, 37, 0.4);
+}
+
+/* ══════════════════════════════════
+   22. Workout Day Exercise Cards
+══════════════════════════════════ */
+.workout-exercise-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workout-exercise-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 18px;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+  cursor: pointer;
+}
+
+.workout-exercise-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(230, 30, 37, 0.4);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.workout-exercise-card:active {
+  transform: translateY(0);
+}
+
+.workout-exercise-card:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+}
+
+.workout-exercise-media {
+  width: 72px;
+  height: 72px;
+  flex: none;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #090c12;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.workout-exercise-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.workout-exercise-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--red);
+  background: rgba(230, 30, 37, 0.08);
+  text-align: center;
+  padding: 4px;
+  letter-spacing: 0.5px;
+}
+
+.workout-exercise-content {
+  flex: 1;
+  min-width: 180px;
+}
+
+.workout-exercise-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--white);
+  margin-bottom: 6px;
+  letter-spacing: 0.3px;
+}
+
+.workout-exercise-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.workout-tag-area {
+  font-size: 11px;
+  font-weight: 700;
+  color: #ff757a;
+  background: rgba(230, 30, 37, 0.14);
+  border: 1px solid rgba(230, 30, 37, 0.3);
+  padding: 2px 7px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.workout-tag-sub {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.workout-tag-equip {
+  font-size: 11px;
+  font-weight: 600;
+  color: #ffc107;
+  background: rgba(255, 193, 7, 0.12);
+  border: 1px solid rgba(255, 193, 7, 0.28);
+  padding: 2px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.3px;
+}
+
+.workout-exercise-reps {
+  font-size: 13px;
+  color: var(--white);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.workout-exercise-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: transform 0.18s ease, color 0.18s ease;
+  margin-left: auto;
+}
+
+.workout-exercise-card:hover .workout-exercise-arrow,
+.workout-exercise-card:focus-visible .workout-exercise-arrow {
+  color: var(--red);
+  transform: translateX(3px);
+}
+
+.workout-exercise-card .fp-view-instructions-btn {
+  width: auto;
+  margin-top: 0;
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding: 8px 16px;
+  font-size: 12px;
+}
+
+/* ── 7-Day Horizontal Week Strip ── */
+.fw-week-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 8px;
+  margin-bottom: 18px;
+  scrollbar-width: thin;
+}
+
+.fw-week-strip::-webkit-scrollbar {
+  height: 4px;
+}
+
+.fw-week-strip::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+}
+
+.fw-day-pill {
+  flex-shrink: 0;
+  flex-direction: row;
+  min-width: auto;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--muted);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.fw-day-pill:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--white);
+}
+
+.fw-day-pill.active {
+  background: var(--red);
+  color: var(--white);
+  border-color: var(--red);
+  box-shadow: 0 4px 12px rgba(230, 30, 37, 0.3);
+}
+
+.fw-day-pill.rest {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.fw-day-pill.rest.active {
+  background: #ffc107;
+  color: #121212;
+  border-color: #ffc107;
+  border-style: solid;
+  box-shadow: 0 4px 12px rgba(255, 193, 7, 0.3);
+}
+
+/* ── Progress Tab Components ── */
+.fw-weight-change-alert {
+  background: rgba(255, 193, 7, 0.12);
+  border: 1px solid rgba(255, 193, 7, 0.4);
+  border-radius: 8px;
+  padding: 12px 18px;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  color: var(--white);
+}
+
+.fw-weight-change-alert .fw-alert-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.fw-weight-change-alert .fw-alert-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.fw-progress-goal-card {
+  background: var(--bg-card, rgba(255, 255, 255, 0.03));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 16px 20px;
+}
+
+.fw-goal-stats-row {
+  display: flex;
+  gap: 28px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  font-size: 15px;
+}
+
+.fw-stat-sub {
+  font-size: 12px;
+  color: var(--goals-muted, var(--muted));
+  display: block;
+  margin-bottom: 2px;
+}
+
+.fw-goal-progress-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.fw-goal-progress-bar {
+  flex: 1;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.fw-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--red), #28a745);
+  border-radius: 5px;
+  transition: width 0.4s ease;
+}
+
+.fw-goal-progress-pct {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--red);
+  white-space: nowrap;
+  min-width: 80px;
+  text-align: right;
+}
+
+.fw-recent-weight-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+@media (max-width: 600px) {
+  .workout-exercise-card {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .workout-exercise-card .fp-view-instructions-btn {
+    width: 100%;
+    margin-top: 6px;
+  }
+  .fw-goal-stats-row {
+    gap: 16px;
+  }
+  .fw-weight-change-alert {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .fw-weight-change-alert .fw-alert-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+

@@ -799,26 +799,38 @@
 
     <!-- ── Body Goals ───────────────────── -->
     <div id="member-goals" class="sub-panel">
-      <div class="page-header">
+      <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
         <div><div class="page-title">TRACK BODY GOALS</div></div>
+        <button type="button" class="btn btn-outline btn-sm" id="fw-edit-btn" style="display:none;" onclick="editFitnessProfileAndFocus()">Edit profile &amp; focus</button>
       </div>
 
-      <!-- ── AI Fitness Goal Setup wizard (Steps 1–2 only for now) ───────
-           Reuses existing .panel / .form-group / .form-input / .plan-card /
-           .btn classes so it matches the rest of the dashboard. This is now
-           the official fitness-goal setup flow — the old "+ UPDATE GOALS"
-           button/modal was removed since this wizard replaces it. Does not
-           touch the Current Measurements / Notes panels below. ── -->
+      <!-- ── AI Fitness Goal Setup wizard (2 steps) ─────── -->
       <div class="panel" id="fitness-wizard-panel" style="margin-bottom:20px;">
-        <div class="panel-header"><div class="panel-title">Fitness Goal Setup</div></div>
+        <div class="panel-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div class="panel-title" id="fw-wizard-panel-title">Fitness Goal Setup</div>
+          <button type="button" id="fw-cancel-edit-btn" class="btn btn-outline btn-sm"
+                  style="display:none;" onclick="cancelFitnessEdit()">✕ Cancel</button>
+        </div>
         <div class="panel-body">
 
-          <div class="fw-steps">
-            <span class="fw-step-dot" id="fw-dot-1">1</span>
+          {% if not plan_active %}
+          <div class="fw-subscription-notice" style="background:rgba(220,53,69,0.15);border:1px solid var(--red);border-radius:8px;padding:14px 18px;margin-bottom:20px;color:var(--white);display:flex;align-items:center;gap:12px;">
+            <span style="font-size:22px;" aria-hidden="true">🔒</span>
+            <div>
+              <strong style="color:var(--white);display:block;margin-bottom:2px;">Subscription required</strong>
+              <div style="font-size:13px;color:var(--goals-muted, var(--muted));line-height:1.4;">
+                An active membership subscription is required to set up and track Body Goals. Please renew your subscription to access this feature.
+              </div>
+            </div>
+          </div>
+          {% endif %}
+
+          <div class="fw-steps" role="navigation" aria-label="Setup steps">
+            <button type="button" class="fw-step-dot active" id="fw-dot-1" onclick="goToFitnessStep(1)" aria-label="Step 1: About you" aria-current="step">1</button>
+            <span class="fw-step-label-text">About you</span>
             <span class="fw-step-line" id="fw-line-1"></span>
-            <span class="fw-step-dot" id="fw-dot-2">2</span>
-            <span class="fw-step-line" id="fw-line-2"></span>
-            <span class="fw-step-dot" id="fw-dot-3">3</span>
+            <button type="button" class="fw-step-dot" id="fw-dot-2" onclick="goToFitnessStep(2)" aria-label="Step 2: Focus" disabled>2</button>
+            <span class="fw-step-label-text">Focus</span>
           </div>
 
           <!-- STEP 1 — Member Fitness Information -->
@@ -827,282 +839,605 @@
 
             <div class="form-row">
               <div class="form-group">
-                <label class="form-label">Height (cm)</label>
+                <label class="form-label" for="fw-height">Height (cm)</label>
                 <input class="form-input" type="number" id="fw-height" min="100" max="250" step="0.1"
-                       placeholder="e.g. 170" value="{{ fitness_profile.height_cm if fitness_profile and fitness_profile.height_cm else '' }}">
+                       placeholder="e.g. 170" value="{{ fitness_profile.height_cm if fitness_profile and fitness_profile.height_cm else '' }}" {{ 'disabled' if not plan_active }}>
               </div>
               <div class="form-group">
-                <label class="form-label">Current Weight (kg)</label>
+                <label class="form-label" for="fw-weight">Current Weight (kg)</label>
                 <input class="form-input" type="number" id="fw-weight" min="20" max="300" step="0.1"
-                       placeholder="e.g. 70" value="{{ goal.current_weight if goal and goal.current_weight else '' }}">
+                       placeholder="e.g. 70" value="{{ goal.current_weight if goal and goal.current_weight else '' }}" {{ 'disabled' if not plan_active }}>
               </div>
             </div>
 
             <div class="form-row">
               <div class="form-group">
-                <label class="form-label">Sex</label>
-                <select class="form-input" id="fw-sex">
+                <label class="form-label" for="fw-sex">Sex</label>
+                <select class="form-input" id="fw-sex" {{ 'disabled' if not plan_active }}>
                   <option value="">Select</option>
                   <option value="male"   {{ 'selected' if fitness_profile and fitness_profile.sex == 'male' }}>Male</option>
                   <option value="female" {{ 'selected' if fitness_profile and fitness_profile.sex == 'female' }}>Female</option>
                 </select>
               </div>
               <div class="form-group">
-                <label class="form-label">Activity Level</label>
-                <select class="form-input" id="fw-activity">
+                <label class="form-label" for="fw-activity">Activity Level</label>
+                <select class="form-input" id="fw-activity" onchange="updateActivityHelperText()" {{ 'disabled' if not plan_active }}>
                   <option value="">Select</option>
-                  <option value="low_activity"      {{ 'selected' if fitness_profile and fitness_profile.activity_level == 'low_activity' }}>Low Activity — Little to no exercise, or light activity 1–3 days/week</option>
-                  <option value="moderate_activity" {{ 'selected' if fitness_profile and fitness_profile.activity_level == 'moderate_activity' }}>Moderate Activity — Regular exercise 3–5 days/week</option>
-                  <option value="high_activity"     {{ 'selected' if fitness_profile and fitness_profile.activity_level == 'high_activity' }}>High Activity — Frequent, intense exercise or physically demanding work 6–7 days/week</option>
+                  <option value="low_activity"      {{ 'selected' if fitness_profile and fitness_profile.activity_level == 'low_activity' }}>Low Activity</option>
+                  <option value="moderate_activity" {{ 'selected' if fitness_profile and fitness_profile.activity_level == 'moderate_activity' }}>Moderate Activity</option>
+                  <option value="high_activity"     {{ 'selected' if fitness_profile and fitness_profile.activity_level == 'high_activity' }}>High Activity</option>
                 </select>
+                <div id="fw-activity-helper" class="fw-field-helper" style="font-size:12px;color:var(--goals-muted, var(--muted));margin-top:6px;line-height:1.4;">Select your typical weekly activity level.</div>
               </div>
             </div>
 
-            <div style="font-size:12px;color:var(--muted);margin-bottom:16px;">
-              {% if member_age %}
-              Age: <strong style="color:var(--white);">{{ member_age }}</strong> (calculated from your birthday on file)
-              {% else %}
-              Add your birthday under Profile Settings so we can factor in your age.
-              {% endif %}
+            {% if member_age and member_age >= 18 %}
+            <div class="form-group" id="fw-goal-weight-group" style="margin-bottom:16px;">
+              <label class="form-label" for="fw-goal-weight">Goal Weight (kg) <span style="font-size:12px;color:var(--goals-muted, var(--muted));font-weight:normal;">(Optional)</span></label>
+              <input class="form-input" type="number" id="fw-goal-weight" min="30" max="300" step="0.1"
+                     placeholder="e.g. 68" value="{{ goal.goal_weight if goal and goal.goal_weight else '' }}" {{ 'disabled' if not plan_active }}>
+              <div style="font-size:12px;color:var(--goals-muted, var(--muted));margin-top:4px;">Target weight to track your progress against (implied BMI 18.5–40.0).</div>
             </div>
+            {% endif %}
 
-            <button class="btn btn-red" style="width:100%;" id="fw-step1-btn" onclick="submitFitnessStep1()">CONTINUE</button>
+            {% if not member.birthday %}
+            <div class="form-group" id="fw-birthday-group" style="margin-bottom:16px;">
+              <label class="form-label" for="fw-birthday">Birthday <span style="color:var(--red);">*</span></label>
+              <input class="form-input" type="date" id="fw-birthday" required {{ 'disabled' if not plan_active }}>
+              <div style="font-size:12px;color:var(--goals-muted, var(--muted));margin-top:4px;">Required for target and calorie calculations (Body Goals is available for members aged 14 and older).</div>
+            </div>
+            {% else %}
+            <div id="fw-age-display" style="font-size:12px;color:var(--goals-muted, var(--muted));margin-bottom:16px;">
+              Age: <strong style="color:var(--white);">{{ member_age }}</strong> (calculated from your birthday on file)
+            </div>
+            {% endif %}
+
+            <button class="btn btn-red" style="width:100%;" id="fw-step1-btn" onclick="submitFitnessStep1()" {{ 'disabled' if not plan_active }}>CONTINUE</button>
           </div><!-- /fw-step-1 -->
 
-          <!-- STEP 2 — Fitness Goal Selection -->
+          <!-- STEP 2 — Decoupled Primary Objective & Target Workout Focus -->
           <div id="fw-step-2" class="fw-step-panel" style="display:none;">
-            <div class="panel-title" style="margin-bottom:16px;">Choose your fitness goal</div>
+            <!-- SECTION 1: PRIMARY OBJECTIVE -->
+            <div class="panel-title" style="margin-bottom:6px;display:flex;align-items:center;gap:8px;">
+              <span class="badge badge-gold" style="font-size:11px;padding:2px 8px;border-radius:12px;">STEP 2A</span>
+              <span>1. CHOOSE YOUR PRIMARY OBJECTIVE</span>
+            </div>
+            <div style="font-size:13px;color:var(--goals-muted, var(--muted));margin-bottom:16px;">
+              Select your metabolic goal to calculate your daily caloric intake and nutritional targets.
+            </div>
 
-            <div class="plan-grid" id="fw-goal-grid" style="grid-template-columns:1fr 1fr;">
-              <div class="plan-card" data-goal="CUT" onclick="selectFitnessGoal(this)">
-                <div class="plan-name">CUT</div>
-                <div class="fw-goal-desc">Reduce body fat / lose weight while aiming to preserve muscle.</div>
+            <!-- 4 Primary Objective Cards (2x2 Grid) -->
+            <div class="fw-objective-grid" role="radiogroup" aria-label="Fitness Objective">
+              <!-- Card 1: Cut -->
+              <div class="fw-objective-card" data-obj="CUT" onclick="selectPrimaryObjective('CUT', this)" tabindex="0" role="radio" aria-checked="false">
+                <div class="fw-objective-card-header">
+                  <span class="fw-objective-card-icon" aria-hidden="true">🔥</span>
+                  <span class="fw-objective-card-badge">Fat Loss (-500 kcal)</span>
+                </div>
+                <div class="fw-objective-card-title">Cut / Fat Loss</div>
+                <div class="fw-objective-card-desc">Caloric deficit designed to shed body fat while preserving lean muscle mass.</div>
               </div>
-              <div class="plan-card" data-goal="BULK" onclick="selectFitnessGoal(this)">
-                <div class="plan-name">BULK</div>
-                <div class="fw-goal-desc">Increase body weight and focus on muscle growth.</div>
+
+              <!-- Card 2: Bulk -->
+              <div class="fw-objective-card" data-obj="BULK" onclick="selectPrimaryObjective('BULK', this)" tabindex="0" role="radio" aria-checked="false">
+                <div class="fw-objective-card-header">
+                  <span class="fw-objective-card-icon" aria-hidden="true">💪</span>
+                  <span class="fw-objective-card-badge">Muscle Mass (+300 kcal)</span>
+                </div>
+                <div class="fw-objective-card-title">Bulk / Muscle Mass</div>
+                <div class="fw-objective-card-desc">Caloric surplus designed to maximize hypertrophy and strength growth.</div>
               </div>
-              <div class="plan-card" data-goal="MAINTAIN" onclick="selectFitnessGoal(this)">
-                <div class="plan-name">MAINTAIN</div>
-                <div class="fw-goal-desc">Maintain current body weight while maintaining fitness.</div>
+
+              <!-- Card 3: Maintain -->
+              <div class="fw-objective-card" data-obj="MAINTAIN" onclick="selectPrimaryObjective('MAINTAIN', this)" tabindex="0" role="radio" aria-checked="false">
+                <div class="fw-objective-card-header">
+                  <span class="fw-objective-card-icon" aria-hidden="true">⚖️</span>
+                  <span class="fw-objective-card-badge">Maintain (0 kcal)</span>
+                </div>
+                <div class="fw-objective-card-title">Maintain &amp; Tone</div>
+                <div class="fw-objective-card-desc">Balanced nutrition at maintenance to stabilize weight and improve conditioning.</div>
               </div>
-              <div class="plan-card" data-goal="RECOMP" onclick="selectFitnessGoal(this)">
-                <div class="plan-name">BODY RECOMPOSITION</div>
-                <div class="fw-goal-desc">Work toward improving muscle mass while reducing body fat.</div>
+
+              <!-- Card 4: Recomp -->
+              <div class="fw-objective-card" data-obj="RECOMP" onclick="selectPrimaryObjective('RECOMP', this)" tabindex="0" role="radio" aria-checked="false">
+                <div class="fw-objective-card-header">
+                  <span class="fw-objective-card-icon" aria-hidden="true">🔄</span>
+                  <span class="fw-objective-card-badge">Recomp (-200 kcal)</span>
+                </div>
+                <div class="fw-objective-card-title">Body Recomposition</div>
+                <div class="fw-objective-card-desc">High-protein slight deficit to shed body fat while building lean muscle simultaneously.</div>
               </div>
+            </div>
+
+            <!-- SECTION 2: WORKOUT FOCUS -->
+            <div class="panel-title" style="margin-top:24px;margin-bottom:6px;display:flex;align-items:center;gap:8px;">
+              <span class="badge badge-gold" style="font-size:11px;padding:2px 8px;border-radius:12px;">STEP 2B</span>
+              <span>2. CHOOSE YOUR WORKOUT FOCUS</span>
+            </div>
+            <div style="font-size:13px;color:var(--goals-muted, var(--muted));margin-bottom:14px;">
+              Select the muscle group or training split to personalize your workout routine and exercise catalog.
+            </div>
+
+            <div class="workout-goal-list" id="fw-goal-grid" role="radiogroup" aria-label="Workout focus options">
+              <!-- Full Body -->
+              <label class="workout-goal-card" data-goal="FULL_BODY" for="goal-radio-full-body">
+                <input type="radio" id="goal-radio-full-body" name="fitness_goal" value="FULL_BODY" class="workout-goal-radio visually-hidden" onchange="onFitnessGoalRadioChange(this)">
+                <div class="workout-goal-media">
+                  <img src="{{ url_for('static', filename='images/workouts/thumb-full-body.jpg') }}" alt="Full Body Workout" class="workout-thumb-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                  <div class="workout-thumb-fallback" style="display:none;">FULL BODY</div>
+                </div>
+                <div class="workout-goal-body">
+                  <div class="workout-goal-title">Full Body Workout</div>
+                  <div class="workout-goal-meta">
+                    <span class="workout-count-badge">8 exercises</span>
+                    <span class="badge badge-gold" style="font-size:10px;padding:2px 6px;">Compound</span>
+                    <span class="workout-meta-desc">Compound movements &amp; total balance</span>
+                  </div>
+                </div>
+                <div class="workout-goal-action"><span class="workout-select-indicator">➔</span></div>
+              </label>
+
+              <!-- Chest -->
+              <label class="workout-goal-card" data-goal="CHEST" for="goal-radio-chest">
+                <input type="radio" id="goal-radio-chest" name="fitness_goal" value="CHEST" class="workout-goal-radio visually-hidden" onchange="onFitnessGoalRadioChange(this)">
+                <div class="workout-goal-media">
+                  <img src="{{ url_for('static', filename='images/workouts/thumb-chest.jpg') }}" alt="Chest Workout" class="workout-thumb-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                  <div class="workout-thumb-fallback" style="display:none;">CHEST</div>
+                </div>
+                <div class="workout-goal-body">
+                  <div class="workout-goal-title">Chest Workout</div>
+                  <div class="workout-goal-meta">
+                    <span class="workout-count-badge">9 exercises</span>
+                    <span class="badge badge-gold" style="font-size:10px;padding:2px 6px;">Pressing</span>
+                    <span class="workout-meta-desc">Pectorals, pressing &amp; triceps</span>
+                  </div>
+                </div>
+                <div class="workout-goal-action"><span class="workout-select-indicator">➔</span></div>
+              </label>
+
+              <!-- Back -->
+              <label class="workout-goal-card" data-goal="BACK" for="goal-radio-back">
+                <input type="radio" id="goal-radio-back" name="fitness_goal" value="BACK" class="workout-goal-radio visually-hidden" onchange="onFitnessGoalRadioChange(this)">
+                <div class="workout-goal-media">
+                  <img src="{{ url_for('static', filename='images/workouts/thumb-back.jpg') }}" alt="Back Workout" class="workout-thumb-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                  <div class="workout-thumb-fallback" style="display:none;">BACK</div>
+                </div>
+                <div class="workout-goal-body">
+                  <div class="workout-goal-title">Back Workout</div>
+                  <div class="workout-goal-meta">
+                    <span class="workout-count-badge">13 exercises</span>
+                    <span class="badge badge-gold" style="font-size:10px;padding:2px 6px;">Pulls &amp; Rows</span>
+                    <span class="workout-meta-desc">Lats, rows &amp; posture strength</span>
+                  </div>
+                </div>
+                <div class="workout-goal-action"><span class="workout-select-indicator">➔</span></div>
+              </label>
+
+              <!-- Arms -->
+              <label class="workout-goal-card" data-goal="ARMS" for="goal-radio-arms">
+                <input type="radio" id="goal-radio-arms" name="fitness_goal" value="ARMS" class="workout-goal-radio visually-hidden" onchange="onFitnessGoalRadioChange(this)">
+                <div class="workout-goal-media">
+                  <img src="{{ url_for('static', filename='images/workouts/thumb-arms.jpg') }}" alt="Arm Workout" class="workout-thumb-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                  <div class="workout-thumb-fallback" style="display:none;">ARMS</div>
+                </div>
+                <div class="workout-goal-body">
+                  <div class="workout-goal-title">Arm Workout</div>
+                  <div class="workout-goal-meta">
+                    <span class="workout-count-badge">9 exercises</span>
+                    <span class="badge badge-gold" style="font-size:10px;padding:2px 6px;">Arms</span>
+                    <span class="workout-meta-desc">Biceps, triceps &amp; forearms</span>
+                  </div>
+                </div>
+                <div class="workout-goal-action"><span class="workout-select-indicator">➔</span></div>
+              </label>
+
+              <!-- Lower Body / Legs -->
+              <label class="workout-goal-card" data-goal="LEGS" for="goal-radio-legs">
+                <input type="radio" id="goal-radio-legs" name="fitness_goal" value="LEGS" class="workout-goal-radio visually-hidden" onchange="onFitnessGoalRadioChange(this)">
+                <div class="workout-goal-media">
+                  <img src="{{ url_for('static', filename='images/workouts/thumb-legs.jpg') }}" alt="Lower Body Workout" class="workout-thumb-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                  <div class="workout-thumb-fallback" style="display:none;">LEGS</div>
+                </div>
+                <div class="workout-goal-body">
+                  <div class="workout-goal-title">Lower Body Workout</div>
+                  <div class="workout-goal-meta">
+                    <span class="workout-count-badge">13 exercises</span>
+                    <span class="badge badge-gold" style="font-size:10px;padding:2px 6px;">Legs</span>
+                    <span class="workout-meta-desc">Quads, hamstrings &amp; glute power</span>
+                  </div>
+                </div>
+                <div class="workout-goal-action"><span class="workout-select-indicator">➔</span></div>
+              </label>
+
+              <!-- Shoulders -->
+              <label class="workout-goal-card" data-goal="SHOULDERS" for="goal-radio-shoulders">
+                <input type="radio" id="goal-radio-shoulders" name="fitness_goal" value="SHOULDERS" class="workout-goal-radio visually-hidden" onchange="onFitnessGoalRadioChange(this)">
+                <div class="workout-goal-media">
+                  <img src="{{ url_for('static', filename='images/workouts/thumb-shoulders.jpg') }}" alt="Shoulders Workout" class="workout-thumb-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                  <div class="workout-thumb-fallback" style="display:none;">SHOULDERS</div>
+                </div>
+                <div class="workout-goal-body">
+                  <div class="workout-goal-title">Shoulders Workout</div>
+                  <div class="workout-goal-meta">
+                    <span class="workout-count-badge">9 exercises</span>
+                    <span class="badge badge-gold" style="font-size:10px;padding:2px 6px;">Deltoids</span>
+                    <span class="workout-meta-desc">Overhead press &amp; delt width</span>
+                  </div>
+                </div>
+                <div class="workout-goal-action"><span class="workout-select-indicator">➔</span></div>
+              </label>
+
+              <!-- Core -->
+              <label class="workout-goal-card" data-goal="CORE" for="goal-radio-core">
+                <input type="radio" id="goal-radio-core" name="fitness_goal" value="CORE" class="workout-goal-radio visually-hidden" onchange="onFitnessGoalRadioChange(this)">
+                <div class="workout-goal-media">
+                  <img src="{{ url_for('static', filename='images/workouts/thumb-core.jpg') }}" alt="Abs & Core Workout" class="workout-thumb-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                  <div class="workout-thumb-fallback" style="display:none;">CORE</div>
+                </div>
+                <div class="workout-goal-body">
+                  <div class="workout-goal-title">Abs &amp; Core Workout</div>
+                  <div class="workout-goal-meta">
+                    <span class="workout-count-badge">10 exercises</span>
+                    <span class="badge badge-gold" style="font-size:10px;padding:2px 6px;">Core</span>
+                    <span class="workout-meta-desc">Abdominal definition &amp; core stability</span>
+                  </div>
+                </div>
+                <div class="workout-goal-action"><span class="workout-select-indicator">➔</span></div>
+              </label>
             </div>
 
             <button class="btn btn-red" style="width:100%;margin-top:16px;" id="fw-step2-btn" onclick="submitFitnessStep2()" disabled>CONTINUE</button>
             <button class="btn btn-outline" style="width:100%;margin-top:8px;" onclick="fitnessWizardBack()">← BACK</button>
           </div><!-- /fw-step-2 -->
 
-          <!-- STEP 3 — Your Fitness Targets (deterministic calculations only;
-               no AI, no diet/meal/workout recommendations yet) -->
-          <div id="fw-step-3" class="fw-step-panel" style="display:none;">
-            <div class="panel-title" style="margin-bottom:4px;">Your Fitness Targets</div>
-            <div id="fw-goal-note" style="font-size:13px;color:var(--muted);margin-bottom:16px;"></div>
+          <!-- ONE Loading screen ("Building your plan") with 3 status ticks -->
+          <div id="fw-loading-screen" class="fw-step-panel" style="display:none;">
+            <div style="text-align:center;padding:24px 0;">
+              <div class="panel-title" style="font-size:20px;margin-bottom:6px;">Building your plan</div>
+              <div style="font-size:13px;color:var(--goals-muted, var(--muted));margin-bottom:24px;" id="fw-loading-subtitle">Personalizing your targets and routine...</div>
 
-            <div class="goal-item">
-              <div class="goal-header"><span class="goal-label">BMI</span><span class="goal-val red" id="fw-result-bmi">—</span></div>
-              <div style="font-size:12px;color:var(--muted);">An estimate based on your height and weight.</div>
-            </div>
-            <div class="goal-item">
-              <div class="goal-header"><span class="goal-label">BMR</span><span class="goal-val red" id="fw-result-bmr">—</span></div>
-              <div style="font-size:12px;color:var(--muted);">Estimated calories your body uses at rest.</div>
-            </div>
-            <div class="goal-item">
-              <div class="goal-header"><span class="goal-label">TDEE</span><span class="goal-val red" id="fw-result-tdee">—</span></div>
-              <div style="font-size:12px;color:var(--muted);">Estimated calories your body uses in a typical day based on your activity.</div>
-            </div>
-            <div class="goal-item">
-              <div class="goal-header"><span class="goal-label">Daily Calorie Target</span><span class="goal-val red" id="fw-result-calorie">—</span></div>
-              <div style="font-size:12px;color:var(--muted);">Estimated daily calorie intake based on your selected goal.</div>
-            </div>
-            <div class="goal-item">
-              <div class="goal-header"><span class="goal-label">Daily Protein Target</span><span class="goal-val green" id="fw-result-protein">—</span></div>
-              <div style="font-size:12px;color:var(--muted);">Estimated daily protein target based on your current weight.</div>
-            </div>
+              <div class="fw-ticker-list">
+                <div class="fw-ticker-item active" id="fw-ticker-1">
+                  <span class="fw-ticker-icon" aria-hidden="true">⏳</span>
+                  <span class="fw-ticker-text">Saving your focus</span>
+                </div>
+                <div class="fw-ticker-item pending" id="fw-ticker-2">
+                  <span class="fw-ticker-icon" aria-hidden="true">⏳</span>
+                  <span class="fw-ticker-text">Calculating your targets</span>
+                </div>
+                <div class="fw-ticker-item pending" id="fw-ticker-3">
+                  <span class="fw-ticker-icon" aria-hidden="true">⏳</span>
+                  <span class="fw-ticker-text">Loading your plan</span>
+                </div>
+              </div>
 
-            <div style="font-size:12px;color:var(--muted);margin-top:12px;">These are general fitness estimates for the Power Gym system, not medical prescriptions.</div>
-
-            <button class="btn btn-outline" style="width:100%;margin-top:16px;" onclick="fitnessWizardEditGoal()">← BACK TO GOAL</button>
-          </div><!-- /fw-step-3 -->
-
-          <!-- CONFIRMATION / CALCULATION-FALLBACK STATE — shown briefly after
-               Step 2 while targets are calculated, and reused as a retry
-               screen if the calculation call fails (e.g. server unreachable,
-               or birthday missing) so Step 1/2 data is never lost. -->
-          <div id="fw-confirm" class="fw-step-panel" style="display:none;">
-            <div style="text-align:center;padding:16px 0;">
-              <div style="font-size:17px;color:var(--white);">Your goal is set to <strong id="fw-confirm-goal-label" class="goal-val red"></strong>.</div>
-              <div style="font-size:13px;color:var(--muted);margin-top:10px;" id="fw-confirm-message">Calculating your fitness targets...</div>
-              <button class="btn btn-outline" style="margin-top:16px;display:none;" id="fw-confirm-retry-btn" onclick="retryFitnessCalculation()">RETRY CALCULATION</button>
-              <button class="btn btn-outline" style="margin-top:8px;" onclick="fitnessWizardEditGoal()">CHANGE GOAL</button>
+              <div id="fw-loading-error" style="display:none;color:var(--red);margin-top:20px;font-size:14px;line-height:1.5;"></div>
+              <button type="button" class="btn btn-outline" style="display:none;margin:16px auto 0;" id="fw-loading-retry-btn" onclick="retryFitnessSetup()">RETRY</button>
             </div>
-          </div><!-- /fw-confirm -->
+          </div><!-- /fw-loading-screen -->
 
         </div>
       </div><!-- /fitness-wizard-panel -->
 
-      <!-- ── YOUR PERSONALIZED FITNESS PLAN — Stage 4. Deterministic,
-           rule-based recommendations generated from Step 3's already-
-           calculated calorie/protein targets + the member's selected goal.
-           No AI. Hidden until Step 3 has results and the plan loads
-           successfully; Step 1–3 remain fully usable even if this section
-           fails to load.
-           UI: compact mini-dashboard with tabs (Overview/Nutrition/Foods &
-           Meals/Workouts/Equipment/Tips) instead of one long scroll — the
-           underlying data/fetch logic is unchanged, this is presentation
-           only. ── -->
+      <!-- ── YOUR PERSONALIZED FITNESS PLAN ── -->
       <div class="panel" id="fitness-plan-panel" style="display:none;margin-bottom:20px;">
-        <div class="panel-header"><div class="panel-title">Your Personalized Fitness Plan</div></div>
+        <div class="panel-header"><div class="panel-title">MY FITNESS HUB</div></div>
         <div class="panel-body">
-          <div style="font-size:12px;color:var(--muted);margin-bottom:16px;">General fitness and nutrition guidance only. This is not medical advice.</div>
+          <div style="font-size:12px;color:var(--goals-muted, var(--muted));margin-bottom:16px;">General fitness and nutrition guidance only. This is not medical advice.</div>
 
-          <div id="fp-status-message" style="display:none;font-size:15px;color:var(--muted);text-align:center;padding:16px 0;"></div>
+          <!-- ── Hub Header: Milestone Hero Card (Matching Mockup 1) ── -->
+          <div id="fw-hub-header" class="fw-hub-hero-card">
+            <!-- Row 1: Title & Quick Actions -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
+              <div>
+                <div style="font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:1px;color:var(--white);">YOUR FITNESS MILESTONE</div>
+                <div style="font-size:12px;color:var(--goals-muted, var(--muted));display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px;">
+                  <span>Goal: <strong id="fw-hub-obj-badge" style="color:var(--gold);">—</strong></span>
+                  <span>•</span>
+                  <span>Focus: <strong id="fw-hub-focus-badge" style="color:var(--white);">—</strong></span>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                {% if member_age and member_age >= 18 %}
+                <button type="button" class="btn btn-red btn-sm" onclick="switchFitnessPlanTab('progress', document.getElementById('fp-tab-progress')); document.getElementById('fw-today-weight')?.focus();" aria-label="Quick Weigh-In">⚡ Quick Weigh-In</button>
+                {% endif %}
+                <button type="button" class="btn btn-outline btn-sm" id="fw-edit-btn-hub" onclick="editFitnessProfileAndFocus()">✏️ Edit Goals</button>
+              </div>
+            </div>
+
+            <!-- Row 2: Milestone bar -->
+            <div id="fw-hub-milestone-row" style="margin-bottom:18px;display:none;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <span style="font-size:13px;color:var(--goals-muted, var(--muted));" id="fw-hub-start-label">Start: —</span>
+                <span style="font-size:12px;font-weight:700;color:var(--white);background:rgba(230,30,37,0.2);border:1px solid rgba(230,30,37,0.4);padding:2px 10px;border-radius:12px;" id="fw-hub-progress-label">—</span>
+                <span style="font-size:13px;font-weight:600;color:var(--green);" id="fw-hub-goal-label">Goal: —</span>
+              </div>
+              <div style="height:12px;background:rgba(255,255,255,0.08);border-radius:6px;overflow:hidden;padding:2px;box-shadow:inset 0 1px 3px rgba(0,0,0,0.4);">
+                <div id="fw-hub-milestone-fill" style="height:100%;background:linear-gradient(90deg,var(--red),#28a745);border-radius:4px;transition:width 0.4s ease;width:0%;"></div>
+              </div>
+            </div>
+
+            <!-- Row 3: 4 Metric chips grid -->
+            <div class="fw-metric-chips-grid">
+              <div class="fw-metric-chip">
+                <div class="fw-metric-val" id="fw-hub-weight">—</div>
+                <div class="fw-metric-lbl">Current Weight</div>
+              </div>
+              <div class="fw-metric-chip" id="fw-hub-bmi-chip" style="display:none;">
+                <div class="fw-metric-val" id="fw-hub-bmi">—</div>
+                <div class="fw-metric-lbl">BMI Status</div>
+              </div>
+              <div class="fw-metric-chip">
+                <div class="fw-metric-val" id="fw-hub-calories">—</div>
+                <div class="fw-metric-lbl">Daily Calories 🔥</div>
+              </div>
+              <div class="fw-metric-chip">
+                <div class="fw-metric-val" id="fw-hub-protein">—</div>
+                <div class="fw-metric-lbl">Daily Protein 💪</div>
+              </div>
+            </div>
+          </div>
+
+          <div id="fp-status-message" style="display:none;font-size:15px;color:var(--goals-muted, var(--muted));text-align:center;padding:16px 0;"></div>
 
           <div id="fp-plan-content" style="display:none;">
 
-            <!-- Summary strip -->
-            <div class="fp-summary-grid">
-              <div class="stat-card red fp-stat-compact">
-                <span class="stat-icon">🎯</span>
-                <div class="stat-value" id="fp-summary-goal">—</div>
-                <div class="stat-label">Fitness Goal</div>
-              </div>
-              <div class="stat-card blue fp-stat-compact">
-                <span class="stat-icon">⚡</span>
-                <div class="stat-value" id="fp-summary-activity">—</div>
-                <div class="stat-label">Activity Level</div>
-              </div>
-              <div class="stat-card gold fp-stat-compact">
-                <span class="stat-icon">🔥</span>
-                <div class="stat-value" id="fp-summary-calorie">—</div>
-                <div class="stat-label">Daily Calorie Target</div>
-              </div>
-              <div class="stat-card green fp-stat-compact">
-                <span class="stat-icon">💪</span>
-                <div class="stat-value" id="fp-summary-protein">—</div>
-                <div class="stat-label">Daily Protein Target</div>
-              </div>
-            </div>
+            <!-- 1. AI Coach note -->
+            <div id="ai-coach-message" class="ai-banner" style="margin-bottom:16px;"></div>
 
-            <!-- Tab navigation -->
-            <div class="fp-tabs" role="tablist">
-              <button type="button" class="fp-tab-btn active" data-fp-tab="overview"  onclick="switchFitnessPlanTab('overview', this)">OVERVIEW</button>
-              <button type="button" class="fp-tab-btn"        data-fp-tab="nutrition" onclick="switchFitnessPlanTab('nutrition', this)">NUTRITION</button>
-              <button type="button" class="fp-tab-btn"        data-fp-tab="foods"     onclick="switchFitnessPlanTab('foods', this)">FOODS &amp; MEALS</button>
-              <button type="button" class="fp-tab-btn"        data-fp-tab="workouts"  onclick="switchFitnessPlanTab('workouts', this)">WORKOUTS</button>
-              <button type="button" class="fp-tab-btn"        data-fp-tab="equipment" onclick="switchFitnessPlanTab('equipment', this)">EQUIPMENT</button>
-              <button type="button" class="fp-tab-btn"        data-fp-tab="tips"      onclick="switchFitnessPlanTab('tips', this)">TIPS</button>
-            </div>
-
-            <!-- OVERVIEW -->
-            <div class="fp-tab-panel" id="fp-panel-overview" data-fp-panel="overview">
-              <div style="font-size:15px;color:var(--white);line-height:1.7;margin-bottom:18px;">
-                This plan is generated from your fitness profile and your Step 3 calculated targets. Explore your
-                nutrition targets, recommended foods and meals, workouts, equipment, and general tips for your
-                <strong id="fp-overview-goal-label" class="red">—</strong> goal using the tabs above.
+            <!-- 2. Collapsible Coaching Tips -->
+            <details class="fw-calc-details" id="fp-coaching-tips" style="margin-bottom:20px;">
+              <summary class="fw-calc-summary">
+                <span>Coaching Tips</span>
+                <span class="fw-calc-chevron" aria-hidden="true">▾</span>
+              </summary>
+              <div class="fw-calc-body">
+                <ul id="fp-tips-list" style="font-size:14px;color:var(--white);line-height:1.8;padding-left:18px;margin:0;"></ul>
               </div>
-              <div class="fp-overview-grid">
-                <div class="fp-overview-tile" onclick="switchFitnessPlanTab('nutrition', document.querySelector('[data-fp-tab=nutrition]'))">
-                  <span class="fp-overview-icon">🍽️</span><span>Nutrition</span>
-                </div>
-                <div class="fp-overview-tile" onclick="switchFitnessPlanTab('foods', document.querySelector('[data-fp-tab=foods]'))">
-                  <span class="fp-overview-icon">🥗</span><span>Foods &amp; Meals</span>
-                </div>
-                <div class="fp-overview-tile" onclick="switchFitnessPlanTab('workouts', document.querySelector('[data-fp-tab=workouts]'))">
-                  <span class="fp-overview-icon">🏋️</span><span>Workouts</span>
-                </div>
-                <div class="fp-overview-tile" onclick="switchFitnessPlanTab('equipment', document.querySelector('[data-fp-tab=equipment]'))">
-                  <span class="fp-overview-icon">🧰</span><span>Equipment</span>
-                </div>
-                <div class="fp-overview-tile" onclick="switchFitnessPlanTab('tips', document.querySelector('[data-fp-tab=tips]'))">
-                  <span class="fp-overview-icon">💡</span><span>Tips</span>
+            </details>
+
+            <!-- 3. Daily targets block + 4. Collapsible "How we calculated this" -->
+            <div class="fw-daily-targets-block" style="margin-bottom:20px;">
+              <div class="fw-daily-targets-header">
+                <div class="fw-daily-targets-title">YOUR DAILY TARGETS</div>
+                <div class="fw-daily-targets-sub" style="font-size:13px;color:var(--goals-muted, var(--muted));margin-top:4px;">
+                  Plan tailored for your <strong id="fp-daily-obj-label" style="color:var(--gold);">—</strong> goal &amp; <strong id="fp-daily-goal-label" style="color:var(--white);">—</strong> focus (<strong id="fp-daily-activity-label" style="color:var(--white);">—</strong>).
                 </div>
               </div>
-            </div>
 
-            <!-- NUTRITION -->
-            <div class="fp-tab-panel" id="fp-panel-nutrition" data-fp-panel="nutrition" style="display:none;">
-              <div class="goal-item">
-                <div class="goal-header"><span class="goal-label">Daily Calorie Target</span><span class="goal-val red" id="fp-nutrition-calorie">—</span></div>
+              <div class="fw-primary-targets-grid">
+                <div class="stat-card gold fp-stat-primary">
+                  <span class="stat-icon" aria-hidden="true">🔥</span>
+                  <div class="stat-value" id="fp-target-calories">—</div>
+                  <div class="stat-label">Daily Calories</div>
+                </div>
+                <div class="stat-card green fp-stat-primary">
+                  <span class="stat-icon" aria-hidden="true">💪</span>
+                  <div class="stat-value" id="fp-target-protein">—</div>
+                  <div class="stat-label">Daily Protein</div>
+                </div>
               </div>
-              <div class="goal-item">
-                <div class="goal-header"><span class="goal-label">Daily Protein Target</span><span class="goal-val green" id="fp-nutrition-protein">—</span></div>
-              </div>
+
+              <!-- Collapsed "How we calculated this" section -->
+              <details class="fw-calc-details" id="fw-calc-details">
+                <summary class="fw-calc-summary">
+                  <span>How we calculated this</span>
+                  <span class="fw-calc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <div class="fw-calc-body">
+                  <div class="fw-calc-item" id="fw-calc-bmi-row">
+                    <div class="fw-calc-header">
+                      <span class="fw-calc-label">BMI</span>
+                      <span class="fw-calc-val" id="fw-calc-bmi">—</span>
+                    </div>
+                    <div class="fw-calc-desc">An estimate based on your height and weight.</div>
+                  </div>
+                  <div class="fw-calc-item">
+                    <div class="fw-calc-header">
+                      <span class="fw-calc-label">BMR</span>
+                      <span class="fw-calc-val" id="fw-calc-bmr">—</span>
+                    </div>
+                    <div class="fw-calc-desc">Estimated calories your body uses at rest.</div>
+                  </div>
+                  <div class="fw-calc-item">
+                    <div class="fw-calc-header">
+                      <span class="fw-calc-label">TDEE</span>
+                      <span class="fw-calc-val" id="fw-calc-tdee">—</span>
+                    </div>
+                    <div class="fw-calc-desc">Estimated calories your body uses in a typical day based on your activity.</div>
+                  </div>
+                </div>
+              </details>
             </div>
 
-            <!-- FOODS & MEALS -->
-            <div class="fp-tab-panel" id="fp-panel-foods" data-fp-panel="foods" style="display:none;">
-              <div class="panel-title" style="font-size:16px;margin-bottom:10px;">Recommended Foods</div>
-              <div class="fp-card-grid" id="fp-foods-list"></div>
-
-              <div class="panel-title" style="font-size:16px;margin:22px 0 10px;">Sample Daily Meal Plan</div>
-              <div class="fp-card-grid" id="fp-meal-plan"></div>
-              <div style="font-size:12px;color:var(--muted);margin-top:12px;" id="fp-meal-plan-total"></div>
+            <!-- 5. Consolidated Tabs Matching Mockup 1 -->
+            <div class="fp-tabs" role="tablist" aria-label="Personalized Plan Tabs">
+              <button type="button" class="fp-tab-btn active" role="tab" id="fp-tab-workouts" data-fp-tab="workouts" aria-selected="true" aria-controls="fp-panel-workouts" tabindex="0" onclick="switchFitnessPlanTab('workouts', this)">
+                <span style="margin-right:6px;" aria-hidden="true">🏋️‍♂️</span>WORKOUTS
+              </button>
+              <button type="button" class="fp-tab-btn" role="tab" id="fp-tab-nutrition" data-fp-tab="nutrition" aria-selected="false" aria-controls="fp-panel-nutrition" tabindex="-1" onclick="switchFitnessPlanTab('nutrition', this)">
+                <span style="margin-right:6px;" aria-hidden="true">🥗</span>NUTRITION
+              </button>
+              {% if member_age and member_age >= 18 %}
+              <button type="button" class="fp-tab-btn" role="tab" id="fp-tab-progress" data-fp-tab="progress" aria-selected="false" aria-controls="fp-panel-progress" tabindex="-1" onclick="switchFitnessPlanTab('progress', this)">
+                <span style="margin-right:6px;" aria-hidden="true">📈</span>PROGRESS
+              </button>
+              {% endif %}
             </div>
 
-            <!-- WORKOUTS -->
-            <div class="fp-tab-panel" id="fp-panel-workouts" data-fp-panel="workouts" style="display:none;">
-              <div style="font-size:13px;color:var(--muted);margin-bottom:14px;" id="fp-workout-frequency"></div>
+            <!-- TAB 1: WORKOUTS -->
+            <div class="fp-tab-panel" id="fp-panel-workouts" role="tabpanel" aria-labelledby="fp-tab-workouts" data-fp-panel="workouts">
+              <div style="font-size:13px;color:var(--goals-muted, var(--muted));margin-bottom:14px;" id="fp-workout-frequency"></div>
 
-              <!-- Day 1–7 navigation, styled like the top-level plan tabs
-                   so it reads as "tabs within a tab" — only one day's
-                   content is shown at a time to avoid a long scroll. -->
-              <div class="fp-day-tabs" id="fp-day-tabs" role="tablist"></div>
+              <!-- 7-day horizontal week strip -->
+              <div class="fw-week-strip" id="fp-day-tabs" role="tablist" aria-label="Routine days"></div>
 
               <div id="fp-day-panels"></div>
             </div>
 
-            <!-- EQUIPMENT -->
-            <div class="fp-tab-panel" id="fp-panel-equipment" data-fp-panel="equipment" style="display:none;">
-              <div class="fp-card-grid" id="fp-equipment-list"></div>
+            <!-- TAB 2: NUTRITION (Consolidating Recommended Foods + Sample Daily Meal Plan + totals) -->
+            <div class="fp-tab-panel" id="fp-panel-nutrition" role="tabpanel" aria-labelledby="fp-tab-nutrition" data-fp-panel="nutrition" style="display:none;">
+              <!-- Modern Daily Macro Targets Summary Strip -->
+              <div class="fp-nutrition-macro-strip">
+                <!-- Daily Calories Card -->
+                <div class="fp-macro-card fp-macro-cal-card">
+                  <div class="fp-macro-card-icon" aria-hidden="true">🔥</div>
+                  <div class="fp-macro-card-info">
+                    <div class="fp-macro-val" id="fp-nutrition-calorie">—</div>
+                    <div class="fp-macro-lbl">Daily Calories</div>
+                    <div class="fp-macro-sublbl">Target Energy Intake</div>
+                  </div>
+                  <div class="fp-macro-ring-wrap" title="100% Target" aria-hidden="true">
+                    <svg viewBox="0 0 44 44" class="fp-macro-ring-svg">
+                      <circle cx="22" cy="22" r="18" class="fp-macro-ring-bg"></circle>
+                      <circle cx="22" cy="22" r="18" class="fp-macro-ring-fill fp-ring-gold"></circle>
+                    </svg>
+                    <span class="fp-macro-ring-text">100%</span>
+                  </div>
+                </div>
+
+                <!-- Macro Distribution Split Bar Card -->
+                <div class="fp-macro-card fp-macro-split-card">
+                  <div class="fp-split-header">
+                    <span class="fp-split-tag pro"><span class="fp-split-dot dot-pro"></span>Protein <strong id="fp-macro-pct-protein">20%</strong> <span class="fp-split-grams" id="fp-macro-g-protein">(101g)</span></span>
+                    <span class="fp-split-tag carb"><span class="fp-split-dot dot-carb"></span>Carbs <strong id="fp-macro-pct-carbs">50%</strong> <span class="fp-split-grams" id="fp-macro-g-carbs">(319g)</span></span>
+                    <span class="fp-split-tag fat"><span class="fp-split-dot dot-fat"></span>Fats <strong id="fp-macro-pct-fats">30%</strong> <span class="fp-split-grams" id="fp-macro-g-fats">(85g)</span></span>
+                  </div>
+                  <div class="fp-split-bar" aria-label="Macronutrient distribution">
+                    <div class="fp-split-seg seg-pro" id="fp-split-seg-pro" style="width: 20%;" title="Protein"></div>
+                    <div class="fp-split-seg seg-carb" id="fp-split-seg-carb" style="width: 50%;" title="Carbohydrates"></div>
+                    <div class="fp-split-seg seg-fat" id="fp-split-seg-fat" style="width: 30%;" title="Healthy Fats"></div>
+                  </div>
+                  <div class="fp-split-sub">Balanced macronutrient allocation tailored for your objective</div>
+                </div>
+
+                <!-- Daily Protein Card -->
+                <div class="fp-macro-card fp-macro-pro-card">
+                  <div class="fp-macro-card-icon" aria-hidden="true">💪</div>
+                  <div class="fp-macro-card-info">
+                    <div class="fp-macro-val" id="fp-nutrition-protein">—</div>
+                    <div class="fp-macro-lbl">Daily Protein</div>
+                    <div class="fp-macro-sublbl">Target Muscle Synthesis</div>
+                  </div>
+                  <div class="fp-macro-ring-wrap" title="Daily Protein Goal" aria-hidden="true">
+                    <svg viewBox="0 0 44 44" class="fp-macro-ring-svg">
+                      <circle cx="22" cy="22" r="18" class="fp-macro-ring-bg"></circle>
+                      <circle cx="22" cy="22" r="18" class="fp-macro-ring-fill fp-ring-green"></circle>
+                    </svg>
+                    <span class="fp-macro-ring-text">Goal</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Recommended Foods Section with Header & Filter Pills -->
+              <div class="fp-section-header-row">
+                <div class="panel-title" style="font-size:16px;margin:0;">Recommended Foods</div>
+                <div class="fp-food-filter-strip" id="fp-food-filter-strip" role="tablist" aria-label="Filter food recommendations">
+                  <button type="button" class="fp-food-filter-btn active" data-filter="all">All Foods</button>
+                  <button type="button" class="fp-food-filter-btn" data-filter="protein">High Protein</button>
+                  <button type="button" class="fp-food-filter-btn" data-filter="carbs">Complex Carbs</button>
+                  <button type="button" class="fp-food-filter-btn" data-filter="fats">Healthy Fats</button>
+                  <button type="button" class="fp-food-filter-btn" data-filter="produce">Fruits & Produce</button>
+                </div>
+              </div>
+              <div class="fp-card-grid fp-foods-grid" id="fp-foods-list"></div>
+
+              <!-- Sample Daily Meal Plan Section -->
+              <div class="panel-title" style="font-size:16px;margin:28px 0 12px;">Sample Daily Meal Plan</div>
+              <div class="fp-card-grid fp-meals-grid" id="fp-meal-plan"></div>
+
+              <!-- Daily Meal Plan Allocation Bar & Summary -->
+              <div class="fp-meal-plan-total-card" id="fp-meal-plan-total-wrap">
+                <div class="fp-total-header">
+                  <span class="fp-total-label" id="fp-meal-plan-total">Daily total across all meals: —</span>
+                </div>
+                <div class="fp-meal-alloc-bar" id="fp-meal-alloc-bar" aria-label="Daily meal calories allocation"></div>
+              </div>
             </div>
 
-            <!-- TIPS -->
-            <div class="fp-tab-panel" id="fp-panel-tips" data-fp-panel="tips" style="display:none;">
-              <ul id="fp-tips-list" style="font-size:15px;color:var(--white);line-height:1.9;padding-left:18px;margin:0;"></ul>
-              <div style="font-size:12px;color:var(--muted);margin-top:16px;">General fitness and nutrition guidance only. This is not medical advice.</div>
+            <!-- TAB 3: PROGRESS (Adults only) -->
+            {% if member_age and member_age >= 18 %}
+            <div class="fp-tab-panel" id="fp-panel-progress" role="tabpanel" aria-labelledby="fp-tab-progress" data-fp-panel="progress" style="display:none;">
+              <!-- Weight change alert banner (>= 2 kg diff) -->
+              <div id="fw-weight-change-alert" class="fw-weight-change-alert" style="display:none;">
+                <div class="fw-alert-content">
+                  <span class="fw-alert-icon" aria-hidden="true">⚠️</span>
+                  <span id="fw-weight-change-text">Your weight changed. Update your targets?</span>
+                </div>
+                <div class="fw-alert-actions">
+                  <button type="button" class="btn btn-gold btn-sm" id="fw-update-targets-btn" onclick="recalculateFromProgress()">UPDATE TARGETS</button>
+                  <button type="button" class="btn btn-outline btn-sm" onclick="dismissWeightChangeAlert()">DISMISS</button>
+                </div>
+              </div>
+
+              <!-- Goal Weight Progress Summary -->
+              <div class="fw-progress-goal-card" id="fw-goal-summary-card" style="margin-bottom:20px;">
+                <div class="fw-goal-summary-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                  <div class="panel-title" style="font-size:16px;">Goal Weight Progress</div>
+                  <button type="button" class="btn btn-outline btn-sm" id="fw-edit-goal-weight-btn" onclick="openGoalWeightModal()">Set / Edit Goal</button>
+                </div>
+                <div id="fw-goal-progress-container">
+                  <!-- Rendered via JS -->
+                </div>
+              </div>
+
+              <!-- Log Today's Weight Form -->
+              <div class="fw-log-weight-box" style="background:var(--bg-card, rgba(255,255,255,0.03));border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:16px 20px;margin-bottom:20px;">
+                <div class="panel-title" style="font-size:16px;margin-bottom:12px;">Log Today's Weight</div>
+                <form id="fw-log-weight-form" onsubmit="event.preventDefault(); submitWeightLog();" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+                  <div class="form-group" style="margin-bottom:0;flex:1;min-width:180px;">
+                    <label class="form-label" for="fw-today-weight">Weight (kg)</label>
+                    <input type="number" class="form-input" id="fw-today-weight" min="20" max="300" step="0.1" placeholder="e.g. 72.5" required>
+                  </div>
+                  <button type="submit" class="btn btn-red" id="fw-log-weight-btn">LOG WEIGHT</button>
+                </form>
+                <div style="font-size:12px;color:var(--goals-muted, var(--muted));margin-top:8px;">Weigh in consistently under similar conditions (e.g. morning before breakfast).</div>
+              </div>
+
+              <!-- Inline SVG Weight Trend Chart -->
+              <div class="fw-chart-box" style="margin-bottom:24px;">
+                <div class="panel-title" style="font-size:16px;margin-bottom:10px;">Weight Trend (Last 12 Entries)</div>
+                <div id="fw-chart-container" class="fw-chart-container">
+                  <!-- SVG or empty state rendered via JS -->
+                </div>
+              </div>
+
+              <!-- Recent Weigh-ins (last 5) with Delete buttons -->
+              <div class="fw-recent-weights-box">
+                <div class="panel-title" style="font-size:16px;margin-bottom:12px;">Recent Weigh-ins</div>
+                <div id="fw-recent-weights-list" class="fw-recent-weights-list">
+                  <!-- Rendered via JS -->
+                </div>
+              </div>
             </div>
+            {% endif %}
 
           </div><!-- /fp-plan-content -->
         </div>
       </div><!-- /fitness-plan-panel -->
 
-      <div class="grid-2">
-        <div class="panel">
-          <div class="panel-header"><div class="panel-title">Current Measurements</div></div>
-          <div class="panel-body">
-            {% if goal %}
-            <div class="goal-item">
-              <div class="goal-header"><span class="goal-label">Weight</span><span class="goal-val red">{{ goal.current_weight if goal.current_weight else '—' }} kg</span></div>
-              <div style="font-size:12px;color:var(--muted);">Goal: {{ goal.goal_weight if goal.goal_weight else '—' }} kg</div>
-            </div>
-            <div class="goal-item">
-              <div class="goal-header"><span class="goal-label">BMI</span><span class="goal-val red">{{ goal.current_bmi if goal.current_bmi else '—' }}</span></div>
-              <div style="font-size:12px;color:var(--muted);">Normal range: 18.5–24.9</div>
-            </div>
-            {% else %}
-            <div style="text-align:center;color:var(--muted);padding:20px 0;">No body goals logged yet. Complete the Fitness Goal Setup above to add your first entry.</div>
-            {% endif %}
+      <!-- ── Current Measurements Panel (Notes panel removed, Goal kg line removed) ── -->
+      <div class="panel" id="current-measurements-panel">
+        <div class="panel-header"><div class="panel-title">Current Measurements</div></div>
+        <div class="panel-body">
+          {% if goal %}
+          <div class="goal-item">
+            <div class="goal-header"><span class="goal-label">Weight</span><span class="goal-val white" id="meas-weight">{{ goal.current_weight if goal.current_weight else '—' }} kg</span></div>
           </div>
-        </div>
-        <div class="panel">
-          <div class="panel-header"><div class="panel-title">Notes</div></div>
-          <div class="panel-body">
-            {% if goal and goal.notes %}
-            <div style="font-size:15px;color:var(--white);line-height:1.6;">{{ goal.notes }}</div>
-            <div style="margin-top:16px;font-size:12px;color:var(--muted);">Last updated: {{ goal.recorded_at.strftime('%b %d, %Y') }}</div>
-            {% else %}
-            <div style="text-align:center;color:var(--muted);padding:20px 0;">No notes yet.</div>
-            {% endif %}
+          {% if member_age and member_age >= 18 %}
+          <div class="goal-item" id="meas-bmi-item">
+            <div class="goal-header"><span class="goal-label">BMI</span><span class="goal-val white" id="meas-bmi">{{ goal.current_bmi if goal.current_bmi else '—' }}</span></div>
+            <div style="font-size:12px;color:var(--goals-muted, var(--muted));" id="meas-bmi-range">Normal range: 18.5–24.9</div>
           </div>
+          {% endif %}
+          {% else %}
+          <div style="text-align:center;color:var(--goals-muted, var(--muted));padding:20px 0;">No body goals logged yet. Complete the Fitness Goal Setup above to add your first entry.</div>
+          {% endif %}
         </div>
       </div>
     </div><!-- /member-goals -->
 
-    <script id="member-fitness-data" type="application/json">{{ {'height_cm': (fitness_profile.height_cm|float if fitness_profile and fitness_profile.height_cm else None), 'sex': (fitness_profile.sex if fitness_profile else None), 'activity_level': (fitness_profile.activity_level if fitness_profile else None), 'fitness_goal': (fitness_profile.fitness_goal if fitness_profile else None), 'weight_kg': (goal.current_weight|float if goal and goal.current_weight else None), 'calculations': ({'bmi': goal.current_bmi|float, 'bmr': goal.bmr|float, 'tdee': goal.tdee|float, 'calorie_target': goal.calorie_target, 'protein_target_g': goal.protein_target_g} if (goal and goal.current_bmi is not none and goal.bmr is not none and goal.tdee is not none and goal.calorie_target is not none and goal.protein_target_g is not none) else None)}|tojson }}</script>
+    <script id="member-fitness-data" type="application/json">{{ {'height_cm': (fitness_profile.height_cm|float if fitness_profile and fitness_profile.height_cm else None), 'sex': (fitness_profile.sex if fitness_profile else None), 'activity_level': (fitness_profile.activity_level if fitness_profile else None), 'fitness_goal': (fitness_profile.fitness_goal if fitness_profile else None), 'primary_objective': (fitness_profile.primary_objective if fitness_profile and fitness_profile.primary_objective else 'MAINTAIN'), 'weight_kg': (goal.current_weight|float if goal and goal.current_weight else None), 'goal_weight': (goal.goal_weight|float if goal and goal.goal_weight else None), 'calculated_weight': (fitness_profile.calculated_weight|float if fitness_profile and fitness_profile.calculated_weight else None), 'age': member_age, 'is_minor': (member_age is none or member_age < 18), 'has_birthday': (member.birthday is not none), 'calculations': ({'bmi': (goal.current_bmi|float if goal.current_bmi is not none else None), 'bmr': (goal.bmr|float if goal.bmr is not none else None), 'tdee': (goal.tdee|float if goal.tdee is not none else None), 'calorie_target': goal.calorie_target, 'protein_target_g': goal.protein_target_g} if (goal and goal.calorie_target is not none and goal.protein_target_g is not none) else None)}|tojson }}</script>
 
 
 
@@ -1355,6 +1690,8 @@
     <button class="modal-close" onclick="closeModal('exercise-instructions-modal')">✕</button>
     <div class="modal-title" style="text-align:center;" id="exercise-instructions-modal-title">EXERCISE</div>
     <div style="font-size:15px;color:var(--muted);text-align:center;margin-bottom:18px;" id="exercise-instructions-modal-subtitle"></div>
+    <video id="exercise-modal-video" autoplay loop muted playsinline style="display:none; width:100%; max-height:250px; border-radius:6px; margin-bottom:14px; object-fit:cover;"></video>
+    <img id="exercise-modal-image" style="display:none; width:100%; max-height:250px; border-radius:6px; margin-bottom:14px; object-fit:contain; background:rgba(0,0,0,0.2);" alt="Exercise demonstration">
     <div class="panel-title" style="margin-bottom:4px;">Step-by-step instructions</div>
     <ol class="exercise-instructions-list" id="exercise-instructions-modal-steps"></ol>
   </div>
@@ -1700,6 +2037,31 @@
     <button class="btn btn-red" style="width:100%;justify-content:center;margin-top:8px;" onclick="closeModal('gcash-payment-reminder-modal')">GOT IT</button>
   </div>
 </div>
+
+{% if member_age and member_age >= 18 %}
+<!-- Set / Edit Goal Weight Modal (Adults only) -->
+<div class="modal-overlay" id="goal-weight-modal">
+  <div class="modal" style="max-width:420px;">
+    <button class="modal-close" onclick="closeGoalWeightModal()">✕</button>
+    <div class="modal-title" style="margin-bottom:12px;">SET GOAL WEIGHT</div>
+    <div style="font-size:13px;color:var(--goals-muted, var(--muted));margin-bottom:16px;line-height:1.5;">
+      Enter your target body weight. To ensure realistic goals, your target must correspond to an implied BMI between 18.5 and 40.0.
+    </div>
+    <form id="fw-modal-goal-form" onsubmit="event.preventDefault(); submitGoalWeight();">
+      <div class="form-group" style="margin-bottom:14px;">
+        <label class="form-label" for="fw-modal-goal-weight">Goal Weight (kg)</label>
+        <input type="number" class="form-input" id="fw-modal-goal-weight" min="30" max="300" step="0.1" placeholder="e.g. 70.0" required oninput="calculateModalGoalBmi()">
+        <div id="fw-modal-goal-bmi-hint" style="font-size:12px;color:var(--gold);margin-top:6px;display:none;"></div>
+      </div>
+      <div id="fw-modal-goal-error" style="display:none;color:var(--red);font-size:13px;line-height:1.4;margin-bottom:14px;"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button type="button" class="btn btn-outline" onclick="closeGoalWeightModal()">CANCEL</button>
+        <button type="submit" class="btn btn-red" id="fw-modal-goal-save-btn">SAVE GOAL</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
 
 <!-- Toast Container -->
 <div class="toast-container" id="toast-container"></div>

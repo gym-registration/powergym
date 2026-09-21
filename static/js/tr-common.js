@@ -318,7 +318,11 @@ function openModal(id) {
 /** Close a modal overlay */
 function closeModal(id) {
   const el = document.getElementById(id);
-  if (el) el.classList.remove('open');
+  if (el) {
+    el.classList.remove('open');
+    const video = el.querySelector('video');
+    if (video) video.pause();
+  }
 }
 
 /** Open the Terms & Policy modal from registration, and unlock the
@@ -814,8 +818,14 @@ function _injectSidebarUser(session) {
 function _bindModalBackdrops() {
   document.querySelectorAll('.modal-overlay').forEach(overlay => {
     overlay.addEventListener('click', e => {
-      if (e.target === overlay) overlay.classList.remove('open');
+      if (e.target === overlay) closeModal(overlay.id);
     });
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      const openModalEl = document.querySelector('.modal-overlay.open');
+      if (openModalEl) closeModal(openModalEl.id);
+    }
   });
 }
 

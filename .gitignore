@@ -8,3 +8,7 @@ __pycache__/
 
 .vscode/
 .env
+
+# Exercise demonstration videos — place files here manually on deployment,
+# do not commit (can be 5-50 MB per file).
+static/media/exercises/
