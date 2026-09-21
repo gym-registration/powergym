@@ -27,15 +27,47 @@
    Functions used across multiple modules / pages.
 ════════════════════════════════════════════════ */
 
-/** Build an attendance dot grid. totalDays defaults to 30 if not given
- *  (kept for backward compatibility with pages that don't pass it yet). */
-function buildAttGrid(elId, presentDays, totalDays = 30, todayDay = null, noPlanDays = []) {
+/** Build a full month attendance calendar styled after a classic wall
+ *  calendar. Kept in sync with the copy in tr-common.js — see that file
+ *  for the full explanation of the parameters. */
+function buildAttGrid(elId, presentDays, totalDays = 30, todayDay = null, noPlanDays = [], year = null, month = null) {
   const el = document.getElementById(elId);
   if (!el) return;
-  el.innerHTML = '';
+
+  const now = new Date();
+  const y = year  || now.getFullYear();
+  const m = month || (now.getMonth() + 1); // 1-12
+  const firstWeekday = new Date(y, m - 1, 1).getDay(); // 0=Sun .. 6=Sat
   const noPlanSet = new Set(noPlanDays || []);
+
+  const MONTHS = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY',
+                  'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
+  const WEEKDAYS = [
+    ['SUNDAY', 'SUN'], ['MONDAY', 'MON'], ['TUESDAY', 'TUE'], ['WEDNESDAY', 'WED'],
+    ['THURSDAY', 'THU'], ['FRIDAY', 'FRI'], ['SATURDAY', 'SAT'],
+  ];
+  const LEGEND = [
+    ['present',  'Present'],
+    ['absent',   'Absent'],
+    ['upcoming', 'Upcoming'],
+    ['no-plan',  'No Active Plan'],
+  ];
+
+  let html = '<div class="att-cal-title">' +
+    '<span class="att-cal-month">' + MONTHS[m - 1] + '</span>' +
+    '<span class="att-cal-year">' + y + '</span>' +
+    '</div>';
+
+  html += '<div class="att-cal-head">' +
+    WEEKDAYS.map(([full, short]) =>
+      '<div class="att-cal-wd"><span class="wd-full">' + full + '</span><span class="wd-short">' + short + '</span></div>'
+    ).join('') +
+    '</div><div class="att-cal-body">';
+
+  // Leading blanks so day 1 lands under its real weekday column.
+  for (let i = 0; i < firstWeekday; i++) html += '<div class="att-cell att-cell-empty"></div>';
+
   for (let d = 1; d <= totalDays; d++) {
-    const dot = document.createElement('div');
     // A day with no active membership plan at all stays neutral — there was
     // nothing to check in for, so it shouldn't read as a missed day (red).
     // Otherwise: a day that hasn't happened yet is neither "present" nor
@@ -46,10 +78,26 @@ function buildAttGrid(elId, presentDays, totalDays = 30, todayDay = null, noPlan
     else if (presentDays.includes(d)) state = 'present';
     else if (todayDay && d >= todayDay) state = 'upcoming';
     else state = 'absent';
-    dot.className  = 'att-dot ' + state;
-    dot.textContent = d;
-    el.appendChild(dot);
+    const isToday = todayDay && d === todayDay;
+    html += '<div class="att-cell ' + state + (isToday ? ' att-today' : '') + '">' +
+      '<span class="att-daynum">' + d + '</span>' +
+      (state === 'present' ? '<span class="att-caption">Present</span>' : '') +
+      '</div>';
   }
+
+  // Trailing blanks so the last row completes a full 7-wide week.
+  const trailing = (7 - ((firstWeekday + totalDays) % 7)) % 7;
+  for (let i = 0; i < trailing; i++) html += '<div class="att-cell att-cell-empty"></div>';
+  html += '</div>';
+
+  html += '<div class="att-legend">' +
+    LEGEND.map(([cls, label]) =>
+      '<span class="att-legend-item"><i class="att-legend-dot ' + cls + '"></i>' + label + '</span>'
+    ).join('') +
+    '</div>';
+
+  el.classList.add('att-cal');
+  el.innerHTML = html;
 }
 
 /** Filter a data table by search string */

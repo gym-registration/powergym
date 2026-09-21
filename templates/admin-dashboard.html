@@ -217,10 +217,10 @@
           <thead><tr><th class="col-member-id">ID</th><th>Name</th><th>Email</th><th>Plan</th><th>Expiry</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
             {% for m in members %}
-            <tr data-id="{{ m.id }}" data-plan="{{ m.plan }}" data-phone="{{ m.phone or '' }}" data-expiry-iso="{{ m.expiry_date.isoformat() if m.expiry_date else '' }}" data-first-name="{{ m.first_name }}" data-middle-initial="{{ m.middle_initial or '' }}" data-last-name="{{ m.last_name }}" data-extension-name="{{ m.extension_name or '' }}"
+            <tr data-id="{{ m.id }}" data-plan="{{ m.plan }}" data-phone="{{ m.phone or '' }}" data-expiry-iso="{{ '' if (m.no_expiry or not m.expiry_date) else m.expiry_date.isoformat() }}" data-first-name="{{ m.first_name }}" data-middle-initial="{{ m.middle_initial or '' }}" data-last-name="{{ m.last_name }}" data-extension-name="{{ m.extension_name or '' }}"
                 data-name="{{ m.name|lower }}"
                 data-status="{{ 'active' if m.status == 'Active' else 'pending' if m.status == 'Pending' else 'expired' if m.status == 'Expired' else 'declined' if m.status == 'Declined' else 'no-plan' }}">
-              <td class="col-member-id">#{{ m.id }}</td><td>{{ m.name }}</td><td>{{ m.email }}</td><td>{{ m.plan }}</td><td>{{ m.expiry }}</td>
+              <td class="col-member-id">#{{ m.id }}</td><td>{{ m.name }}</td><td>{{ m.email }}</td><td>{{ m.plan_label }}</td><td>{{ m.expiry }}</td>
               <td>
                 {% if m.status == 'Active' %}
                 <span class="badge badge-green">Active</span>
@@ -402,7 +402,7 @@
             <tbody>
               {% for a in attendance_today %}
               <tr>
-                <td>{{ a.member_name }}</td>
+                <td>{{ a.member_name }}{% if a.coach_guided %} <span class="badge badge-gold" title="Coach-guided — counted as 1 session">🥊 SESSION</span>{% endif %}</td>
                 <td>{{ a.check_in }}</td>
                 <td>{{ a.check_out }}</td>
                 <td>
@@ -569,7 +569,7 @@
                 <strong style="color:var(--white);">Max Members:</strong> {{ c.max_members }}
               </div>
               <div style="font-size:15px;color:#c3c8da;line-height:1.7;">
-                <strong style="color:var(--white);">Coach Fee:</strong> ₱{{ c.fee }}
+                <strong style="color:var(--white);">Coach Fee:</strong> ₱{{ '%.2f'|format(c.fee) }}
               </div>
             </div>
 
@@ -1159,6 +1159,11 @@
       <label class="form-label">Access Duration (days)</label>
       <input class="form-input" type="number" min="1" id="cf-promo-duration" placeholder="30">
       <div style="font-size:12px;color:var(--muted);margin-top:4px;">How long a member's access lasts once this promo is activated. Defaults to 30 days if left blank.</div>
+    </div>
+    <div class="form-group" id="cf-promo-sessions-wrap" style="display:none;">
+      <label class="form-label">Sessions Included (optional)</label>
+      <input class="form-input" type="number" min="1" id="cf-promo-sessions" placeholder="e.g. 16">
+      <div style="font-size:12px;color:var(--muted);margin-top:4px;">Fill this in for a session pack (e.g. 16 Sessions). It then <strong>never expires</strong>, and only visits guided by a coach use up a session — using the machines and equipment alone is free. Leave blank for a normal promo that lasts the Access Duration above.</div>
     </div>
     <div class="form-group" id="cf-valid-until-wrap" style="display:none;">
       <label class="form-label">Valid Until (optional)</label>

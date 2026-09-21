@@ -155,7 +155,7 @@ const MemberModule = (() => {
     _attMonth = _attCurrentMonth = dashData.month;
     if (typeof buildAttGrid === 'function') {
       buildAttGrid('att-grid-member', dashData.present_days || [], dashData.days_in_month || 30,
-        dashData.today_day, dashData.no_plan_days || []);
+        dashData.today_day, dashData.no_plan_days || [], dashData.year, dashData.month);
     }
     _updateAttNavButtons();
 
@@ -641,7 +641,15 @@ const MemberModule = (() => {
         .map(l => (l || '').trim()).filter(Boolean);
       list.innerHTML = lines.length
         ? lines.map(l => `<li>${_esc(l)}</li>`).join('')
-        : '<li>Full gym access for the promo duration.</li>';
+        : (promo.session_limit
+            ? `<li>${promo.session_limit} coach-guided sessions — no expiration.</li>`
+            : '<li>Full gym access for the promo duration.</li>');
+      if (promo.session_limit && lines.length) {
+        // Spell out the counting rule right in the inclusions so nobody is surprised later.
+        list.insertAdjacentHTML('beforeend',
+          '<li><strong>How sessions are counted:</strong> a visit counts as 1 session only when your coach guides you. ' +
+          'Using the machines and equipment on your own is free and is not counted.</li>');
+      }
     }
 
     const modal = document.getElementById('plan-modal');
@@ -885,7 +893,9 @@ const MemberModule = (() => {
 
     const expiryLabel = document.getElementById('confirm-plan-expiry-label');
     if (expiryLabel) expiryLabel.textContent = 'Duration';
-    document.getElementById('confirm-plan-end-date').textContent = promo.period || 'See promo details';
+    document.getElementById('confirm-plan-end-date').textContent = promo.session_limit
+      ? `No expiration · ${promo.session_limit} coach-guided sessions`
+      : (promo.period || 'See promo details');
 
     document.getElementById('confirm-plan-total').textContent = _peso(promo.price);
 
@@ -1848,15 +1858,25 @@ const MemberModule = (() => {
 
         if (typeof buildAttGrid === 'function') {
           buildAttGrid('att-grid-member', data.present_days || [], data.days_in_month || 30,
-            data.today_day, data.no_plan_days || []);
+            data.today_day, data.no_plan_days || [], data.year, data.month);
         }
 
         const body = document.getElementById('attendance-session-history-body');
         if (body) {
           const rows = data.session_history || [];
+          // On a session-based promo an extra column shows which visits were
+          // coach-guided (counted as a session) and which were free open-gym use.
+          const withType = !!data.sessions_enabled;
+          const typeCell = s => withType
+            ? '<td>' + (s.coach_guided
+                ? '<span class="badge badge-green">COACH SESSION</span>'
+                : '<span class="badge badge-blue">OPEN GYM · FREE</span>') + '</td>'
+            : '';
           body.innerHTML = rows.length
-            ? rows.map(s => `<tr><td>${_esc(s.date)}</td><td>${_esc(s.check_in)}</td><td>${_esc(s.check_out)}</td><td>${_esc(s.duration)}</td></tr>`).join('')
-            : '<tr><td colspan="4" style="text-align:center;color:var(--muted);">No sessions logged this month yet.</td></tr>';
+            ? rows.map(s => `<tr><td>${_esc(s.date)}</td><td>${_esc(s.check_in)}</td><td>${_esc(s.check_out)}</td><td>${_esc(s.duration)}</td>${typeCell(s)}</tr>`).join('')
+            : `<tr><td colspan="${withType ? 5 : 4}" style="text-align:center;color:var(--muted);">No sessions logged this month yet.</td></tr>`;
+          const typeTh = document.getElementById('attendance-type-th');
+          if (typeTh) typeTh.style.display = withType ? '' : 'none';
         }
 
         _updateAttNavButtons();

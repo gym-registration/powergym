@@ -656,7 +656,11 @@ def _promo_duration_days(promo):
 def _promo_expiry(promo, start_date):
     """Expiry date for a promo, computed from the promo's own duration —
     so a promo added from Manage Content schedules itself correctly
-    without depending on any particular membership plan existing."""
+    without depending on any particular membership plan existing.
+    A session-based promo has no expiration at all, so it gets the
+    NO_EXPIRY_DATE marker instead (see _promo_session_limit)."""
+    if _promo_session_limit(promo):
+        return NO_EXPIRY_DATE
     return start_date + timedelta(days=_promo_duration_days(promo))
 
 
@@ -685,6 +689,117 @@ def _payment_expiry(payment, plan, base_date):
         # silently granting the anchor plan's (possibly yearly) duration.
         return base_date + timedelta(days=30)
     return _plan_expiry(plan, base_date)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Session-based promos (e.g. "16 Sessions") — no expiration
+# ══════════════════════════════════════════════════════════════════
+#  How it works
+#   • A promo with GymPromo.session_limit set never expires. The member keeps
+#     it until all of its sessions are used.
+#   • A check-in only uses up a session when the coach guided the visit
+#     (Attendance.coach_guided = True, marked by staff). A visit where the
+#     member just uses the machines and equipment on their own is still
+#     recorded as attendance, but it does NOT count as a session.
+#   • Sessions used is always COUNTED from the attendance records (coach-guided
+#     visits since Membership.sessions_started_at) — there is no separate
+#     counter that could drift out of sync.
+#   • Membership.expiry_date is a required column used all over the app, so a
+#     session-based membership stores NO_EXPIRY_DATE in it while sessions
+#     remain. Once the last session is used the expiry date is moved to
+#     yesterday, so the membership then reads as an ordinary expired one
+#     everywhere (status, check-in gate, feedback prompt, reports) with no
+#     extra special-casing. If staff undo a session it is moved back.
+NO_EXPIRY_DATE = date(2999, 12, 31)
+
+
+def _is_no_expiry(d):
+    """True when a membership expiry date is the 'never expires' marker."""
+    return d is not None and d >= NO_EXPIRY_DATE
+
+
+def _promo_session_limit(promo):
+    """How many coach-guided sessions a promo includes, or None when it is a
+    normal time-based promo."""
+    n = getattr(promo, 'session_limit', None)
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def _payment_session_limit(payment):
+    """Session limit of the promo behind a promo Payment (None otherwise)."""
+    promo = _payment_promo(payment)
+    return _promo_session_limit(promo) if promo is not None else None
+
+
+def _apply_session_terms(membership, payment):
+    """Call wherever an approved payment activates a membership. Session-based
+    promo → record how many sessions it includes and start counting from now.
+    Anything else → clear the session fields so an old promo can't leak into a
+    regular plan. (The matching expiry date comes from _payment_expiry.)"""
+    limit = _payment_session_limit(payment)
+    if limit:
+        membership.sessions_total = limit
+        membership.sessions_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    else:
+        membership.sessions_total = None
+        membership.sessions_started_at = None
+
+
+def _membership_sessions_used(membership):
+    """Coach-guided visits used so far on a session-based membership."""
+    if membership is None or membership.sessions_total is None or membership.sessions_started_at is None:
+        return 0
+    return (Attendance.query
+            .filter(Attendance.member_id == membership.member_id,
+                    Attendance.coach_guided.is_(True),
+                    Attendance.check_in >= membership.sessions_started_at)
+            .count())
+
+
+def _membership_sessions_info(membership):
+    """None for a normal membership; otherwise {'total', 'used', 'left'}."""
+    if membership is None or membership.sessions_total is None:
+        return None
+    total = int(membership.sessions_total)
+    used = _membership_sessions_used(membership)
+    return {'total': total, 'used': used, 'left': max(total - used, 0)}
+
+
+def _sync_session_expiry(membership):
+    """Keep expiry_date consistent with the sessions left (see the notes
+    above). Returns True if it changed. The caller commits."""
+    info = _membership_sessions_info(membership)
+    if info is None or membership.status != 'active':
+        return False
+    if info['left'] <= 0:
+        if membership.expiry_date >= _today_manila():
+            membership.expiry_date = _today_manila() - timedelta(days=1)
+            return True
+    elif membership.expiry_date != NO_EXPIRY_DATE:
+        membership.expiry_date = NO_EXPIRY_DATE
+        return True
+    return False
+
+
+def _set_visit_coach_guided(entry, membership, counted):
+    """Mark (or un-mark) one visit as coach-guided on a session-based
+    membership. Returns (ok, error_message). Never lets used sessions go past
+    the total. Flushes but does not commit."""
+    if membership is None or membership.sessions_total is None:
+        return False, 'This member is not on a session-based promo.'
+    if counted and not entry.coach_guided:
+        if _membership_sessions_used(membership) >= int(membership.sessions_total):
+            return False, 'All of this member\'s sessions have already been used.'
+        entry.coach_guided = True
+    elif not counted and entry.coach_guided:
+        entry.coach_guided = False
+    db.session.flush()
+    _sync_session_expiry(membership)
+    return True, None
 
 
 # Per-plan wording for the automated expiry reminder (Send Reminder button
@@ -954,6 +1069,7 @@ def _get_member_attendance_month(user_id, year, month):
             'check_in':  check_in_manila.strftime('%I:%M %p').lstrip('0'),
             'check_out': check_out_manila.strftime('%I:%M %p').lstrip('0') if check_out_manila else '—',
             'duration':  duration_text,
+            'coach_guided': bool(a.coach_guided),
         })
 
     is_current_month = (year == today.year and month == today.month)
@@ -968,6 +1084,9 @@ def _get_member_attendance_month(user_id, year, month):
         'present_days': present_days,
         'no_plan_days': no_plan_days,
         'session_history': session_history,
+        # True on a session-based promo, so the history can show which visits
+        # were coach-guided (counted) and which were open gym use (free).
+        'sessions_enabled': membership is not None and membership.sessions_total is not None,
     }
 
 
@@ -1130,7 +1249,13 @@ class User(db.Model):
     last_seen_notifications_at = db.Column(db.DateTime, nullable=True)
 
     membership       = db.relationship('Membership', back_populates='member', uselist=False, cascade='all, delete-orphan')
-    payments         = db.relationship('Payment', foreign_keys='Payment.member_id', back_populates='member', cascade='all, delete-orphan')
+    # No delete/delete-orphan cascade here (unlike the other relationships
+    # below) — a member's verified payments must survive account deletion
+    # so Analytics/Revenue reports for past periods stay accurate. See
+    # admin_delete_member(), which explicitly snapshots the name and
+    # detaches (member_id -> NULL) each payment before the user row itself
+    # is removed.
+    payments         = db.relationship('Payment', foreign_keys='Payment.member_id', back_populates='member')
     recorded_payments= db.relationship('Payment', foreign_keys='Payment.recorded_by_id', back_populates='recorded_by')
     attendance       = db.relationship('Attendance', foreign_keys='Attendance.member_id', back_populates='member', cascade='all, delete-orphan')
     body_goals       = db.relationship('BodyGoal', back_populates='member', cascade='all, delete-orphan')
@@ -1197,6 +1322,12 @@ class GymPromo(db.Model):
     # Manage Content schedules itself correctly instead of borrowing the
     # Monthly plan's duration. Defaults to 30 days.
     duration_days = db.Column(db.Integer, nullable=False, default=30)
+    # Session-based promo (e.g. "16 Sessions"). When this is set the promo has
+    # NO expiration date: the member keeps it until every session is used, and
+    # a visit only uses up a session when it is guided by a coach (see
+    # Attendance.coach_guided). NULL = a normal time-based promo that runs for
+    # duration_days, exactly as before.
+    session_limit = db.Column(db.Integer, nullable=True)
     description  = db.Column(db.Text, nullable=True)
     inclusions   = db.Column(db.Text, nullable=True)          # one inclusion per line
     valid_until  = db.Column(db.Date, nullable=True)
@@ -1228,6 +1359,14 @@ class Membership(db.Model):
     start_date  = db.Column(db.Date, nullable=False)
     expiry_date = db.Column(db.Date, nullable=False)
     status      = db.Column(db.String(10), nullable=False, default='pending')
+    # ── Session-based promo (see GymPromo.session_limit). Both stay NULL for a
+    #    normal time-based membership. sessions_total is a snapshot taken when
+    #    the promo is approved (so editing the promo later never changes what an
+    #    existing member already paid for); sessions_started_at (naive UTC)
+    #    marks where to start counting coach-guided visits from. While sessions
+    #    remain, expiry_date holds NO_EXPIRY_DATE. ──
+    sessions_total      = db.Column(db.Integer, nullable=True)
+    sessions_started_at = db.Column(db.DateTime, nullable=True)
     created_at  = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at  = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
                             onupdate=lambda: datetime.now(timezone.utc))
@@ -1291,7 +1430,18 @@ class Coach(db.Model):
 class Payment(db.Model):
     __tablename__    = 'payments'
     id               = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    member_id        = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    # Nullable (was NOT NULL) so a verified payment can outlive the member
+    # account it belonged to — see admin_delete_member(), which detaches
+    # (sets this to NULL) rather than lets the row get deleted, so past
+    # Analytics/Revenue figures never change just because an account was
+    # later removed. member_name_snapshot below is what keeps the row
+    # readable once member_id goes NULL.
+    member_id        = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    # Captured once, at the moment the member account behind this payment is
+    # deleted (see admin_delete_member) — so revenue reports still show the
+    # name they paid under, instead of a blank/"—" once member_id goes NULL.
+    # Left NULL for the lifetime of every payment whose member still exists.
+    member_name_snapshot = db.Column(db.String(120), nullable=True)
     plan_id          = db.Column(db.Integer, db.ForeignKey('membership_plans.id'), nullable=True, index=True)
     amount           = db.Column(db.Numeric(10, 2), nullable=False)
     method           = db.Column(db.String(32), nullable=False)
@@ -1334,6 +1484,17 @@ class Payment(db.Model):
     plan        = db.relationship('MembershipPlan', back_populates='payments')
     recorded_by = db.relationship('User', foreign_keys=[recorded_by_id], back_populates='recorded_payments')
 
+    @property
+    def display_member_name(self):
+        """The member's name for this payment, even after their account has
+        been deleted (member_id NULL) — falls back to the snapshot taken at
+        deletion time, then finally to a plain placeholder for the rare case
+        of a payment that somehow never got a snapshot (e.g. pre-existing
+        rows from before this feature)."""
+        if self.member:
+            return self.member.full_name
+        return self.member_name_snapshot or 'Former member'
+
 
 class Attendance(db.Model):
     __tablename__ = 'attendance'
@@ -1343,6 +1504,10 @@ class Attendance(db.Model):
     check_out    = db.Column(db.DateTime, nullable=True)
     duration_min = db.Column(db.Integer, nullable=True)
     logged_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    # True when the coach guided this visit. On a session-based promo ONLY these
+    # visits use up a session; a visit where the member just uses the machines
+    # and equipment on their own is recorded as normal attendance but is free.
+    coach_guided = db.Column(db.Boolean, nullable=False, default=False, server_default=db.text('0'))
 
     member    = db.relationship('User', foreign_keys=[member_id], back_populates='attendance')
     logged_by = db.relationship('User', foreign_keys=[logged_by_id])
@@ -1941,7 +2106,8 @@ def _promo_to_dict(p):
     # the field name.
     return {
         'id': p.id, 'name': p.title, 'price': p.price, 'period': p.period or '',
-        'duration_days': _promo_duration_days(p), 'is_active': p.is_active, 'description': p.description or '',
+        'duration_days': _promo_duration_days(p), 'session_limit': _promo_session_limit(p) or '',
+        'is_active': p.is_active, 'description': p.description or '',
         'image_path': p.image_path or '', 'inclusions': p.inclusions or '',
         'valid_until': p.valid_until.isoformat() if p.valid_until else '',
         'sort_order': p.sort_order,
@@ -2366,6 +2532,7 @@ def api_save_promo():
     price        = request.form.get('price', '').strip()
     period       = (request.form.get('period') or '').strip()
     duration_raw = (request.form.get('duration_days') or '').strip()
+    sessions_raw = (request.form.get('session_limit') or '').strip()
     description  = (request.form.get('description') or '').strip()
     inclusions   = (request.form.get('inclusions') or '').strip()
     valid_until_raw = (request.form.get('valid_until') or '').strip()
@@ -2394,6 +2561,18 @@ def api_save_promo():
                 raise ValueError()
         except ValueError:
             return jsonify(success=False, error='Promo duration must be a whole number of days greater than 0.'), 400
+
+    # Sessions included. Filled in = a session-based promo: it never expires and
+    # only coach-guided visits use up a session. Blank = a normal time-based
+    # promo that runs for the access duration above.
+    session_limit = None
+    if sessions_raw:
+        try:
+            session_limit = int(sessions_raw)
+            if session_limit <= 0:
+                raise ValueError()
+        except ValueError:
+            return jsonify(success=False, error='Sessions included must be a whole number greater than 0 (or leave it blank).'), 400
 
     valid_until = None
     if valid_until_raw:
@@ -2426,6 +2605,7 @@ def api_save_promo():
     promo.price       = price
     promo.period      = period or None
     promo.duration_days = duration_days
+    promo.session_limit = session_limit
     promo.description = description or None
     promo.inclusions  = inclusions or None
     promo.valid_until = valid_until
@@ -4174,6 +4354,15 @@ def admin_edit_member(member_id):
         )
         db.session.add(membership)
     elif membership is not None:
+        # Saving a member's contact details re-sends the plan/expiry fields
+        # unchanged, so only treat this as a real override when one of them
+        # actually differs. An override turns a session-based promo back into
+        # an ordinary time-based membership.
+        _overridden = ((plan is not None and plan.id != membership.plan_id)
+                       or (expiry_date is not None and expiry_date != membership.expiry_date))
+        if _overridden and membership.sessions_total is not None:
+            membership.sessions_total = None
+            membership.sessions_started_at = None
         if plan is not None:
             membership.plan_id = plan.id
         if expiry_date is not None:
@@ -4182,8 +4371,17 @@ def admin_edit_member(member_id):
     db.session.commit()
 
     plan_display   = membership.plan.name if (membership and membership.plan) else '—'
-    expiry_display = membership.expiry_date.strftime('%b %d, %Y') if (membership and membership.expiry_date) else '—'
-    expiry_iso     = membership.expiry_date.isoformat() if (membership and membership.expiry_date) else ''
+    _no_expiry     = bool(membership and _is_no_expiry(membership.expiry_date))
+    expiry_display = ('No expiry' if _no_expiry else
+                      membership.expiry_date.strftime('%b %d, %Y') if (membership and membership.expiry_date) else '—')
+    expiry_iso     = ('' if _no_expiry else
+                      membership.expiry_date.isoformat() if (membership and membership.expiry_date) else '')
+    plan_label     = plan_display
+    if membership is not None and membership.sessions_total is not None:
+        _s = _membership_sessions_info(membership)
+        if _s is not None:
+            plan_label = (f"{_promo_titles_for_members([user.id]).get(user.id) or 'Session promo'}"
+                          f" · {_s['left']}/{_s['total']} left")
 
     return jsonify(
         success=True,
@@ -4196,6 +4394,7 @@ def admin_edit_member(member_id):
             'email': email,
             'phone': user.phone or '',
             'plan': plan_display,
+            'plan_label': plan_label,
             'expiry': expiry_display,
             'expiry_iso': expiry_iso,
         }
@@ -4210,6 +4409,19 @@ def admin_delete_member(member_id):
     user = User.query.filter_by(id=member_id, role='member').first()
     if user is None:
         return jsonify(success=False, error='Member not found.'), 404
+
+    # Keep every payment on record — approved/verified or still in progress —
+    # as a permanent part of Analytics/Revenue history even after the member
+    # account itself is deleted. Snapshot the name now (the only moment it's
+    # still reachable through the relationship) and detach the payment from
+    # the account being removed; the row itself is never touched. This must
+    # happen before db.session.delete(user) below, since User.payments has
+    # no delete cascade — flushing the detach here is what keeps these rows
+    # out of that deletion entirely.
+    for payment in user.payments:
+        if not payment.member_name_snapshot:
+            payment.member_name_snapshot = user.full_name
+        payment.member_id = None
 
     db.session.delete(user)
     db.session.commit()
@@ -4460,6 +4672,7 @@ def admin_verify_payment(payment_id):
     # ── Approve: activate/extend membership (same logic as staff_record_payment) ──
     payment.status = 'verified'
     payment.verified_at = datetime.now(timezone.utc)
+    payment.recorded_by_id = session.get('user_id')  # so revenue reports can attribute this to whoever approved it, instead of "Unrecorded / Unknown"
     payment.notified = False  # let the member see a fresh "payment approved!" popup
 
     member = payment.member
@@ -4478,6 +4691,7 @@ def admin_verify_payment(payment_id):
         and membership.status == 'active'
         and membership.expiry_date is not None
         and membership.expiry_date > today
+        and membership.sessions_total is None      # session promos have no time to stack on
     )
 
     if membership is None:
@@ -4500,6 +4714,7 @@ def admin_verify_payment(payment_id):
         membership.start_date = base_date
 
     membership.expiry_date = _payment_expiry(payment, plan, base_date)
+    _apply_session_terms(membership, payment)     # session-based promo → no expiry, N coach-guided sessions
     if plan is not None:
         membership.plan_id = plan.id
     membership.status = 'active'
@@ -4515,7 +4730,7 @@ def admin_verify_payment(payment_id):
         success=True,
         message='Payment approved — membership activated!',
         status='verified',
-        expiry=membership.expiry_date.strftime('%b %d, %Y'),
+        expiry='No expiry' if _is_no_expiry(membership.expiry_date) else membership.expiry_date.strftime('%b %d, %Y'),
     )
 
 
@@ -4685,6 +4900,7 @@ def member_submit_payment():
                 start_date=requested_start,
                 expiry_date=expiry,
                 status='pending',
+                sessions_total=_promo_session_limit(promo),
             )
             db.session.add(membership)
         elif membership.status != 'active':
@@ -4692,6 +4908,8 @@ def member_submit_payment():
             membership.start_date  = requested_start
             membership.expiry_date = expiry
             membership.status      = 'pending'
+            membership.sessions_total      = _promo_session_limit(promo)
+            membership.sessions_started_at = None
 
         db.session.commit()
 
@@ -4791,6 +5009,8 @@ def member_submit_payment():
         membership.start_date  = requested_start
         membership.expiry_date = _plan_expiry(plan, requested_start)
         membership.status      = 'pending'
+        membership.sessions_total      = None      # a regular plan is never session-based
+        membership.sessions_started_at = None
 
     db.session.commit()
 
@@ -5136,6 +5356,17 @@ def staff_record_payment():
     if plan is None or _is_walkin_only(plan):
         return jsonify(success=False, error='Please select a valid membership plan.'), 400
 
+    # A member who still has sessions left on a session-based promo can't be
+    # switched to another plan yet — same rule the member sees on their own
+    # My Membership tab ("request a new plan once it expires"). Checked before
+    # anything below is changed.
+    _current = Membership.query.filter_by(member_id=member.id).first()
+    if (_current is not None and _current.status == 'active' and _current.sessions_total is not None
+            and _current.expiry_date is not None and _current.expiry_date >= _today_manila()):
+        _left = (_membership_sessions_info(_current) or {}).get('left', 0)
+        return jsonify(success=False, error=f'{member.first_name} still has {_left} session(s) left on a session-based promo. '
+                                            f'A new plan can be recorded once the sessions are used up.'), 409
+
     if not method:
         return jsonify(success=False, error='Please select a payment method.'), 400
     if method != 'Cash':
@@ -5188,6 +5419,7 @@ def staff_record_payment():
         and membership.status == 'active'
         and membership.expiry_date is not None
         and membership.expiry_date > today
+        and membership.sessions_total is None      # session promos have no time to stack on
     )
 
     if membership is None:
@@ -5198,6 +5430,7 @@ def staff_record_payment():
     base_date = membership.expiry_date if was_active_with_time else today
     membership.plan_id     = plan.id
     membership.expiry_date = _payment_expiry(new_payment, plan, base_date)
+    _apply_session_terms(membership, new_payment)
     membership.status      = 'active'
     if member.status != 'active':
         member.status = 'active'
@@ -5213,7 +5446,7 @@ def staff_record_payment():
             'member_name': member.full_name,
             'plan': plan.name,
             'amount': str(plan.price),
-            'expiry': membership.expiry_date.strftime('%b %d, %Y'),
+            'expiry': 'No expiry' if _is_no_expiry(membership.expiry_date) else membership.expiry_date.strftime('%b %d, %Y'),
         }
     )
 
@@ -5384,6 +5617,9 @@ def staff_checkin():
     plan_status = _member_plan_status(member.id)
     if plan_status != 'Active':
         reason = _PLAN_STATUS_BLOCK_REASON.get(plan_status, 'membership is not active')
+        _mb = Membership.query.filter_by(member_id=member.id).first()
+        if plan_status == 'Expired' and _mb is not None and _mb.sessions_total is not None:
+            reason = f'has used all {_mb.sessions_total} sessions of the promo'
         return jsonify(
             success=False,
             error=f'{member.first_name} {reason} — check-in is unavailable until the plan is active.'
@@ -5396,14 +5632,81 @@ def staff_checkin():
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     entry = Attendance(member_id=member.id, check_in=now, logged_by_id=session.get('user_id'))
     db.session.add(entry)
+
+    # Checking in NEVER uses up a session by itself — on a session-based promo
+    # a visit only counts once staff mark it as guided by the coach (here, from
+    # the row's coach button afterwards, or when checking the member out).
+    # `coach_guided` is accepted here only so a caller that already knows the
+    # visit is coached can do it in one step.
+    membership = Membership.query.filter_by(member_id=member.id).first()
+    session_error = None
+    if _truthy(data.get('coach_guided')):
+        db.session.flush()
+        ok, session_error = _set_visit_coach_guided(entry, membership, True)
     db.session.commit()
 
+    info = _membership_sessions_info(membership)
     return jsonify(
         success=True,
-        message='Check-in recorded.',
+        message='Check-in recorded.' if not session_error else f'Check-in recorded, but it was not counted as a session: {session_error}',
         member_name=member.full_name,
         time=_to_manila(now).strftime('%I:%M %p').lstrip('0'),
+        sessions=info,
+        coach_guided=bool(entry.coach_guided),
     )
+
+
+def _truthy(v):
+    """True for the usual ways a form/JSON field says yes."""
+    if isinstance(v, bool):
+        return v
+    return str(v or '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+@app.route('/staff/coach-session', methods=['POST'])
+def staff_coach_session():
+    """Mark (or un-mark) the member's CURRENT visit as guided by the coach.
+    On a session-based promo this is what uses up a session: a coach-guided
+    visit counts as 1 session, a visit where the member only uses the machines
+    and equipment on their own does not."""
+    if session.get('role') not in ('staff', 'admin'):
+        return jsonify(success=False, error='Unauthorized.'), 403
+
+    data = request.get_json(silent=True) or request.form
+    member, error = _find_member(data.get('member_identifier'))
+    if error:
+        return jsonify(success=False, error=error), 404
+
+    entry = (
+        Attendance.query
+        .filter_by(member_id=member.id, check_out=None)
+        .order_by(Attendance.check_in.desc())
+        .first()
+    )
+    if entry is None:
+        return jsonify(success=False, error=f'{member.first_name} is not checked in right now.'), 409
+
+    membership = Membership.query.filter_by(member_id=member.id).first()
+    counted = _truthy(data.get('coach_guided'))
+    ok, err = _set_visit_coach_guided(entry, membership, counted)
+    if not ok:
+        return jsonify(success=False, error=err), 409
+    db.session.commit()
+
+    info = _membership_sessions_info(membership)
+    if info is None:
+        # ok=True above guarantees membership.sessions_total was set when
+        # _set_visit_coach_guided ran, so _membership_sessions_info should
+        # never actually return None here — guarded anyway rather than
+        # risk a crash on a None subscript if that invariant ever changes.
+        message = 'Visit updated.'
+    elif counted and info['left'] <= 0:
+        message = f'Session counted — that was {member.first_name}\'s last one, so the promo is now complete.'
+    elif counted:
+        message = f'Session counted — {info["left"]} of {info["total"]} left.'
+    else:
+        message = f'Visit is no longer counted as a session — {info["left"]} of {info["total"]} left.'
+    return jsonify(success=True, message=message, sessions=info, coach_guided=bool(entry.coach_guided))
 
 
 @app.route('/staff/checkout', methods=['POST'])
@@ -5432,6 +5735,16 @@ def staff_checkout():
         # strand the member checked in with no way to close it out.
         return jsonify(success=False, error=f'{member.first_name} has no open check-in to close.'), 409
 
+    # Optional: settle whether this visit was coach-guided as part of checking
+    # out (only meaningful on a session-based promo). Left out = unchanged.
+    session_note = None
+    if data.get('coach_guided') is not None and str(data.get('coach_guided')) != '':
+        membership = Membership.query.filter_by(member_id=member.id).first()
+        if membership is not None and membership.sessions_total is not None:
+            ok, err = _set_visit_coach_guided(entry, membership, _truthy(data.get('coach_guided')))
+            if not ok:
+                session_note = err
+
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     entry.check_out = now
     entry.duration_min = int((now - entry.check_in).total_seconds() // 60)
@@ -5446,6 +5759,9 @@ def staff_checkout():
         member_name=member.full_name,
         time=_to_manila(now).strftime('%I:%M %p').lstrip('0'),
         duration=duration_text,
+        sessions=_membership_sessions_info(Membership.query.filter_by(member_id=member.id).first()),
+        coach_guided=bool(entry.coach_guided),
+        session_note=session_note,
     )
 
 
@@ -6312,10 +6628,20 @@ def member():
             # Clamping to the start date keeps Days Left always inside the
             # plan's real length.
             effective_start = max(membership.start_date, today)
-            days_total = max((membership.expiry_date - membership.start_date).days, 1)
-            days_left  = max((membership.expiry_date - effective_start).days, 0)
-            days_used  = max(min(days_total - days_left, days_total), 0)
-            percent_used = int((days_used / days_total) * 100) if days_total else 0
+            no_expiry     = _is_no_expiry(membership.expiry_date)
+            sessions_info = _membership_sessions_info(membership)
+            if no_expiry:
+                # Session-based promo with sessions left — there is no end date
+                # to count down to, so day counts don't apply.
+                days_total = days_left = days_used = 0
+                percent_used = 0
+            else:
+                days_total = max((membership.expiry_date - membership.start_date).days, 1)
+                days_left  = max((membership.expiry_date - effective_start).days, 0)
+                days_used  = max(min(days_total - days_left, days_total), 0)
+                percent_used = int((days_used / days_total) * 100) if days_total else 0
+            if sessions_info is not None and sessions_info['total']:
+                percent_used = int(min(sessions_info['used'], sessions_info['total']) / sessions_info['total'] * 100)
 
             if membership.expiry_date < today:
                 plan_status = 'Expired'
@@ -6382,7 +6708,13 @@ def member():
                 'price': display_plan_price,
                 'is_promo': plan_is_promo,
                 'start_date': membership.start_date.strftime('%B %d, %Y'),
-                'expiry_date': membership.expiry_date.strftime('%B %d, %Y'),
+                'expiry_date': ('No expiration' if no_expiry
+                                else 'All sessions used' if (sessions_info is not None and sessions_info['left'] <= 0)
+                                else membership.expiry_date.strftime('%B %d, %Y')),
+                'no_expiry': no_expiry,
+                # None for a normal plan; {'total','used','left'} for a
+                # session-based promo (only coach-guided visits use a session).
+                'sessions': sessions_info,
                 'days_left': days_left,
                 'days_total': days_total,
                 'days_used': days_used,
@@ -6408,7 +6740,9 @@ def member():
         ).first()
         if already_rated is None:
             feedback_prompt = {
-                'plan_name': plan_obj.name,
+                # current_plan['name'] is the promo's real name for promo
+                # memberships (plan_obj is only the anchor plan it rides on).
+                'plan_name': current_plan['name'] if current_plan else plan_obj.name,
                 'expiry_date': membership.expiry_date.strftime('%B %d, %Y'),
             }
 
@@ -6761,6 +7095,7 @@ def member():
         'price':       p.price,
         'period':      p.period or 'Limited-time offer',
         'duration_days': _promo_duration_days(p),
+        'session_limit': _promo_session_limit(p),
         'description': p.description or '',
         'inclusions':  p.inclusions_list,
         'valid_until': p.valid_until.strftime('%B %d, %Y') if p.valid_until else '',
@@ -6816,6 +7151,7 @@ def member():
         attendance_year=today.year,
         attendance_month=today.month,
         session_history=session_history,
+        attendance_sessions_enabled=current_month_data['sessions_enabled'],
         attendance_rate=attendance_rate,
         goal=goal,
         fitness_profile=fitness_profile,
@@ -6971,6 +7307,7 @@ def _get_attendance_today():
             'check_out': check_out_manila.strftime('%I:%M %p').lstrip('0') if check_out_manila else '—',
             'duration': duration_text,
             'status': 'Out' if a.check_out else 'In',
+            'coach_guided': bool(a.coach_guided),
         })
     return attendance_today
 
@@ -7054,7 +7391,10 @@ def _get_members_checkin_status():
             'name': m['name'],
             'email': m['email'],
             'plan': m['plan'],
+            'plan_label': m['plan_label'],
             'plan_status': m['status'],
+            'sessions': m['sessions'],          # None, or {'total','used','left'} for a session-based promo
+            'open_coach_guided': bool(open_entry is not None and open_entry.coach_guided),
             'checkin_status': checkin_status,   # 'in' | 'out' | 'none'
             'check_in': check_in_text,
             'check_out': check_out_text,
@@ -7110,8 +7450,8 @@ def staff():
     pending_requests = [{
         'id': p.id,
         'txn': f'TXN-{9000 + p.id}',
-        'member_name': p.member.full_name,
-        'member_profile_picture': url_for('static', filename=p.member.profile_picture) if p.member.profile_picture else None,
+        'member_name': p.display_member_name,
+        'member_profile_picture': url_for('static', filename=p.member.profile_picture) if (p.member and p.member.profile_picture) else None,
         'plan': _payment_display_plan(p),
         'is_promo': bool(p.notes and p.notes.startswith('Promo request:')),
         'method': p.method,
@@ -7146,7 +7486,7 @@ def staff():
     )
     processed_requests = [{
         'txn': f'TXN-{9000 + p.id}',
-        'member_name': p.member.full_name,
+        'member_name': p.display_member_name,
         'plan': _payment_display_plan(p),
         'method': p.method,
         'amount': f'{float(p.amount):,.2f}',
@@ -7164,7 +7504,7 @@ def staff():
         .all()
     )
     coach_assignments = [{
-        'member_name': p.member.full_name,
+        'member_name': p.display_member_name,
         'coach_name': p.coach_name or '—',
         'plan': _payment_display_plan(p),
         'status': p.status,
@@ -7447,10 +7787,14 @@ def _revenue_report(start_date, end_date, method=None):
     manual entry needed), and a breakdown of Cash collected by the staff
     member who recorded it (so front-desk cash — membership payments and
     walk-ins alike — is visible at a glance).
-    Pass method='Cash' to restrict the whole report to Cash payments only
-    (used by the staff dashboard, which shouldn't see GCash figures). Since
-    walk-ins are always paid in Cash, they're included whenever Cash is
-    included and skipped entirely when the report is restricted to GCash."""
+    Pass method='Cash' or method='GCash' to restrict the whole report to
+    just that payment method, if a caller ever needs a method-specific
+    breakdown. Since walk-ins are always paid in Cash, they're included
+    whenever Cash is included and skipped entirely when the report is
+    restricted to GCash. Both the admin and staff Analytics tabs call this
+    with no method filter, so both see the full picture — a GCash payment
+    shows up here the instant Admin approves it, same as any Cash payment
+    staff records themselves."""
     q = Payment.query.options(
         joinedload(Payment.member), joinedload(Payment.plan), joinedload(Payment.recorded_by)
     ).filter(Payment.status == 'verified')
@@ -7525,7 +7869,7 @@ def _revenue_report(start_date, end_date, method=None):
     # can show one accurate revenue ledger instead of missing walk-ins.
     transactions = [{
         'txn':         f'TXN-{9000 + p.id}',
-        'member':      p.member.full_name if p.member else '—',
+        'member':      p.display_member_name,
         'plan':        _payment_display_plan(p),
         'method':      p.method,
         'amount':      float(p.amount),
@@ -7629,10 +7973,9 @@ def staff_report_revenue_csv():
         return redirect(url_for('login'))
     range_key = request.args.get('range', 'this_month')
     start_date, end_date, label = _report_range(range_key)
-    # Front-desk staff only ever see Cash — GCash is verified and reported
-    # on by Admin. Keep this in lockstep with /api/staff/reports/revenue.
-    # Includes walk-ins, since those are Cash too.
-    report = _revenue_report(start_date, end_date, method='Cash')
+    # Includes GCash payments once Admin approves them, alongside Cash and
+    # walk-ins — same shared 'verified' Payment rows the admin CSV pulls from.
+    report = _revenue_report(start_date, end_date)
 
     def rows():
         for t in report['transactions']:
@@ -7647,7 +7990,7 @@ def staff_report_revenue_csv():
             ]
 
     return _csv_response(
-        f'revenue-report-cash-{range_key}.csv',
+        f'revenue-report-{range_key}.csv',
         ['Txn#', 'Member', 'Plan', 'Method', 'Amount (₱)', 'Date', 'Recorded By'],
         rows(),
     )
@@ -7807,10 +8150,10 @@ def api_admin_report(report_type):
 
 # ── Staff Analytics tab: live JSON report generator ──────────────────────
 # Same "Report Generator" experience as the admin dashboard — staff can pull
-# Membership, Attendance, and Revenue reports. Membership and Attendance are
-# full snapshots identical to what Admin sees (they aren't tied to a payment
-# method). Revenue is the one exception: it's always restricted to Cash
-# payments — GCash is verified and reported on by Admin, not front-desk staff.
+# Membership, Attendance, and Revenue reports, all as full snapshots
+# identical to what Admin sees. Revenue includes GCash payments too: the
+# moment Admin approves one, it's just a 'verified' Payment row like any
+# other, so it flows straight into this report with no extra wiring.
 @app.route('/api/staff/reports/<report_type>')
 def api_staff_report(report_type):
     if session.get('role') not in ('staff', 'admin'):
@@ -7872,26 +8215,32 @@ def api_staff_report(report_type):
             'chart_series': chart_series,
         }
 
-    else:  # revenue — staff only ever sees Cash
-        report = _revenue_report(start_date, end_date, method='Cash')
+    else:  # revenue — includes Cash (staff-recorded) and GCash (admin-verified)
+           # payments alike, straight from the shared Payment table, so an
+           # admin-approved GCash payment shows up here the moment it's approved.
+        report = _revenue_report(start_date, end_date)
+        by_method_map = {row['method']: row['total'] for row in report['by_method']}
         payload = {
-            'title': 'Revenue Report (Cash)',
+            'title': 'Revenue Report',
             'range_label': range_label,
             'stats': [
-                {'label': 'Total Cash Revenue', 'value': f"\u20b1{report['total_revenue']}"},
-                {'label': 'Transactions',       'value': str(report['transaction_count'])},
+                {'label': 'Total Revenue',   'value': f"\u20b1{report['total_revenue']}"},
+                {'label': 'Transactions',    'value': str(report['transaction_count'])},
+                {'label': 'Cash Collected',  'value': f"\u20b1{by_method_map.get('Cash', '0.00')}"},
+                {'label': 'GCash Collected', 'value': f"\u20b1{by_method_map.get('GCash', '0.00')}"},
             ],
-            'headers': ['Txn#', 'Member', 'Plan', 'Amount (\u20b1)', 'Date', 'Recorded By'],
+            'headers': ['Txn#', 'Member', 'Plan', 'Method', 'Amount (\u20b1)', 'Date', 'Recorded By'],
             'rows': [[
                 t['txn'],
                 t['member'],
                 t['plan'],
+                t['method'],
                 f"{t['amount']:,.2f}",
                 _to_manila(t['raw_dt']).strftime('%b %d, %Y'),
                 t['recorded_by'],
             ] for t in report['transactions']],
-            'chart_label': 'Cash Revenue',
-            'chart_series': [{'label': 'Cash', 'value': float(report['total_revenue'].replace(',', ''))}] if report['transaction_count'] else [],
+            'chart_label': 'Revenue by Payment Method',
+            'chart_series': [{'label': row['method'], 'value': float(row['total'].replace(',', ''))} for row in report['by_method']],
             'by_plan': report['by_plan'],
             'cash_by_staff': report['cash_by_staff'],
         }
@@ -7937,6 +8286,23 @@ def _get_coaches_data():
     } for c in coaches]
 
 
+def _promo_titles_for_members(member_ids):
+    """{member_id: promo title} taken from each member's most recent verified
+    promo payment — used to label session-based memberships, whose plan_id only
+    points at the anchor plan the promo rides on (see /member/submit-payment)."""
+    if not member_ids:
+        return {}
+    rows = (
+        Payment.query
+        .filter(Payment.member_id.in_(member_ids),
+                Payment.status == 'verified',
+                Payment.notes.like('Promo request:%'))
+        .order_by(Payment.paid_at.asc())
+        .all()
+    )
+    return {p.member_id: _payment_display_plan(p) for p in rows}   # newest wins
+
+
 def _get_members_with_plans():
     """Return every member with their current plan/expiry/status, newest first."""
     rows = (
@@ -7949,15 +8315,34 @@ def _get_members_with_plans():
     )
 
     today = _today_manila()
+    promo_titles = _promo_titles_for_members(
+        [mb.member_id for (_u, mb, _p) in rows if mb is not None and mb.sessions_total is not None]
+    )
     members = []
     for user, membership, plan in rows:
         expiry_date = None
+        sessions    = None
+        no_expiry   = False
         if membership is None or plan is None:
             plan_name, expiry_text, status_label = '—', '—', 'No Plan'
+            plan_label = plan_name
         else:
             plan_name   = plan.name
+            plan_label  = plan_name
             expiry_date = membership.expiry_date
+            no_expiry   = _is_no_expiry(expiry_date)
             expiry_text = expiry_date.strftime('%b %d, %Y') if expiry_date else '—'
+            if no_expiry:
+                expiry_text = 'No expiry'
+            if membership.sessions_total is not None:
+                # Session-based promo: show the promo itself (plan_name stays the
+                # anchor plan so the Edit Member dropdowns keep working) and how
+                # many coach-guided sessions are left.
+                sessions   = _membership_sessions_info(membership)
+                if sessions is not None:
+                    plan_label = f"{promo_titles.get(user.id) or 'Session promo'} · {sessions['left']}/{sessions['total']} left"
+                    if sessions['left'] <= 0:
+                        expiry_text = 'All sessions used'
             if expiry_date and expiry_date < today:
                 status_label = 'Expired'
             elif membership.status == 'declined':
@@ -7977,8 +8362,11 @@ def _get_members_with_plans():
             'email': user.email,
             'phone': user.phone or '',
             'plan': plan_name,
+            'plan_label': plan_label,
             'expiry': expiry_text,
             'expiry_date': expiry_date,
+            'no_expiry': no_expiry,
+            'sessions': sessions,          # None, or {'total','used','left'}
             'status': status_label,
         })
     return members
@@ -8027,8 +8415,8 @@ def admin():
         return {
             'id': p.id,
             'txn': f'TXN-{9000 + p.id}',
-            'member_name': p.member.full_name,
-            'member_profile_picture': url_for('static', filename=p.member.profile_picture) if p.member.profile_picture else None,
+            'member_name': p.display_member_name,
+            'member_profile_picture': url_for('static', filename=p.member.profile_picture) if (p.member and p.member.profile_picture) else None,
             'plan': _payment_display_plan(p),
             'is_promo': bool(p.notes and p.notes.startswith('Promo request:')),
             'method': p.method,
@@ -8066,7 +8454,7 @@ def admin():
     )
     payment_history = [{
         'txn': f'TXN-{9000 + p.id}',
-        'member_name': p.member.full_name,
+        'member_name': p.display_member_name,
         'plan': _payment_display_plan(p),
         'method': p.method,
         'amount': f'{float(p.amount):,.2f}',
@@ -8240,8 +8628,9 @@ def seed_default_promos():
     exactly like any other promo they create themselves."""
     defaults = [
         {'title': '16 Sessions', 'price': 3500.0, 'period': 'Limited-time offer',
-         'inclusions': '16 gym-access sessions, usable any time before they expire\n'
-                        'Full equipment access during each session\n'
+         'session_limit': 16,
+         'inclusions': '16 coach-guided sessions — no expiration, use them at your own pace\n'
+                        'A visit only counts as a session when your coach guides you; using the machines and equipment on your own is free\n'
                         'No long-term commitment — pay once, use as you go',
          'sort_order': 1},
         {'title': 'Boxing', 'price': 4000.0, 'period': 'Limited-time offer',
@@ -8258,6 +8647,7 @@ def seed_default_promos():
                 price=p['price'],
                 period=p['period'],
                 inclusions=p['inclusions'],
+                session_limit=p.get('session_limit'),
                 sort_order=p['sort_order'],
             ))
     db.session.commit()
@@ -8932,6 +9322,16 @@ def _run_startup_migrations():
         # ── Declined payment re-opens the payment step instead of killing the
         #    whole plan request (see admin_verify_payment) ──
         ('payments', 'retry_of_payment_id', "ALTER TABLE payments ADD COLUMN retry_of_payment_id INT NULL"),
+        # ── Session-based promos: no expiration, only coach-guided visits use a session ──
+        ('gym_promos', 'session_limit', "ALTER TABLE gym_promos ADD COLUMN session_limit INT NULL"),
+        ('memberships', 'sessions_total', "ALTER TABLE memberships ADD COLUMN sessions_total INT NULL"),
+        ('memberships', 'sessions_started_at', "ALTER TABLE memberships ADD COLUMN sessions_started_at DATETIME NULL"),
+        ('attendance', 'coach_guided', "ALTER TABLE attendance ADD COLUMN coach_guided TINYINT(1) NOT NULL DEFAULT 0"),
+        # ── A deleted member's verified payments now survive the account
+        #    deletion (see admin_delete_member) so Analytics/Revenue reports
+        #    stay accurate — this snapshot is what keeps the row readable
+        #    once member_id goes NULL. ──
+        ('payments', 'member_name_snapshot', "ALTER TABLE payments ADD COLUMN member_name_snapshot VARCHAR(120) NULL"),
     ]
     with db.engine.connect() as conn:
         for table, column, ddl in migrations:
@@ -8953,6 +9353,25 @@ def _run_startup_migrations():
                     ))
                     conn.commit()
                     print("Migration: seeded default gcash_qr_path for existing settings row(s)")
+                if table == 'gym_promos' and column == 'session_limit':
+                    # One-time backfill, right after the column is created: the
+                    # stock "16 Sessions" promo becomes a 16-session, no-expiry
+                    # promo. Runs only once, so an admin who later changes or
+                    # clears the number in Manage Content keeps their choice.
+                    # The default inclusion wording is only rewritten if it is
+                    # still the untouched original text.
+                    conn.execute(text(
+                        "UPDATE gym_promos SET session_limit = 16 "
+                        "WHERE title = '16 Sessions' AND session_limit IS NULL"
+                    ))
+                    conn.execute(text(
+                        "UPDATE gym_promos SET inclusions = REPLACE(inclusions, "
+                        "'usable any time before they expire', "
+                        "'no expiration — only sessions guided by your coach are counted') "
+                        "WHERE title = '16 Sessions'"
+                    ))
+                    conn.commit()
+                    print("Migration: '16 Sessions' promo is now a 16-session promo with no expiration")
 
         # ── Widen food_items.suitable_meal if it's still the original,
         #    too-narrow VARCHAR(20) from an earlier version of this
@@ -8995,6 +9414,22 @@ def _run_startup_migrations():
                 conn.execute(text("ALTER TABLE walk_ins MODIFY COLUMN plan_type VARCHAR(100) NOT NULL DEFAULT 'Daily'"))
                 conn.commit()
                 print("Migration: widened walk_ins.plan_type to VARCHAR(100)")
+
+        # ── payments.member_id used to be NOT NULL with ON DELETE CASCADE —
+        #    deleting a member silently deleted their whole payment history
+        #    with them, which meant a deleted member's contribution to past
+        #    Analytics/Revenue reports vanished retroactively. It's now
+        #    nullable so admin_delete_member() can detach (member_id -> NULL,
+        #    member_name_snapshot set) a payment instead of losing it. This
+        #    only widens what the column accepts (NOT NULL -> NULL); it never
+        #    changes any existing row's data, and is a no-op once already
+        #    applied — safe to run on every startup. ──
+        result = conn.execute(text("SHOW COLUMNS FROM payments LIKE 'member_id'"))
+        row = result.fetchone()
+        if row is not None and row[2] == 'NO':  # row[2] is the "Null" column: 'NO' = currently NOT NULL
+            conn.execute(text("ALTER TABLE payments MODIFY COLUMN member_id INT NULL"))
+            conn.commit()
+            print("Migration: payments.member_id is now nullable (preserves history after member deletion)")
 
         # ── Normalize fitness_profiles.activity_level from the original
         #    5-value vocabulary (sedentary/lightly_active/moderately_active/

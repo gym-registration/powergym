@@ -76,6 +76,7 @@ _REQUIRED = (
 _OPTIONAL = (
     '_recommend_weekly_routine', '_recommend_meal_plan', 'MEMBER_HIDDEN_PLAN_NAMES',
     '_is_walkin_only', 'WALKIN_COACH_FEE', 'DEFAULT_TERMS_TEXT',
+    '_membership_sessions_info', '_is_no_expiry',
 )
 
 
@@ -157,7 +158,7 @@ _INTENTS = {k: re.compile(v, re.I) for k, v in {
     'feedback':      r'rating|review|feedback|recommend|satisf|stars?',
     'stats':         r'how many (members|coaches)|total members|number of members|active members|community|how big|how popular',
     'profile':       r'\bemail|e-mail|phone|mobile|contact number|birthday|birth ?date|\bage\b|my account|my profile|my name|full name|who am i|member id|\bid\b',
-    'membership':    r'member|plan|expire|expiry|valid|days left|renew|status|active|start',
+    'membership':    r'member|plan|expire|expiry|valid|days left|renew|status|active|start|sessions? (left|remain|used)|how many sessions|promo',
 }.items()}
 
 _SMALLTALK = re.compile(r'^\s*(hi|hello|hey|yo|good (morning|afternoon|evening)|thanks?|thank you|ok(ay)?|cool|great|bye)\b[\s!.?]*$', re.I)
@@ -229,8 +230,13 @@ def _member_state(d, user, today):
     elif m and plan:
         eff_start = max(m.start_date, today)
         s['has_plan'] = True
-        s['days_total'] = max((m.expiry_date - m.start_date).days, 1)
-        s['days_left'] = max((m.expiry_date - eff_start).days, 0)
+        s['sessions'] = None
+        info_fn = d.membership_sessions_info
+        if info_fn is not None and m.sessions_total is not None:
+            s['sessions'] = info_fn(m)
+        no_expiry = bool(d.is_no_expiry and d.is_no_expiry(m.expiry_date))
+        s['days_total'] = None if no_expiry else max((m.expiry_date - m.start_date).days, 1)
+        s['days_left'] = None if no_expiry else max((m.expiry_date - eff_start).days, 0)
         s['status'] = ('Expired' if m.expiry_date < today
                        else 'Pending' if m.status == 'pending' else 'Active')
         s['active'] = s['status'] == 'Active'
@@ -248,13 +254,26 @@ def _sec_member(d, user, st, today):
     L = ['THE MEMBER CHATTING (their own record):',
          f'- Member: {user.first_name} | Member ID: MBR-{user.id:04d}']
     if st['has_plan']:
-        line = (f"- Membership: {st['plan_name']} | status: {st['status']} | started {_fmt_date(m.start_date)} "
-                f"| expires {_fmt_date(m.expiry_date)} | {st['days_left']} day(s) left of {st['days_total']}")
-        if m.start_date > today:
-            line += f" | has not started yet (starts {_rel_days((m.start_date - today).days)})"
-        if m.expiry_date < today:
-            line += f" | expired {_ago((today - m.expiry_date).days)}"
-        L.append(line)
+        sessions = st.get('sessions')
+        if sessions is not None:
+            # Session-based promo (e.g. 16 Sessions): no expiration date at all.
+            line = (f"- Membership: {st['plan_name']} (session-based promo) | status: {st['status']} "
+                    f"| started {_fmt_date(m.start_date)} | NO EXPIRATION DATE — it lasts until all sessions are used "
+                    f"| coach-guided sessions used: {sessions['used']} of {sessions['total']} ({sessions['left']} left)")
+            if sessions['left'] <= 0:
+                line += ' | all sessions have been used, so the promo is finished'
+            L.append(line)
+            L.append('- Session rule: a visit counts as 1 session ONLY when the coach guides the member. '
+                     'A visit where the member just uses the machines and equipment on their own is free and does NOT use a session. '
+                     'Staff mark coach-guided visits at check-in/out.')
+        else:
+            line = (f"- Membership: {st['plan_name']} | status: {st['status']} | started {_fmt_date(m.start_date)} "
+                    f"| expires {_fmt_date(m.expiry_date)} | {st['days_left']} day(s) left of {st['days_total']}")
+            if m.start_date > today:
+                line += f" | has not started yet (starts {_rel_days((m.start_date - today).days)})"
+            if m.expiry_date < today:
+                line += f" | expired {_ago((today - m.expiry_date).days)}"
+            L.append(line)
         if latest is not None:
             L.append(f'- Latest plan request / payment: {_payment_status_label(latest)}')
             if latest.wants_coach and latest.coach_name:
@@ -324,7 +343,12 @@ def _sec_promos(d, today):
         line = f'- {p.title}: {_peso(p.price)}'
         if p.period:
             line += f' ({p.period})'
-        line += f' — gym access lasts {p.duration_days} day(s) once activated'
+        if getattr(p, 'session_limit', None):
+            line += (f" — a session pack of {p.session_limit} coach-guided sessions with NO expiration; "
+                     'a visit counts as 1 session only when the coach guides the member, and using the machines '
+                     'and equipment alone is free and not counted')
+        else:
+            line += f' — gym access lasts {p.duration_days} day(s) once activated'
         if p.valid_until:
             left = (p.valid_until - today).days
             line += (f'; offer valid until {_fmt_date(p.valid_until)} ({_rel_days(left)})' if left >= 0

@@ -21,6 +21,7 @@ const StaffModule = (() => {
     _injectSidebarUser(session);
     document.body.classList.add('role-staff');
     _bindModalBackdrops();
+    _initCoachCells();
     Navigation.activateTab('staff', 'overview', document.getElementById('nav-staff-overview'));
 
     // Admin announcements no longer pop up automatically on load — they
@@ -582,7 +583,7 @@ const StaffModule = (() => {
           return;
         }
         showToast(`${data.member_name} checked in at ${data.time}`, 'success');
-        _applyRowCheckIn(row, identifier, data.time);
+        _applyRowCheckIn(row, identifier, data.time, data);
         _playCheckAnimation(row, 'in');
       })
       .catch(() => {
@@ -591,20 +592,59 @@ const StaffModule = (() => {
       });
   }
 
-  /** Check a member out via the given input field's id, or a raw identifier */
+  /** Check a member out via the given input field's id, or a raw identifier.
+   *
+   *  For a member on a session-based promo whose current visit hasn't been
+   *  marked as coach-guided yet, first ask staff whether the coach guided
+   *  this visit — that is what decides if it counts as 1 session. */
   function checkOutMember(idOrValue) {
     const identifier = _resolveIdentifier(idOrValue);
     if (!identifier) { showToast('Please select a member', 'error'); return; }
 
     const row = _findCheckinRow(identifier);
+    if (row && row.dataset.sessionsTotal !== undefined
+        && row.dataset.checkedIn === '1'
+        && row.dataset.coachMarked !== '1'
+        && Number(row.dataset.sessionsLeft) > 0) {
+      _pendingCoachCheckout = identifier;
+      const nameCell = row.children[1];
+      const msg = document.getElementById('coach-checkout-message');
+      if (msg) msg.textContent = `Was ${nameCell ? nameCell.textContent.trim() : 'the member'} guided by their coach during this visit? `
+        + 'If yes, it counts as 1 session. If they only used the machines and equipment on their own, it is free and not counted.';
+      openModal('coach-checkout-modal');
+      return;
+    }
+    _doCheckOut(identifier, null);
+  }
+
+  let _pendingCoachCheckout = null;
+
+  function confirmCoachCheckout(coachGuided) {
+    const identifier = _pendingCoachCheckout;
+    _pendingCoachCheckout = null;
+    closeModal('coach-checkout-modal');
+    if (identifier) _doCheckOut(identifier, !!coachGuided);
+  }
+
+  function closeCoachCheckoutModal() {
+    _pendingCoachCheckout = null;
+    closeModal('coach-checkout-modal');
+  }
+
+  /** The actual check-out request. coachGuided: true / false, or null to leave it as it is. */
+  function _doCheckOut(identifier, coachGuided) {
+    const row = _findCheckinRow(identifier);
     const btn = row ? row.querySelector('.cell-action button') : null;
     const originalLabel = btn ? btn.textContent : null;
     if (btn) { btn.disabled = true; btn.textContent = '...'; }
 
+    const payload = { member_identifier: identifier };
+    if (coachGuided !== null && coachGuided !== undefined) payload.coach_guided = coachGuided;
+
     fetch('/staff/checkout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ member_identifier: identifier })
+      body: JSON.stringify(payload)
     })
       .then(res => res.json().then(data => ({ ok: res.ok, data })))
       .then(({ ok, data }) => {
@@ -614,7 +654,8 @@ const StaffModule = (() => {
           return;
         }
         showToast(`${data.member_name} checked out at ${data.time} (${data.duration})`, 'success');
-        _applyRowCheckOut(row, identifier, data.time, data.duration);
+        if (data.session_note) showToast(data.session_note, 'error');
+        _applyRowCheckOut(row, identifier, data.time, data.duration, data);
         _playCheckAnimation(row, 'out');
       })
       .catch(() => {
@@ -645,6 +686,87 @@ const StaffModule = (() => {
         showToast('Could not reach the server. Please try again.', 'error');
         if (btn) { btn.disabled = false; btn.textContent = originalLabel; }
       });
+  }
+
+  /* ── Session-based promos: the "Coach Session" column ─────────────────
+     On a promo like "16 Sessions" only coach-guided visits use up a session.
+     Staff tap the toggle while the member is in the gym to mark the visit as
+     coach-guided (tap again to undo). All state lives in data-* attributes on
+     the row, and the cell is re-drawn from them. */
+  function _renderCoachCell(row) {
+    if (!row || row.dataset.sessionsTotal === undefined) return;
+    const cell = row.querySelector('.cell-coach');
+    if (!cell) return;
+    const left   = Number(row.dataset.sessionsLeft);
+    const total  = Number(row.dataset.sessionsTotal);
+    const inGym  = row.dataset.checkedIn === '1';
+    const marked = row.dataset.coachMarked === '1';
+
+    cell.innerHTML = '';
+    if (inGym) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn btn-sm coach-toggle' + (marked ? ' is-on' : '');
+      b.textContent = marked ? '✓ COACH SESSION' : '🥊 COACH-GUIDED?';
+      b.title = marked ? 'Counted as 1 session — tap to undo'
+                       : 'Tap if the coach is guiding this member — it counts as 1 session';
+      b.addEventListener('click', () => toggleCoachSession(row.dataset.email));
+      cell.appendChild(b);
+    }
+    const info = document.createElement('div');
+    info.className = 'coach-left' + (left <= 3 ? ' low' : '');
+    info.textContent = `${left}/${total} left`;
+    cell.appendChild(info);
+
+    const planCell = row.querySelector('.cell-plan');
+    if (planCell) planCell.textContent = planCell.textContent.replace(/\d+\/\d+ left\s*$/, `${left}/${total} left`);
+  }
+
+  function _syncSessionsFromResponse(row, data) {
+    if (!row || !data || !data.sessions) return;
+    row.dataset.sessionsTotal = data.sessions.total;
+    row.dataset.sessionsLeft  = data.sessions.left;
+    if (data.coach_guided !== undefined) row.dataset.coachMarked = data.coach_guided ? '1' : '0';
+    if (data.sessions.left <= 0) {
+      // That was the last session — the promo is complete, so the member now reads as Expired.
+      row.dataset.status = 'expired';
+      const statusCell = row.children[3];
+      if (statusCell) statusCell.innerHTML = '<span class="badge badge-red">Expired</span>';
+    }
+  }
+
+  function toggleCoachSession(email) {
+    const row = _findCheckinRow(email);
+    if (!row) return;
+    const turnOn = row.dataset.coachMarked !== '1';
+    const btn = row.querySelector('.cell-coach .coach-toggle');
+    if (btn) btn.disabled = true;
+
+    fetch('/staff/coach-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ member_identifier: email, coach_guided: turnOn })
+    })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok || !data.success) {
+          showToast(data.error || 'Could not update the session.', 'error');
+          _renderCoachCell(row);
+          return;
+        }
+        _syncSessionsFromResponse(row, data);
+        _renderCoachCell(row);
+        showToast(data.message, 'success');
+      })
+      .catch(() => {
+        showToast('Could not reach the server. Please try again.', 'error');
+        _renderCoachCell(row);
+      });
+  }
+
+  /** Draw the Coach Session cell for every session-promo member when the page loads. */
+  function _initCoachCells() {
+    document.querySelectorAll('#checkin-table tbody tr[data-sessions-total]').forEach(_renderCoachCell);
   }
 
   /** Find a member's row in the Check-in/Out table by their email (data-email) */
@@ -698,8 +820,14 @@ const StaffModule = (() => {
   }
 
   /** Patch a table row in place after a successful check-in — no page reload */
-  function _applyRowCheckIn(row, email, timeText) {
+  function _applyRowCheckIn(row, email, timeText, data) {
     if (!row) return;
+    if (row.dataset.sessionsTotal !== undefined) {
+      row.dataset.checkedIn = '1';
+      row.dataset.coachMarked = (data && data.coach_guided) ? '1' : '0';
+      _syncSessionsFromResponse(row, data);
+      _renderCoachCell(row);
+    }
     const checkInCell  = row.querySelector('.cell-checkin');
     const durationCell = row.querySelector('.cell-duration');
     const actionCell   = row.querySelector('.cell-action');
@@ -711,14 +839,26 @@ const StaffModule = (() => {
   }
 
   /** Patch a table row in place after a successful check-out — no page reload */
-  function _applyRowCheckOut(row, email, timeText, durationText) {
+  function _applyRowCheckOut(row, email, timeText, durationText, data) {
     if (!row) return;
     const checkOutCell = row.querySelector('.cell-checkout');
     const durationCell  = row.querySelector('.cell-duration');
     const actionCell    = row.querySelector('.cell-action');
     if (checkOutCell) checkOutCell.textContent = timeText;
     if (durationCell) durationCell.textContent = durationText;
-    if (actionCell)   actionCell.innerHTML = `<button class="btn btn-green btn-sm" onclick="checkInMember('${email}')">✓ CHECK IN</button>`;
+    let sessionsUsedUp = false;
+    if (row.dataset.sessionsTotal !== undefined) {
+      row.dataset.checkedIn = '0';
+      row.dataset.coachMarked = '0';
+      _syncSessionsFromResponse(row, data);
+      _renderCoachCell(row);
+      sessionsUsedUp = Number(row.dataset.sessionsLeft) <= 0;
+    }
+    if (actionCell) {
+      actionCell.innerHTML = sessionsUsedUp
+        ? `<button class="btn btn-outline btn-sm" disabled title="All sessions used — check-in unavailable" style="opacity:0.5;cursor:not-allowed;">UNAVAILABLE</button>`
+        : `<button class="btn btn-green btn-sm" onclick="checkInMember('${email}')">✓ CHECK IN</button>`;
+    }
   }
 
   /** Small visual reward on a successful check-in/out: flashes the row,
@@ -1249,9 +1389,9 @@ const StaffModule = (() => {
 
   // ── Live Analytics report generator (mirrors the admin dashboard's Report
   //    Generator panel) — staff can pull Membership, Revenue, and Attendance
-  //    reports. Membership and Attendance are full snapshots just like Admin
-  //    sees; Revenue is the one exception and the server restricts it to
-  //    Cash payments only (GCash is Admin's to see). ──
+  //    reports, all full snapshots identical to what Admin sees. Revenue
+  //    includes GCash payments too: the moment Admin approves one it's just
+  //    a verified Payment row like any other, so it shows up here automatically. ──
   let staffReportChartInstance = null;
   let staffCurrentReportPayload = null;
   let staffCurrentReportType = null;
@@ -1325,10 +1465,11 @@ const StaffModule = (() => {
       });
   }
 
-  /** Cash Revenue Report: the server also returns a by-plan breakdown and a
-   *  per-staff Cash breakdown (useful for front-desk oversight — who
-   *  collected how much) that weren't being displayed anywhere. Surface
-   *  them as two mini tables above the transaction list. */
+  /** Revenue Report: the server also returns a by-plan breakdown (now
+   *  spanning both Cash and admin-approved GCash) and a per-staff Cash
+   *  breakdown (useful for front-desk oversight — who collected how much)
+   *  that weren't being displayed anywhere. Surface them as two mini
+   *  tables above the transaction list. */
   function _renderStaffRevenueBreakdowns(type, report) {
     if (type !== 'revenue') return '';
     const hasByPlan = report.by_plan && report.by_plan.length;
@@ -1337,7 +1478,7 @@ const StaffModule = (() => {
 
     const byPlanTable = hasByPlan ? `
       <div style="flex:1;min-width:220px;">
-        <div style="font-size:13px;color:var(--muted);margin-bottom:8px;">Cash Revenue by Plan</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:8px;">Revenue by Plan</div>
         <table class="data-table">
           <thead><tr><th>Plan</th><th>Total</th></tr></thead>
           <tbody>${report.by_plan.map(r => `<tr><td>${r.plan}</td><td>\u20b1${r.total}</td></tr>`).join('')}</tbody>
@@ -1597,7 +1738,7 @@ const StaffModule = (() => {
       });
   }
 
-  return { init, tab, promptRecordPayment, confirmRecordPayment, cancelRecordPayment, closePaymentRecordedModal, checkInMember, checkOutMember, flatlineAndCheckOut, sendExpiryReminder, filterCheckinTable, filterCheckinByStatus, filterMembersByStatus, filterMembersTable, goToActiveMembers, toggleMemberIdColumn, toggleCheckinIdColumn, viewPaymentProof, viewStudentIdProof, onPayMemberInput, onPayStudentToggle, updatePayAmountDisplay, generateReport, submitCoachUpdate, confirmCoachUpdate, closeCoachSaveSuccessModal, toggleCoachEdit, addCoach, promptDeleteCoach, confirmDeleteCoach,
+  return { toggleCoachSession, confirmCoachCheckout, closeCoachCheckoutModal, init, tab, promptRecordPayment, confirmRecordPayment, cancelRecordPayment, closePaymentRecordedModal, checkInMember, checkOutMember, flatlineAndCheckOut, sendExpiryReminder, filterCheckinTable, filterCheckinByStatus, filterMembersByStatus, filterMembersTable, goToActiveMembers, toggleMemberIdColumn, toggleCheckinIdColumn, viewPaymentProof, viewStudentIdProof, onPayMemberInput, onPayStudentToggle, updatePayAmountDisplay, generateReport, submitCoachUpdate, confirmCoachUpdate, closeCoachSaveSuccessModal, toggleCoachEdit, addCoach, promptDeleteCoach, confirmDeleteCoach,
            generateStaffAnalyticsReport, clearStaffReportDateRange, refreshStaffReport, exportStaffReportPDF, submitWalkIn, confirmWalkIn, confirmWalkInSubmit, toggleWalkInCoach, selectWalkInPlan, openWalkInPlanModal, selectWalkInPlanFromModal, updateWalkInCoachNote,
            changeProfilePicture, toggleNotificationPanel, openNotifItem };
 })();
@@ -1618,6 +1759,9 @@ document.addEventListener('DOMContentLoaded', () => {
   window.closePaymentRecordedModal = () => StaffModule.closePaymentRecordedModal();
   window.checkInMember  = (idOrValue) => StaffModule.checkInMember(idOrValue);
   window.checkOutMember = (idOrValue) => StaffModule.checkOutMember(idOrValue);
+  window.toggleCoachSession = (email) => StaffModule.toggleCoachSession(email);
+  window.confirmCoachCheckout = (yes) => StaffModule.confirmCoachCheckout(yes);
+  window.closeCoachCheckoutModal = () => StaffModule.closeCoachCheckoutModal();
   window.flatlineAndCheckOut = (el, email) => StaffModule.flatlineAndCheckOut(el, email);
   window.sendExpiryReminder  = (memberId, btn) => StaffModule.sendExpiryReminder(memberId, btn);
   window.filterCheckinTable   = (term) => StaffModule.filterCheckinTable(term);

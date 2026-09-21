@@ -43,11 +43,12 @@
 
     var state = { open: false, busy: false, history: [] };
     var el = {};
+    var DASHBOARD_PANEL_ID = 'member-overview'; // the chat only shows while this sub-panel is active
 
     /* ── Build the DOM ─────────────────────────────────────── */
     document.body.classList.add('gc-on');
     document.body.insertAdjacentHTML('beforeend',
-      '<button type="button" class="gc-launcher gc-pulse" id="gc-launcher" aria-label="Open Gym Assistant chat" aria-expanded="false" aria-controls="gc-panel">' +
+      '<button type="button" class="gc-launcher" id="gc-launcher" aria-label="Open Gym Assistant chat" aria-expanded="false" aria-controls="gc-panel">' +
         ICONS.chat + ICONS.close + '<span class="gc-launcher-tag">AI</span>' +
       '</button>' +
       '<section class="gc-panel" id="gc-panel" role="dialog" aria-labelledby="gc-title" aria-modal="false">' +
@@ -248,7 +249,6 @@
       state.open = open;
       el.panel.classList.toggle('gc-open', open);
       el.launcher.classList.toggle('gc-open', open);
-      el.launcher.classList.remove('gc-pulse');
       el.launcher.setAttribute('aria-expanded', open ? 'true' : 'false');
       el.launcher.setAttribute('aria-label', open ? 'Close Gym Assistant chat' : 'Open Gym Assistant chat');
       if (open) { scrollDown(); setTimeout(function () { el.input.focus(); }, 60); }
@@ -281,6 +281,25 @@
     welcome();
     refreshComposer();
     window.GymChat = { open: function () { setOpen(true); }, close: function () { setOpen(false); } };
+
+    /* ── Restrict the widget to the Overview (dashboard) tab ──
+       The member area is a single page whose sections (Overview, My
+       Membership, Payment, My Attendance, etc.) are just divs toggled
+       with a .sub-panel.active class — there's no real navigation, so
+       without this the launcher would stay stuck on screen everywhere.
+       We watch that class and show/hide the whole widget to match,
+       force-closing the panel if the member navigates away mid-chat. */
+    function syncVisibilityToDashboardTab() {
+      var dash = document.getElementById(DASHBOARD_PANEL_ID);
+      var onDashboard = !!(dash && dash.classList.contains('active'));
+      el.launcher.classList.toggle('gc-hidden', !onDashboard);
+      el.panel.classList.toggle('gc-hidden', !onDashboard);
+      if (!onDashboard && state.open) setOpen(false);
+    }
+    syncVisibilityToDashboardTab();
+    var panelsRoot = document.getElementById('member-dashboard-root') || document.body;
+    new MutationObserver(syncVisibilityToDashboardTab)
+      .observe(panelsRoot, { attributes: true, attributeFilter: ['class'], subtree: true });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

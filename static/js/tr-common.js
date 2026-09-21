@@ -219,15 +219,56 @@ const Navigation = (() => {
    Functions used across multiple modules / pages.
 ════════════════════════════════════════════════ */
 
-/** Build an attendance dot grid. totalDays defaults to 30 if not given
- *  (kept for backward compatibility with pages that don't pass it yet). */
-function buildAttGrid(elId, presentDays, totalDays = 30, todayDay = null, noPlanDays = []) {
+/** Build a full month attendance calendar styled after a classic wall
+ *  calendar (big month/year header, full weekday names, plain oversized day
+ *  numbers — no boxed tiles) rather than a grid of colored chips. Status
+ *  reads through the number's color plus a small caption on present days
+ *  only, the same way a wall calendar marks a holiday and leaves every
+ *  other day plain.
+ *  presentDays/totalDays/todayDay/noPlanDays keep their original meaning
+ *  and order for backward compatibility with every existing call site
+ *  (member + admin dashboards); year/month are optional trailing params
+ *  used for the header text and to line day 1 up under its real weekday —
+ *  callers that don't pass them (e.g. the admin overview, which only ever
+ *  shows the current month) fall back to today's year/month. */
+function buildAttGrid(elId, presentDays, totalDays = 30, todayDay = null, noPlanDays = [], year = null, month = null) {
   const el = document.getElementById(elId);
   if (!el) return;
-  el.innerHTML = '';
+
+  const now = new Date();
+  const y = year  || now.getFullYear();
+  const m = month || (now.getMonth() + 1); // 1-12
+  const firstWeekday = new Date(y, m - 1, 1).getDay(); // 0=Sun .. 6=Sat
   const noPlanSet = new Set(noPlanDays || []);
+
+  const MONTHS = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY',
+                  'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
+  const WEEKDAYS = [
+    ['SUNDAY', 'SUN'], ['MONDAY', 'MON'], ['TUESDAY', 'TUE'], ['WEDNESDAY', 'WED'],
+    ['THURSDAY', 'THU'], ['FRIDAY', 'FRI'], ['SATURDAY', 'SAT'],
+  ];
+  const LEGEND = [
+    ['present',  'Present'],
+    ['absent',   'Absent'],
+    ['upcoming', 'Upcoming'],
+    ['no-plan',  'No Active Plan'],
+  ];
+
+  let html = '<div class="att-cal-title">' +
+    '<span class="att-cal-month">' + MONTHS[m - 1] + '</span>' +
+    '<span class="att-cal-year">' + y + '</span>' +
+    '</div>';
+
+  html += '<div class="att-cal-head">' +
+    WEEKDAYS.map(([full, short]) =>
+      '<div class="att-cal-wd"><span class="wd-full">' + full + '</span><span class="wd-short">' + short + '</span></div>'
+    ).join('') +
+    '</div><div class="att-cal-body">';
+
+  // Leading blanks so day 1 lands under its real weekday column.
+  for (let i = 0; i < firstWeekday; i++) html += '<div class="att-cell att-cell-empty"></div>';
+
   for (let d = 1; d <= totalDays; d++) {
-    const dot = document.createElement('div');
     // A day with no active membership plan at all stays neutral — there was
     // nothing to check in for, so it shouldn't read as a missed day (red).
     // Otherwise: a day that hasn't happened yet is neither "present" nor
@@ -238,10 +279,26 @@ function buildAttGrid(elId, presentDays, totalDays = 30, todayDay = null, noPlan
     else if (presentDays.includes(d)) state = 'present';
     else if (todayDay && d >= todayDay) state = 'upcoming';
     else state = 'absent';
-    dot.className  = 'att-dot ' + state;
-    dot.textContent = d;
-    el.appendChild(dot);
+    const isToday = todayDay && d === todayDay;
+    html += '<div class="att-cell ' + state + (isToday ? ' att-today' : '') + '">' +
+      '<span class="att-daynum">' + d + '</span>' +
+      (state === 'present' ? '<span class="att-caption">Present</span>' : '') +
+      '</div>';
   }
+
+  // Trailing blanks so the last row completes a full 7-wide week.
+  const trailing = (7 - ((firstWeekday + totalDays) % 7)) % 7;
+  for (let i = 0; i < trailing; i++) html += '<div class="att-cell att-cell-empty"></div>';
+  html += '</div>';
+
+  html += '<div class="att-legend">' +
+    LEGEND.map(([cls, label]) =>
+      '<span class="att-legend-item"><i class="att-legend-dot ' + cls + '"></i>' + label + '</span>'
+    ).join('') +
+    '</div>';
+
+  el.classList.add('att-cal');
+  el.innerHTML = html;
 }
 
 /** Filter a data table by search string */
@@ -988,9 +1045,12 @@ const ContentManager = (() => {
       const periodTxt = item.period ? ` · ${_esc(item.period)}` : '';
       const days = Number(item.duration_days) || 30;
       // A walk-in promo has no membership length, so don't show the default "30 days".
+      // A session pack has no expiration at all — show its session count instead of days.
       priceLine = item.audience === 'walkin'
         ? `<div class="content-card-price">₱${Number(item.price).toLocaleString()}${periodTxt}</div>`
-        : `<div class="content-card-price">₱${Number(item.price).toLocaleString()} / ${days} day${days == 1 ? '' : 's'}${periodTxt}</div>`;
+        : item.session_limit
+          ? `<div class="content-card-price">₱${Number(item.price).toLocaleString()} / ${item.session_limit} coach-guided sessions · no expiry${periodTxt}</div>`
+          : `<div class="content-card-price">₱${Number(item.price).toLocaleString()} / ${days} day${days == 1 ? '' : 's'}${periodTxt}</div>`;
     }
     const categoryBadge = (!isPlan && !isPromo && item.category)
       ? `<div style="font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);">${_esc(item.category)}</div>`
@@ -1082,6 +1142,8 @@ const ContentManager = (() => {
     if (studentPriceWrap) studentPriceWrap.style.display = (isPlan && !isWalkinCtx) ? 'block' : 'none';
     const promoDurationWrap = document.getElementById('cf-promo-duration-wrap');
     if (promoDurationWrap) promoDurationWrap.style.display = (isPromo && !isWalkinCtx) ? 'block' : 'none';
+    const promoSessionsWrap = document.getElementById('cf-promo-sessions-wrap');
+    if (promoSessionsWrap) promoSessionsWrap.style.display = (isPromo && !isWalkinCtx) ? 'block' : 'none';
     const validUntilWrap = document.getElementById('cf-valid-until-wrap');
     if (validUntilWrap) validUntilWrap.style.display = isPromo ? 'block' : 'none';
     document.getElementById('cf-inclusions-wrap').style.display = (isPlan || isPromo) ? 'block' : 'none';
@@ -1118,6 +1180,8 @@ const ContentManager = (() => {
       if (validUntilInput) validUntilInput.value = item ? (item.valid_until || '') : '';
       const promoDuration = document.getElementById('cf-promo-duration');
       if (promoDuration) promoDuration.value = item ? (item.duration_days || '') : '';
+      const promoSessions = document.getElementById('cf-promo-sessions');
+      if (promoSessions) promoSessions.value = item ? (item.session_limit || '') : '';
     }
     if (isPlan || isPromo) {
       document.getElementById('cf-inclusions').value = item ? (item.inclusions || '') : '';
@@ -1560,6 +1624,12 @@ const ContentManager = (() => {
         showToast('Enter a valid promo duration in days.', 'error'); return;
       }
       fd.append('duration_days', promoDuration);
+      const promoSessionsEl = document.getElementById('cf-promo-sessions');
+      const promoSessions = promoSessionsEl ? promoSessionsEl.value.trim() : '';
+      if (promoSessions !== '' && (!Number.isInteger(Number(promoSessions)) || Number(promoSessions) <= 0)) {
+        showToast('Sessions included must be a whole number greater than 0 (or leave it blank).', 'error'); return;
+      }
+      fd.append('session_limit', promoSessions);
       const validUntilInput = document.getElementById('cf-valid-until');
       if (validUntilInput && validUntilInput.value) fd.append('valid_until', validUntilInput.value);
       fd.append('inclusions', document.getElementById('cf-inclusions').value);

@@ -43,8 +43,10 @@ const AdminModule = (() => {
 
     // Build attendance grids from real gym-wide data
     const calendarData = _parseAdminDashboardData();
-    buildAttGrid('att-grid-admin', calendarData.present_days || [], calendarData.days_in_month || 30, calendarData.today_day || null);
-    buildAttGrid('att-grid-admin-full', calendarData.present_days || [], calendarData.days_in_month || 30, calendarData.today_day || null);
+    buildAttGrid('att-grid-admin', calendarData.present_days || [], calendarData.days_in_month || 30,
+      calendarData.today_day || null, calendarData.no_plan_days || [], calendarData.year, calendarData.month);
+    buildAttGrid('att-grid-admin-full', calendarData.present_days || [], calendarData.days_in_month || 30,
+      calendarData.today_day || null, calendarData.no_plan_days || [], calendarData.year, calendarData.month);
 
     // Modal close on backdrop click
     _bindModalBackdrops();
@@ -225,7 +227,7 @@ const AdminModule = (() => {
           const cells = row.querySelectorAll('td');
           cells[1].textContent = m.name;
           cells[2].textContent = m.email;
-          cells[3].textContent = m.plan;
+          cells[3].textContent = m.plan_label || m.plan;
           cells[4].textContent = m.expiry;
           row.dataset.plan          = m.plan;
           row.dataset.expiryIso     = m.expiry_iso;

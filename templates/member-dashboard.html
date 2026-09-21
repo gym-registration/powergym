@@ -114,7 +114,7 @@
           <div class="card-name" id="member-card-name">{{ member.full_name }}</div>
           <div class="card-id">MBR-{{ '%04d'|format(member.id) }} · {{ member.email }}</div>
           <div class="card-plan">{{ plan.name if plan else 'No Active Plan' }}</div>
-          <div class="card-expiry">{% if plan %}Valid until: {{ plan.expiry_date }}{% else %}No membership on file{% endif %}</div>
+          <div class="card-expiry">{% if plan %}{% if plan.sessions %}{% if plan.sessions.left > 0 %}No expiration · {{ plan.sessions.left }} of {{ plan.sessions.total }} sessions left{% else %}All {{ plan.sessions.total }} sessions used{% endif %}{% else %}Valid until: {{ plan.expiry_date }}{% endif %}{% else %}No membership on file{% endif %}</div>
         </div>
 
         <!-- Quick stats -->
@@ -131,8 +131,13 @@
               <div class="progress-bar"><div class="progress-fill {% if weight_pct is none %}muted{% elif weight_pct >= 70 %}green{% endif %}" data-width="{{ weight_pct if weight_pct is not none else 0 }}"></div></div>
             </div>
             <div class="goal-item">
+              {% if plan and plan.sessions %}
+              <div class="goal-header"><span>Sessions Used</span><span class="goal-val {% if plan.sessions.left > 3 %}green{% else %}red{% endif %}" style="font-weight:700;">{{ plan.sessions.used }}/{{ plan.sessions.total }} sessions</span></div>
+              <div class="progress-bar"><div class="progress-fill {% if plan.sessions.left > 3 %}green{% endif %}" data-width="{{ plan.percent_used }}"></div></div>
+              {% else %}
               <div class="goal-header"><span>Membership Used</span><span class="goal-val {% if plan and plan.days_left > 3 %}green{% elif plan %}red{% endif %}" style="font-weight:700;">{% if plan %}{{ plan.days_used }}/{{ plan.days_total }} days{% else %}—{% endif %}</span></div>
               <div class="progress-bar"><div class="progress-fill {% if plan and plan.days_left > 3 %}green{% elif not plan %}muted{% endif %}" data-width="{{ plan.percent_used if plan else 0 }}"></div></div>
+              {% endif %}
             </div>
           </div>
         </div>
@@ -172,7 +177,7 @@
               <span class="gate-banner-icon">✅</span>
               <div>
                 <div class="gate-banner-title">You're currently registered to the {{ plan.name }} plan</div>
-                <div class="gate-banner-text">It's active until {{ plan.expiry_date }}. You can request a new or upgraded plan once this one expires.</div>
+                <div class="gate-banner-text">{% if plan.sessions %}It has no expiration — you have {{ plan.sessions.left }} of {{ plan.sessions.total }} coach-guided sessions left. You can request a new plan once they are all used.{% else %}It's active until {{ plan.expiry_date }}. You can request a new or upgraded plan once this one expires.{% endif %}</div>
               </div>
             </div>
             {% elif awaiting_approval %}
@@ -279,6 +284,7 @@
                   <div class="plan-name">{{ promo.title }}</div>
                   <div class="plan-price">₱{{ '{:,.0f}'.format(promo.price) if promo.price == promo.price|int else '{:,.2f}'.format(promo.price) }}</div>
                   <div class="plan-period">{{ promo.period if promo.period else 'Limited-time offer' }}</div>
+                  {% if promo.session_limit %}<div class="plan-sessions">{{ promo.session_limit }} coach-guided sessions · no expiration</div>{% endif %}
                   <div class="plan-view-link" onclick="event.stopPropagation();openPromoModal({{ loop.index0 }})">👁 View Inclusions</div>
                   {% if promo.valid_until %}<div style="font-size:12px;color:var(--muted);margin-top:10px;">Valid until {{ promo.valid_until }}</div>{% endif %}
                 </div>
@@ -395,12 +401,22 @@
             </div>
             <div class="goal-item"><div class="goal-header"><span>Start Date</span><span>{{ plan.start_date }}</span></div></div>
             <div class="goal-item"><div class="goal-header"><span>Expiry Date</span><span>{{ plan.expiry_date }}</span></div></div>
+            {% if plan.sessions %}
+            <div class="goal-item"><div class="goal-header"><span>Sessions Left</span><span class="goal-val {% if plan.sessions.left > 3 %}green{% else %}red{% endif %}" style="font-weight:700;">{{ plan.sessions.left }} of {{ plan.sessions.total }}</span></div></div>
+            {% else %}
             <div class="goal-item"><div class="goal-header"><span>Days Left</span><span class="goal-val {% if plan.days_left > 3 %}green{% else %}red{% endif %}" style="font-weight:700;">{{ plan.days_left }} days</span></div></div>
+            {% endif %}
             {% if plan.wants_coach %}
             <div class="goal-item"><div class="goal-header"><span>Coach</span><span>{{ plan.coach_name }}</span></div></div>
             <div class="goal-item"><div class="goal-header"><span>Coach Fee</span><span>{% if plan.coach_fee %}+₱{{ '{:,.0f}'.format(plan.coach_fee) if plan.coach_fee == plan.coach_fee|int else '{:,.2f}'.format(plan.coach_fee) }}{% else %}Free{% endif %}</span></div></div>
             {% endif %}
             <div class="progress-bar" style="margin-top:16px;"><div class="progress-fill" data-width="{{ plan.percent_used }}"></div></div>
+            {% if plan.sessions %}
+            <div class="session-rule-note">
+              <strong>How sessions are counted:</strong> a visit counts as 1 session only when your coach guides you.
+              Using the machines and equipment on your own is free and doesn't use a session.
+            </div>
+            {% endif %}
             {% else %}
             <div style="font-family:'Bebas Neue';font-size:31px;color:var(--muted);margin-bottom:8px;">NO ACTIVE PLAN</div>
             <div style="font-size:15px;color:var(--muted);">Select a plan below to get started.</div>
@@ -766,12 +782,12 @@
       <div class="panel">
         <div class="panel-header"><div class="panel-title">Session History</div></div>
         <table class="data-table">
-          <thead><tr><th>Date</th><th>Check-in</th><th>Check-out</th><th>Duration</th></tr></thead>
+          <thead><tr><th>Date</th><th>Check-in</th><th>Check-out</th><th>Duration</th>{% if attendance_sessions_enabled %}<th id="attendance-type-th">Counted</th>{% endif %}</tr></thead>
           <tbody id="attendance-session-history-body">
             {% for s in session_history %}
-            <tr><td>{{ s.date }}</td><td>{{ s.check_in }}</td><td>{{ s.check_out }}</td><td>{{ s.duration }}</td></tr>
+            <tr><td>{{ s.date }}</td><td>{{ s.check_in }}</td><td>{{ s.check_out }}</td><td>{{ s.duration }}</td>{% if attendance_sessions_enabled %}<td>{% if s.coach_guided %}<span class="badge badge-green">COACH SESSION</span>{% else %}<span class="badge badge-blue">OPEN GYM · FREE</span>{% endif %}</td>{% endif %}</tr>
             {% else %}
-            <tr><td colspan="4" style="text-align:center;color:var(--muted);">No sessions logged this month yet.</td></tr>
+            <tr><td colspan="{{ 5 if attendance_sessions_enabled else 4 }}" style="text-align:center;color:var(--muted);">No sessions logged this month yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
