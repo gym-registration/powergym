@@ -26,7 +26,7 @@
         <li><a href="#programs" onclick="hideAuthScreen();">Programs</a></li>
         <li><a href="#coaches" onclick="hideAuthScreen();">Coaches</a></li>
         <li><a href="#schedule" onclick="hideAuthScreen();">Schedule</a></li>
-        <li><a href="#ratings-summary" onclick="hideAuthScreen();">Feedback</a></li>
+        <li><a href="#feedback" onclick="hideAuthScreen();">Feedback</a></li>
         <li><a href="#contact" onclick="hideAuthScreen();">Contact</a></li>
       </ul>
     </nav>
@@ -302,6 +302,37 @@
 </section>
 
 <!-- ═══════════════════════════════════════
+     MEMBER FEEDBACK
+     Average rating headline + every member's written feedback, 5 per
+     page (rendered by tr-home-feedback.js from #home-feedback-data,
+     which _public_feedback_data() in app.py fills).
+═══════════════════════════════════════ -->
+<section class="section" id="feedback">
+  <div class="section-wrap">
+    <div class="section-head">
+      <div class="section-eyebrow">What Our Members Say</div>
+      <div class="section-title">MEMBER <span class="accent">RATINGS &amp; FEEDBACK</span></div>
+      {% if public_feedback_stats.count %}
+      <div class="rf-summary">
+        <span class="rf-summary-score">{{ public_feedback_stats.average }}</span>
+        <span class="rf-summary-stars">{% for i in range(1, 6) %}{{ '★' if i <= public_feedback_stats.rounded else '☆' }}{% endfor %}</span>
+        <span class="rf-summary-count">from {{ public_feedback_stats.count }} member{{ 's' if public_feedback_stats.count != 1 else '' }}</span>
+      </div>
+      {% endif %}
+    </div>
+
+    {% if public_feedback %}
+    <div class="rf-feedback-list" id="rf-testimonials"></div>
+    <div class="rf-pagination" id="rf-pagination"></div>
+    {% else %}
+    <div class="rf-empty">No member feedback yet — be the first to share your experience!</div>
+    {% endif %}
+  </div>
+</section>
+
+<script id="home-feedback-data" type="application/json">{{ public_feedback|tojson }}</script>
+
+<!-- ═══════════════════════════════════════
      MEMBERSHIP PLANS
 ═══════════════════════════════════════ -->
 <section class="section section-alt" id="membership">
@@ -337,52 +368,6 @@
   </div>
   
 </section>
-
-<!-- ═══════════════════════════════════════
-     SCHEDULE + MEMBER RATINGS SUMMARY
-     Announcements card was replaced with a Ratings & Feedback summary
-     (average score + stars) — the actual testimonial cards render in
-     the #feedback section right below.
-═══════════════════════════════════════ -->
-<section class="section" id="schedule">
-  <div class="section-wrap">
-    <div class="info-grid">
-      <div class="info-card">
-        <div class="info-card-title">🗓️ GYM SCHEDULE</div>
-        <div class="sched-row"><span class="day">{{ gcash_settings.schedule_weekday_label if gcash_settings else 'Monday – Saturday' }}</span><span class="hrs">{{ gcash_settings.schedule_weekday_hours if gcash_settings else '6:00 AM – 10:00 PM' }}</span></div>
-        <div class="sched-row"><span class="day">{{ gcash_settings.schedule_weekend_label if gcash_settings else 'Sunday' }}</span><span class="hrs">{{ gcash_settings.schedule_weekend_hours if gcash_settings else '7:00 AM – 8:00 PM' }}</span></div>
-      </div>
-
-      <div class="info-card info-card-clickable" id="ratings-summary" role="button" tabindex="0"
-           aria-expanded="false" aria-controls="rf-name-ratings-list"
-           onclick="toggleRatingsNameList()"
-           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleRatingsNameList();}">
-        <div class="info-card-title">⭐ MEMBER RATINGS &amp; FEEDBACK <span class="rf-toggle-arrow" id="rf-toggle-arrow">▾</span></div>
-        {% if public_feedback_stats.count %}
-        <div class="rf-summary">
-          <span class="rf-summary-score">{{ public_feedback_stats.average }}</span>
-          <span class="rf-summary-stars">{% for i in range(1, 6) %}{{ '★' if i <= public_feedback_stats.rounded else '☆' }}{% endfor %}</span>
-          <span class="rf-summary-count">from {{ public_feedback_stats.count }} member{{ 's' if public_feedback_stats.count != 1 else '' }}</span>
-        </div>
-        <div class="rf-toggle-hint">Tap to see each member's rating</div>
-        <div class="rf-name-ratings" id="rf-name-ratings-list" style="display:none;"></div>
-        {% else %}
-        <div style="color:var(--muted);font-size:15px;">No member feedback yet — be the first to share your experience!</div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ═══════════════════════════════════════
-     MEMBER RATINGS & FEEDBACK (testimonials) — removed. The full list of
-     member reviews now lives inside the "MEMBER RATINGS & FEEDBACK" card
-     above (see #ratings-summary in the SCHEDULE section) — tap it to see
-     each member's name + rating. #home-feedback-data below is still what
-     that toggle reads from (see tr-home-feedback.js: bootNameList()).
-═══════════════════════════════════════ -->
-
-<script id="home-feedback-data" type="application/json">{{ public_feedback|tojson }}</script>
 
 <!-- ═══════════════════════════════════════
      OUR FACILITIES / EQUIPMENT
@@ -454,12 +439,19 @@
 
 
 <!-- ═══════════════════════════════════════
-     LOCATION / CONTACT
+     GYM SCHEDULE + LOCATION / CONTACT
+     Three columns: schedule | contact details | map. #schedule and
+     #contact sit on the cards themselves (both are nav targets).
 ═══════════════════════════════════════ -->
-<section class="section" id="contact">
+<section class="section">
   <div class="section-wrap">
     <div class="location-grid">
-      <div class="location-card">
+      <div class="info-card" id="schedule">
+        <div class="info-card-title">🗓️ GYM SCHEDULE</div>
+        <div class="sched-row"><span class="day">{{ gcash_settings.schedule_weekday_label if gcash_settings else 'Monday – Saturday' }}</span><span class="hrs">{{ gcash_settings.schedule_weekday_hours if gcash_settings else '6:00 AM – 10:00 PM' }}</span></div>
+        <div class="sched-row"><span class="day">{{ gcash_settings.schedule_weekend_label if gcash_settings else 'Sunday' }}</span><span class="hrs">{{ gcash_settings.schedule_weekend_hours if gcash_settings else '7:00 AM – 8:00 PM' }}</span></div>
+      </div>
+      <div class="location-card" id="contact">
         <div class="location-row"><span class="li">📍</span><div><div>POWER GYM</div><div class="muted-small">Carig Sur, beside Hall of Justice, Tuguegarao City, Cagayan 3500</div></div></div>
         <div class="location-row"><span class="li">📞</span><div>(09) 123 456 7890</div></div>
         <div class="location-row"><span class="li">✉️</span><div>powergym@example.com</div></div>
@@ -535,10 +527,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // Pick the entry closest to the top of the viewport that's currently intersecting
     const visible = entries.filter(e => e.isIntersecting);
     if (visible.length) {
-      const topMost = visible.reduce((a, b) =>
-        a.boundingClientRect.top < b.boundingClientRect.top ? a : b
-      );
-      setActive(topMost.target.id);
+      // Schedule + Contact sit side by side (same top edge), so when
+      // several targets tie, prefer the one the URL hash points at.
+      const minTop = Math.min(...visible.map(e => e.boundingClientRect.top));
+      const tied = visible.filter(e => e.boundingClientRect.top - minTop < 4);
+      const hashId = window.location.hash.slice(1);
+      const pick = tied.find(e => e.target.id === hashId) || tied[0];
+      setActive(pick.target.id);
     }
   }, {
     rootMargin: '-30% 0px -60% 0px', // section counts as "active" once it's near the top third of the screen
@@ -546,6 +541,13 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   sections.forEach(section => observer.observe(section));
+
+  // Highlight immediately on click (the observer alone can't tell two
+  // side-by-side targets apart when both are already on screen).
+  navLinks.forEach(link => link.addEventListener('click', () => {
+    const id = (link.getAttribute('href') || '').slice(1);
+    if (id) setActive(id);
+  }));
 });
 </script>
 
