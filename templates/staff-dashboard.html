@@ -602,7 +602,7 @@
           <tbody>
             {% for m in members_checkin %}
             <tr data-name="{{ m.name|lower }}" data-email="{{ m.email }}"
-                data-status="{{ 'active' if m.plan_status == 'Active' else 'pending' if m.plan_status == 'Pending' else 'expired' }}"
+                data-status="{{ 'active' if m.plan_status == 'Active' else 'pending' if m.plan_status in ('Pending', 'Scheduled') else 'expired' }}"
                 {% if m.sessions %}data-sessions-total="{{ m.sessions.total }}" data-sessions-left="{{ m.sessions.left }}" data-checked-in="{{ 1 if m.checkin_status == 'in' else 0 }}" data-coach-marked="{{ 1 if m.open_coach_guided else 0 }}"{% endif %}>
               <td class="col-checkin-id">#{{ m.id }}</td>
               <td>{{ m.name }}</td>
@@ -612,6 +612,8 @@
                 <span class="badge badge-green">Active</span>
                 {% elif m.plan_status == 'Pending' %}
                 <span class="badge badge-blue">Pending</span>
+                {% elif m.plan_status == 'Scheduled' %}
+                <span class="badge badge-gold">Scheduled</span>
                 {% elif m.plan_status == 'Expired' %}
                 <span class="badge badge-red">Expired</span>
                 {% else %}
@@ -631,6 +633,11 @@
               <td class="cell-action">
                 {% if m.checkin_status == 'in' %}
                 <button class="btn btn-outline btn-sm" onclick="checkOutMember('{{ m.email }}')">← CHECK OUT</button>
+                {% elif m.plan_status == 'Scheduled' %}
+                <button class="btn btn-outline btn-sm" disabled title="Not scheduled today — starts {{ m.schedule_start_label }}" style="opacity:0.5;cursor:not-allowed;">UNAVAILABLE</button>
+                <div style="margin-top:4px;font-size:12px;color:var(--gold);line-height:1.3;">
+                  Not scheduled today.<br>Starts {{ m.schedule_start_label }}.
+                </div>
                 {% elif m.plan_status != 'Active' %}
                 <button class="btn btn-outline btn-sm" disabled title="Plan is {{ m.plan_status|lower }} — check-in unavailable" style="opacity:0.5;cursor:not-allowed;">UNAVAILABLE</button>
                 {% else %}

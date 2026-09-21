@@ -2361,7 +2361,7 @@ body.home-page { overflow-x: hidden; }
 .feature-desc { font-size: 14.5px; color: var(--muted); line-height: 1.5; }
 
 /* ── Membership plans ── */
-.plans-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+.plans-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 280px)); gap: 20px; justify-content: center; }
 .plan-tier {
   position: relative; background: var(--card); border: 1px solid var(--border); border-radius: 8px;
   overflow: hidden; transition: filter .2s, border-color .2s, box-shadow .2s, transform .2s;

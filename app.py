@@ -5593,14 +5593,21 @@ def _member_plan_status(member_id):
         return 'Declined'
     if membership.status == 'pending':
         return 'Pending'
+    if membership.start_date and membership.start_date > today:
+        # Approved, but the start date chosen on the request form hasn't
+        # arrived yet — same rule as _get_members_with_plans().
+        return 'Scheduled'
     return 'Active'
 
 
 _PLAN_STATUS_BLOCK_REASON = {
-    'No Plan':  'does not have a membership plan',
-    'Pending':  "membership plan is still pending approval",
-    'Expired':  'membership plan has expired',
-    'Declined': 'membership plan request was declined',
+    'No Plan':   'does not have a membership plan',
+    'Pending':   "membership plan is still pending approval",
+    'Expired':   'membership plan has expired',
+    'Declined':  'membership plan request was declined',
+    # Overridden with the exact start date in staff_checkin() below — this
+    # generic text is only a fallback.
+    'Scheduled': "membership hasn't started yet",
 }
 
 
@@ -5620,9 +5627,22 @@ def staff_checkin():
         _mb = Membership.query.filter_by(member_id=member.id).first()
         if plan_status == 'Expired' and _mb is not None and _mb.sessions_total is not None:
             reason = f'has used all {_mb.sessions_total} sessions of the promo'
+        if plan_status == 'Scheduled' and _mb is not None and _mb.start_date is not None:
+            # Tell staff exactly which date the member chose on the
+            # 'When do you want to start?' field of their request, instead
+            # of a generic message.
+            start_label = _mb.start_date.strftime('%B %d, %Y')
+            return jsonify(
+                success=False,
+                error=f'Not scheduled today. {member.first_name}\'s membership starts on {start_label}.',
+                plan_status=plan_status,
+                start_date=_mb.start_date.isoformat(),
+                start_date_label=start_label,
+            ), 403
         return jsonify(
             success=False,
-            error=f'{member.first_name} {reason} — check-in is unavailable until the plan is active.'
+            error=f'{member.first_name} {reason} — check-in is unavailable until the plan is active.',
+            plan_status=plan_status,
         ), 403
 
     open_entry = Attendance.query.filter_by(member_id=member.id, check_out=None).first()
@@ -7386,6 +7406,14 @@ def _get_members_checkin_status():
         # parses it as UTC and converts to the staff member's local clock.
         check_in_iso = (open_entry.check_in.isoformat() + 'Z') if open_entry is not None else None
 
+        # 'Not scheduled today' notice under the CHECK IN button — only
+        # populated when plan_status is 'Scheduled' (start_date is in the
+        # future); every other status leaves this None.
+        schedule_start_label = (
+            m['start_date'].strftime('%B %d, %Y')
+            if m['status'] == 'Scheduled' and m.get('start_date') else None
+        )
+
         result.append({
             'id': m['id'],
             'name': m['name'],
@@ -7393,6 +7421,7 @@ def _get_members_checkin_status():
             'plan': m['plan'],
             'plan_label': m['plan_label'],
             'plan_status': m['status'],
+            'schedule_start_label': schedule_start_label,
             'sessions': m['sessions'],          # None, or {'total','used','left'} for a session-based promo
             'open_coach_guided': bool(open_entry is not None and open_entry.coach_guided),
             'checkin_status': checkin_status,   # 'in' | 'out' | 'none'
@@ -8349,6 +8378,12 @@ def _get_members_with_plans():
                 status_label = 'Declined'
             elif membership.status == 'pending':
                 status_label = 'Pending'
+            elif membership.start_date and membership.start_date > today:
+                # Staff already approved this plan, but the start date the
+                # member picked on the 'When do you want to start?' field
+                # (My Membership request form) hasn't arrived yet — block
+                # check-in until that date instead of treating it as Active.
+                status_label = 'Scheduled'
             else:
                 status_label = 'Active'
 
@@ -8365,6 +8400,7 @@ def _get_members_with_plans():
             'plan_label': plan_label,
             'expiry': expiry_text,
             'expiry_date': expiry_date,
+            'start_date': membership.start_date if membership else None,
             'no_expiry': no_expiry,
             'sessions': sessions,          # None, or {'total','used','left'}
             'status': status_label,
