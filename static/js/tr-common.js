@@ -588,6 +588,41 @@ function submitProfileUpdate() {
     });
 }
 
+/** Save the two-row "GYM SCHEDULE" card shown on the public home page.
+ *  Lives in tr-common.js (like ContentManager) since both the admin and
+ *  staff Settings tab render this same panel and call this function. */
+function submitScheduleSettings() {
+  const weekday_label = _val('sched-weekday-label');
+  const weekday_hours = _val('sched-weekday-hours');
+  const weekend_label = _val('sched-weekend-label');
+  const weekend_hours = _val('sched-weekend-hours');
+
+  if (!weekday_label || !weekday_hours || !weekend_label || !weekend_hours) {
+    showToast('Please fill in both rows before saving.', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('schedule-settings-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'SAVING...'; }
+
+  const body = new URLSearchParams({ weekday_label, weekday_hours, weekend_label, weekend_hours });
+
+  fetch('/api/content/schedule/save', { method: 'POST', body })
+    .then(res => res.json().then(data => ({ ok: res.ok, data })))
+    .then(({ ok, data }) => {
+      if (btn) { btn.disabled = false; btn.textContent = 'SAVE GYM SCHEDULE'; }
+      if (!ok || !data.success) {
+        showToast(data.error || 'Failed to save gym schedule.', 'error');
+        return;
+      }
+      showToast(data.message || 'Gym schedule updated.', 'success');
+    })
+    .catch(() => {
+      if (btn) { btn.disabled = false; btn.textContent = 'SAVE GYM SCHEDULE'; }
+      showToast('Could not reach the server. Please try again.', 'error');
+    });
+}
+
 
 /* ════════════════════════════════════════════════
    5b. FORM CHANGE TRACKER
@@ -2013,6 +2048,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.cancelVerifyPayment = cancelVerifyPayment;
   window.submitChangePassword = submitChangePassword;
   window.submitProfileUpdate  = submitProfileUpdate;
+  window.submitScheduleSettings = submitScheduleSettings;
   window.completeRegistration = completeRegistration;
   window.filterTable   = filterTable;
   window.togglePasswordVisibility = togglePasswordVisibility;

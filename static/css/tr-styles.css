@@ -2396,6 +2396,16 @@ body.home-page { overflow-x: hidden; }
 .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 .info-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 26px; }
 .info-card-title { display: flex; align-items: center; gap: 10px; font-family: 'Barlow Condensed', sans-serif; font-weight: 700; letter-spacing: 1px; font-size: 17px; margin-bottom: 18px; }
+.info-card-clickable { cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.info-card-clickable:hover, .info-card-clickable:focus-visible { border-color: var(--red); }
+.info-card-clickable:focus-visible { outline: none; }
+.rf-toggle-arrow { margin-left: auto; font-size: 14px; color: var(--muted); transition: transform 0.2s ease; }
+.rf-toggle-arrow-open { transform: rotate(180deg); }
+.rf-toggle-hint { margin-top: 10px; font-size: 12px; color: var(--muted); }
+.rf-name-ratings { flex-direction: column; gap: 2px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); max-height: 220px; overflow-y: auto; }
+.rf-name-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 0; font-size: 14px; }
+.rf-name-row-name { color: var(--white); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rf-name-row-stars { flex-shrink: 0; color: var(--gold); letter-spacing: 1px; }
 .sched-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 15px; }
 .sched-row:last-child { border-bottom: none; }
 .sched-row .day { color: var(--white); font-weight: 600; }
@@ -2456,6 +2466,7 @@ body.home-page { overflow-x: hidden; }
    built for this purpose); these are just the average-rating headline
    and the page controls tr-home-feedback.js renders under the grid. */
 .rf-summary { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.info-card .rf-summary { justify-content: flex-start; margin-top: 2px; }
 .rf-summary-score { font-family: 'Bebas Neue', sans-serif; font-size: 28px; color: var(--white); line-height: 1; }
 .rf-summary-stars { color: var(--gold); font-size: 18px; letter-spacing: 2px; }
 .rf-summary-count { font-size: 14px; color: var(--muted); }

@@ -1775,6 +1775,16 @@ class GymSettings(db.Model):
     # without spending any time on it. Stored in seconds internally; the
     # admin UI shows/collects this as whole minutes.
     terms_read_seconds  = db.Column(db.Integer, nullable=False, default=60)
+    # Public "GYM SCHEDULE" card on the home page (Schedule section). Two
+    # editable rows — each a free-text day label paired with a free-text
+    # hours string — so admin/staff can describe whatever split they run
+    # (e.g. "Monday – Saturday" / "Sunday", or a fully different pattern)
+    # without a code change. Editable from either dashboard's Settings tab
+    # (see /api/content/schedule/save), same as Manage Content.
+    schedule_weekday_label = db.Column(db.String(60), nullable=False, default='Monday – Saturday')
+    schedule_weekday_hours = db.Column(db.String(60), nullable=False, default='6:00 AM – 10:00 PM')
+    schedule_weekend_label = db.Column(db.String(60), nullable=False, default='Sunday')
+    schedule_weekend_hours = db.Column(db.String(60), nullable=False, default='7:00 AM – 8:00 PM')
     updated_at         = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
                                     onupdate=lambda: datetime.now(timezone.utc))
 
@@ -2799,6 +2809,34 @@ def api_delete_equipment(item_id):
     db.session.delete(item)
     db.session.commit()
     return jsonify(success=True, message='Equipment deleted.')
+
+
+@app.route('/api/content/schedule/save', methods=['POST'])
+def api_save_schedule():
+    """Updates the two-row "GYM SCHEDULE" card on the public home page
+    (Schedule section). Same staff-or-admin gate as the rest of Manage
+    Content, and stored on the singleton GymSettings row alongside the
+    GCash/Terms settings."""
+    if not _content_role_ok():
+        return jsonify(success=False, error='Unauthorized.'), 403
+
+    weekday_label = (request.form.get('weekday_label') or '').strip()
+    weekday_hours = (request.form.get('weekday_hours') or '').strip()
+    weekend_label = (request.form.get('weekend_label') or '').strip()
+    weekend_hours = (request.form.get('weekend_hours') or '').strip()
+
+    if not all([weekday_label, weekday_hours, weekend_label, weekend_hours]):
+        return jsonify(success=False, error='All four schedule fields are required.'), 400
+    if any(len(v) > 60 for v in (weekday_label, weekday_hours, weekend_label, weekend_hours)):
+        return jsonify(success=False, error='Each field must be 60 characters or fewer.'), 400
+
+    settings = _get_gym_settings()
+    settings.schedule_weekday_label = weekday_label
+    settings.schedule_weekday_hours = weekday_hours
+    settings.schedule_weekend_label = weekend_label
+    settings.schedule_weekend_hours = weekend_hours
+    db.session.commit()
+    return jsonify(success=True, message='Gym schedule updated.')
 
 
 # ── Content-management API: Announcements ────────────────────────────────
@@ -7688,6 +7726,7 @@ def staff():
         notification_center=notification_center,
         notification_unread_count=notification_unread_count,
         current_user=staff_user,
+        gcash_settings=_get_gym_settings(),
         picture_can_change=picture_can_change,
         picture_available_at=picture_available_at.strftime('%B %d, %Y') if picture_available_at else None,
     )
@@ -9368,6 +9407,11 @@ def _run_startup_migrations():
         #    stay accurate — this snapshot is what keeps the row readable
         #    once member_id goes NULL. ──
         ('payments', 'member_name_snapshot', "ALTER TABLE payments ADD COLUMN member_name_snapshot VARCHAR(120) NULL"),
+        # ── Editable "GYM SCHEDULE" card on the public home page ──
+        ('gym_settings', 'schedule_weekday_label', "ALTER TABLE gym_settings ADD COLUMN schedule_weekday_label VARCHAR(60) NOT NULL DEFAULT 'Monday – Saturday'"),
+        ('gym_settings', 'schedule_weekday_hours', "ALTER TABLE gym_settings ADD COLUMN schedule_weekday_hours VARCHAR(60) NOT NULL DEFAULT '6:00 AM – 10:00 PM'"),
+        ('gym_settings', 'schedule_weekend_label', "ALTER TABLE gym_settings ADD COLUMN schedule_weekend_label VARCHAR(60) NOT NULL DEFAULT 'Sunday'"),
+        ('gym_settings', 'schedule_weekend_hours', "ALTER TABLE gym_settings ADD COLUMN schedule_weekend_hours VARCHAR(60) NOT NULL DEFAULT '7:00 AM – 8:00 PM'"),
     ]
     with db.engine.connect() as conn:
         for table, column, ddl in migrations:

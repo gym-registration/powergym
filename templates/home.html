@@ -26,7 +26,7 @@
         <li><a href="#programs" onclick="hideAuthScreen();">Programs</a></li>
         <li><a href="#coaches" onclick="hideAuthScreen();">Coaches</a></li>
         <li><a href="#schedule" onclick="hideAuthScreen();">Schedule</a></li>
-        <li><a href="#announcements" onclick="hideAuthScreen();">Announcements</a></li>
+        <li><a href="#ratings-summary" onclick="hideAuthScreen();">Feedback</a></li>
         <li><a href="#contact" onclick="hideAuthScreen();">Contact</a></li>
       </ul>
     </nav>
@@ -339,59 +339,48 @@
 </section>
 
 <!-- ═══════════════════════════════════════
-     SCHEDULE + ANNOUNCEMENTS
+     SCHEDULE + MEMBER RATINGS SUMMARY
+     Announcements card was replaced with a Ratings & Feedback summary
+     (average score + stars) — the actual testimonial cards render in
+     the #feedback section right below.
 ═══════════════════════════════════════ -->
 <section class="section" id="schedule">
   <div class="section-wrap">
     <div class="info-grid">
       <div class="info-card">
         <div class="info-card-title">🗓️ GYM SCHEDULE</div>
-        <div class="sched-row"><span class="day">Monday – Saturday</span><span class="hrs">6:00 AM – 10:00 PM</span></div>
-        <div class="sched-row"><span class="day">Sunday</span><span class="hrs">7:00 AM – 8:00 PM</span></div>
+        <div class="sched-row"><span class="day">{{ gcash_settings.schedule_weekday_label if gcash_settings else 'Monday – Saturday' }}</span><span class="hrs">{{ gcash_settings.schedule_weekday_hours if gcash_settings else '6:00 AM – 10:00 PM' }}</span></div>
+        <div class="sched-row"><span class="day">{{ gcash_settings.schedule_weekend_label if gcash_settings else 'Sunday' }}</span><span class="hrs">{{ gcash_settings.schedule_weekend_hours if gcash_settings else '7:00 AM – 8:00 PM' }}</span></div>
       </div>
 
-      <div class="info-card" id="announcements">
-        <div class="info-card-title">📢 ANNOUNCEMENTS</div>
-        <ul class="announce-list">
-          <li>Proper gym attire is required.</li>
-          <li>Members must bring their QR Code or Membership ID.</li>
-          <li>No outside food or drinks.</li>
-          <li>Wipe equipment after use.</li>
-          <li>Monthly Zumba every last Saturday.</li>
-        </ul>
+      <div class="info-card info-card-clickable" id="ratings-summary" role="button" tabindex="0"
+           aria-expanded="false" aria-controls="rf-name-ratings-list"
+           onclick="toggleRatingsNameList()"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleRatingsNameList();}">
+        <div class="info-card-title">⭐ MEMBER RATINGS &amp; FEEDBACK <span class="rf-toggle-arrow" id="rf-toggle-arrow">▾</span></div>
+        {% if public_feedback_stats.count %}
+        <div class="rf-summary">
+          <span class="rf-summary-score">{{ public_feedback_stats.average }}</span>
+          <span class="rf-summary-stars">{% for i in range(1, 6) %}{{ '★' if i <= public_feedback_stats.rounded else '☆' }}{% endfor %}</span>
+          <span class="rf-summary-count">from {{ public_feedback_stats.count }} member{{ 's' if public_feedback_stats.count != 1 else '' }}</span>
+        </div>
+        <div class="rf-toggle-hint">Tap to see each member's rating</div>
+        <div class="rf-name-ratings" id="rf-name-ratings-list" style="display:none;"></div>
+        {% else %}
+        <div style="color:var(--muted);font-size:15px;">No member feedback yet — be the first to share your experience!</div>
+        {% endif %}
       </div>
     </div>
   </div>
 </section>
 
 <!-- ═══════════════════════════════════════
-     MEMBER RATINGS & FEEDBACK
-     Real ratings/comments collected through the post-membership feedback
-     wizard on the member dashboard (see _public_feedback_data() in app.py).
-     Sits right under Announcements; paginated 5 at a time by tr-home-feedback.js.
+     MEMBER RATINGS & FEEDBACK (testimonials) — removed. The full list of
+     member reviews now lives inside the "MEMBER RATINGS & FEEDBACK" card
+     above (see #ratings-summary in the SCHEDULE section) — tap it to see
+     each member's name + rating. #home-feedback-data below is still what
+     that toggle reads from (see tr-home-feedback.js: bootNameList()).
 ═══════════════════════════════════════ -->
-<section class="section" id="feedback">
-  <div class="section-wrap">
-    <div class="section-head">
-      <div class="section-eyebrow">What Our Members Say</div>
-      <div class="section-title">MEMBER <span class="accent">RATINGS &amp; FEEDBACK</span></div>
-      {% if public_feedback_stats.count %}
-      <div class="rf-summary">
-        <span class="rf-summary-score">{{ public_feedback_stats.average }}</span>
-        <span class="rf-summary-stars">{% for i in range(1, 6) %}{{ '★' if i <= public_feedback_stats.rounded else '☆' }}{% endfor %}</span>
-        <span class="rf-summary-count">from {{ public_feedback_stats.count }} member{{ 's' if public_feedback_stats.count != 1 else '' }}</span>
-      </div>
-      {% endif %}
-    </div>
-
-    {% if public_feedback %}
-    <div class="testimonial-grid" id="rf-grid"></div>
-    <div class="rf-pagination" id="rf-pagination"></div>
-    {% else %}
-    <div style="text-align:center;color:var(--muted);padding:30px;">No member feedback yet — be the first to share your experience!</div>
-    {% endif %}
-  </div>
-</section>
 
 <script id="home-feedback-data" type="application/json">{{ public_feedback|tojson }}</script>
 

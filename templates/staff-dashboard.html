@@ -991,6 +991,40 @@
         </div>
       </div>
 
+      <!-- Gym Schedule (shown on the public home page, Schedule section) -->
+      <div class="panel" style="margin-top:24px;">
+        <div class="panel-header">
+          <div><div class="panel-title">Gym Schedule</div><div style="font-size:13px;color:var(--muted);margin-top:2px;">Shown on the public home page under Schedule.</div></div>
+        </div>
+        <div class="panel-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Row 1 — Days</label>
+              <input class="form-input" id="sched-weekday-label" maxlength="60" placeholder="Monday – Saturday"
+                     value="{{ gcash_settings.schedule_weekday_label if gcash_settings else '' }}">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Row 1 — Hours</label>
+              <input class="form-input" id="sched-weekday-hours" maxlength="60" placeholder="6:00 AM – 10:00 PM"
+                     value="{{ gcash_settings.schedule_weekday_hours if gcash_settings else '' }}">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Row 2 — Days</label>
+              <input class="form-input" id="sched-weekend-label" maxlength="60" placeholder="Sunday"
+                     value="{{ gcash_settings.schedule_weekend_label if gcash_settings else '' }}">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Row 2 — Hours</label>
+              <input class="form-input" id="sched-weekend-hours" maxlength="60" placeholder="7:00 AM – 8:00 PM"
+                     value="{{ gcash_settings.schedule_weekend_hours if gcash_settings else '' }}">
+            </div>
+          </div>
+          <button class="btn btn-red" id="schedule-settings-submit-btn" style="width:100%;margin-top:8px;" onclick="submitScheduleSettings()">SAVE GYM SCHEDULE</button>
+        </div>
+      </div>
+
       <!-- Manage Content (admin/staff only) -->
       <div class="panel" style="margin-top:24px;">
         <div class="panel-header">
