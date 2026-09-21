@@ -1425,7 +1425,10 @@ select.form-input option:focus {
 ══════════════════════════════════ */
 /* Sits in its normal place at the top of the page content and scrolls
    away with everything else — not pinned to the screen. */
-.notif-bell-wrap { position: absolute; top: 32px; right: 32px; z-index: 10; }
+/* Bell + feedback star share one row pinned top-right. The bell wrapper is static so the
+   notification panel anchors to the row's right edge (keeps it on-screen on phones). */
+.top-actions { position: absolute; top: 32px; right: 32px; z-index: 10; display: flex; align-items: center; gap: 12px; }
+.notif-bell-wrap { position: static; }
 .notif-bell-btn {
   position: relative;
   width: 44px; height: 44px;
@@ -1481,7 +1484,8 @@ select.form-input option:focus {
 .notif-item:hover { background: rgba(255,255,255,0.03); }
 .notif-empty { padding: 26px 16px; text-align: center; font-size: 13px; color: var(--muted); }
 @media (max-width: 640px) {
-  .notif-bell-wrap { top: 16px; right: 16px; }
+  .top-actions { top: 16px; right: 16px; }
+  #member-overview .page-header { padding-right: 108px; } /* keep the title clear of bell + star */
   .notif-panel { width: min(320px, calc(100vw - 32px)); }
 }
 .toast {
@@ -2622,19 +2626,13 @@ body.home-page { overflow-x: hidden; }
   box-shadow: 0 0 14px rgba(255,171,64,0.22);
 }
 
-/* ── Floating "Rate & Feedback" launcher (member-dashboard.html) ─────
-   Lets a member open the same rating/feedback wizard used after plan
-   expiry on their own, at any time. Mirrors the AI chat launcher's
-   floating-button pattern (see tr-chat.css) but sits on the opposite
-   (left) side, in gold rather than red, so both stay reachable together
-   without being mistaken for one another. */
+/* ── "Rate & Feedback" button (member-dashboard.html) ─────────────────
+   Sits beside the notification bell at the top-right of the Overview tab.
+   Same 44px circle as the bell, in gold so the two are easy to tell apart.
+   Opens the same rating/feedback wizard used after plan expiry. */
 .fb-launcher {
-  position: fixed;
-  left: 24px;
-  bottom: 24px;
-  z-index: 900;
-  width: 56px;
-  height: 56px;
+  width: 44px;
+  height: 44px;
   border: 2px solid var(--gold);
   border-radius: 50%;
   background: var(--card);
@@ -2642,17 +2640,12 @@ body.home-page { overflow-x: hidden; }
   cursor: pointer;
   display: grid;
   place-items: center;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
   transition: transform 0.15s ease, box-shadow 0.2s ease, filter 0.2s ease;
 }
-.fb-launcher:hover  { transform: translateY(-2px) scale(1.05); filter: brightness(1.15); box-shadow: 0 10px 26px rgba(0,0,0,0.55), 0 0 16px rgba(255,171,64,0.25); }
+.fb-launcher:hover  { transform: translateY(-1px) scale(1.05); filter: brightness(1.15); box-shadow: 0 0 14px rgba(255,171,64,0.3); }
 .fb-launcher:active { transform: scale(0.96); }
 .fb-launcher:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
-.fb-launcher svg { width: 25px; height: 25px; display: block; }
-
-@media (max-width: 480px) {
-  .fb-launcher { width: 50px; height: 50px; left: 16px; bottom: 16px; }
-}
+.fb-launcher svg { width: 22px; height: 22px; display: block; }
 
 /* ── Personalized Fitness Plan — mini-dashboard tabs (Body Goals tab) ──
    Presentation only: turns the plan into a compact summary strip + tabbed

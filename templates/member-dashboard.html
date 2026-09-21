@@ -80,6 +80,7 @@
       <!-- ── Notification Bell — only shown on the Overview tab. Combines
            admin announcements and the Gym Bot's expiry reminders into a
            single place the member can check any time. ── -->
+      <div class="top-actions">
       <div class="notif-bell-wrap">
         <button class="notif-bell-btn" id="notif-bell-btn" onclick="toggleNotificationPanel()" aria-label="Notifications" aria-haspopup="true">
           🔔
@@ -92,6 +93,13 @@
           </div>
         </div>
       </div>
+
+      <!-- Rate & Feedback — sits beside the bell. Opens the same rating/feedback
+           wizard the server auto-prompts after a plan expires. -->
+      <button type="button" class="fb-launcher" id="fb-launcher" aria-label="Rate & give feedback" title="Rate & Feedback" onclick="openFeedbackOnDemand()">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.5l2.9 6.6 7.1.6-5.4 4.7 1.7 7-6.3-3.9-6.3 3.9 1.7-7-5.4-4.7 7.1-.6z"/></svg>
+      </button>
+      </div><!-- /top-actions -->
 
       <div class="page-header">
         <div><div class="page-title">MEMBER PORTAL</div><div class="page-subtitle">Welcome back — keep pushing!</div></div>
@@ -195,27 +203,36 @@
             </div>
             {% elif pending_payment %}
             <div class="gate-banner">
-              <span class="gate-banner-icon">✅</span>
+              <span class="gate-banner-icon">{% if pending_payment.needs_method %}✅{% else %}⏳{% endif %}</span>
               <div>
                 <div class="gate-banner-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                  {% if pending_payment.is_retry %}
+                  {% if pending_payment.needs_method and pending_payment.is_retry %}
                   {% if pending_payment.is_promo %}Your {{ pending_payment.plan_name }} promo is still approved — payment needs to be redone{% else %}Your {{ pending_payment.plan_name }} plan is still approved — payment needs to be redone{% endif %}
                   <span class="badge badge-gold">RE-SUBMIT PAYMENT</span>
+                  {% elif not pending_payment.needs_method %}
+                  {% if pending_payment.method == 'GCash' %}Payment submitted — waiting for admin verification{% else %}Approved — settle your payment at the front desk{% endif %}
+                  <span class="badge badge-gold">{% if pending_payment.method == 'GCash' %}AWAITING VERIFICATION{% else %}PAY AT FRONT DESK{% endif %}</span>
                   {% else %}
                   {% if pending_payment.is_promo %}Your {{ pending_payment.plan_name }} promo has been approved!{% else %}Your {{ pending_payment.plan_name }} plan has been approved!{% endif %}
                   <span class="badge badge-green">APPROVED</span>
                   {% endif %}
                 </div>
                 <div class="gate-banner-text">
-                  {% if pending_payment.is_retry %}
+                  {% if pending_payment.needs_method and pending_payment.is_retry %}
                   Your {{ pending_payment.declined_method or 'previous' }} payment was declined, but your {{ 'promo' if pending_payment.is_promo else 'plan' }} is still approved — you don't need to request it again.
                   ₱{{ pending_payment.amount }} · Just head to the Payment tab and submit your payment again.
+                  {% elif not pending_payment.needs_method %}
+                  {% if pending_payment.method == 'GCash' %}
+                  Your ₱{{ pending_payment.amount }} GCash payment has been submitted. Your dashboard unlocks fully once the admin verifies it.
+                  {% else %}
+                  Your ₱{{ pending_payment.amount }} cash payment is due at the front desk — your dashboard unlocks fully once staff confirms it.
+                  {% endif %}
                   {% else %}
                   ₱{{ pending_payment.amount }} · Head to the Payment tab to choose Cash or GCash and complete payment.
                   {% endif %}
                 </div>
               </div>
-              <button class="btn btn-red btn-sm" onclick="memberTab('payment', document.getElementById('nav-member-payment'))">GO TO PAYMENT</button>
+              <button class="btn btn-red btn-sm" onclick="memberTab('payment', document.getElementById('nav-member-payment'))">{% if pending_payment.needs_method %}GO TO PAYMENT{% else %}VIEW PAYMENT{% endif %}</button>
             </div>
             {% else %}
             {% if declined_plan %}
@@ -437,10 +454,10 @@
       <div class="panel" id="payment-submit-panel">
         <div class="panel-header">
           <div class="panel-title">Submit Payment</div>
-          {% if pending_payment.is_retry %}<span class="badge badge-red">PREVIOUS PAYMENT DECLINED</span>{% endif %}
+          {% if pending_payment.is_retry and pending_payment.needs_method %}<span class="badge badge-red">PREVIOUS PAYMENT DECLINED</span>{% endif %}
         </div>
         <div class="panel-body">
-          {% if pending_payment.is_retry %}
+          {% if pending_payment.is_retry and pending_payment.needs_method %}
           <div class="gate-banner" style="border-color:rgba(239,68,68,0.35);margin-bottom:16px;">
             <span class="gate-banner-icon">❌</span>
             <div>
@@ -1678,15 +1695,6 @@
     <div class="loading-overlay-text" id="loading-overlay-text">Please wait...</div>
   </div>
 </div>
-
-<!-- ── Floating "Rate & Feedback" launcher ──────────────────────────
-     Lets a member open the rating/feedback wizard above on their own,
-     any time — not just when the server auto-prompts them after their
-     plan expires. Sits on the opposite side from the AI chat launcher
-     (tr-chat.js) so both stay reachable together. -->
-<button type="button" class="fb-launcher" id="fb-launcher" aria-label="Rate & give feedback" title="Rate & Feedback" onclick="openFeedbackOnDemand()">
-  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.5l2.9 6.6 7.1.6-5.4 4.7 1.7 7-6.3-3.9-6.3 3.9 1.7-7-5.4-4.7 7.1-.6z"/></svg>
-</button>
 
 <script id="member-dashboard-data" type="application/json">{{ {'present_days': present_days, 'no_plan_days': no_plan_days, 'days_in_month': days_in_month, 'today_day': today_day, 'year': attendance_year, 'month': attendance_month, 'plan_approved_notice': plan_approved_notice, 'payment_verified_notice': payment_verified_notice, 'plan_declined_notice': plan_declined_notice, 'feedback_prompt': feedback_prompt, 'new_announcements': new_announcements, 'bot_reminders': bot_reminders, 'notification_center': notification_center, 'notification_unread_count': notification_unread_count}|tojson }}</script>
 <script src="{{ url_for('static', filename='js/tr-common.js') }}"></script>
