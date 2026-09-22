@@ -3914,6 +3914,10 @@ FITNESS_TARGET_AREA_MAP = {
     'CORE':      ['Core'],
 }
 
+# Existing profiles can contain the pre-body-part goal value. Treat it as a
+# full-body focus so those members continue to receive the weekly routine.
+FITNESS_LEGACY_GOAL_ALIASES = {'STRENGTH': 'FULL_BODY'}
+
 
 def _valid_fitness_height(height_cm):
     return FITNESS_HEIGHT_CM_MIN <= height_cm <= FITNESS_HEIGHT_CM_MAX
@@ -4241,6 +4245,7 @@ def _goal_tagged_exercises(goal):
     """All active Exercise rows matching the goal. If goal is a target body
     part, returns all active exercises so that the 7-day routine maintains
     balanced coverage across all scheduled training days."""
+    goal = FITNESS_LEGACY_GOAL_ALIASES.get(goal, goal)
     if goal in FITNESS_TARGET_AREA_MAP:
         return Exercise.query.filter_by(is_active=True).order_by(Exercise.id).all()
     return [
@@ -4253,6 +4258,7 @@ def _select_exercises_for_goal(goal):
     """Filters the Exercise catalog specifically for the chosen workout focus
     (e.g. Chest, Back, Arms, Legs, Core, Shoulders, or Full Body). Used by
     _recommend_workouts() and the AI coach summary."""
+    goal = FITNESS_LEGACY_GOAL_ALIASES.get(goal, goal)
     if goal in FITNESS_TARGET_AREA_MAP:
         target_areas = FITNESS_TARGET_AREA_MAP[goal]
         if goal == 'FULL_BODY':
@@ -10275,10 +10281,44 @@ def seed_default_fitness_catalog():
         return _re.sub(r'[^a-z0-9\-]', '', name.lower().replace(' ', '-').replace('/', '-'))
 
     media_url_updated = 0
-    for ex in Exercise.query.filter(Exercise.media_url.is_(None)).all():
+    exercise_media_dir = os.path.join(app.root_path, 'static', 'media', 'exercises')
+    supported_media_extensions = ('.mp4', '.gif', '.jpg', '.jpeg', '.png')
+    legacy_asset_names = {
+        'Reverse Fly': 'rear-delt-fly.mp4',
+        'Hanging Leg Raise': 'leg-raises.jpg',
+    }
+    for ex in Exercise.query.all():
         slug = _exercise_slug(ex.name)
-        ex.media_url = f'/static/media/exercises/{slug}.mp4'
-        media_url_updated += 1
+        current_url = (ex.media_url or '').strip()
+        current_rel_path = current_url.removeprefix('/static/').replace('/', os.sep)
+        current_exists = bool(current_rel_path and os.path.isfile(
+            os.path.join(app.root_path, 'static', current_rel_path)
+        ))
+
+        # Prefer an existing canonical slug file, regardless of whether it is
+        # a video or an image. This keeps legacy rows useful when the bundled
+        # asset was supplied as a GIF/JPG instead of the default MP4.
+        existing_asset = legacy_asset_names.get(ex.name)
+        if existing_asset and not os.path.isfile(os.path.join(exercise_media_dir, existing_asset)):
+            existing_asset = None
+        if existing_asset is None:
+            existing_asset = next(
+                (
+                    f'{slug}{extension}'
+                    for extension in supported_media_extensions
+                    if os.path.isfile(os.path.join(exercise_media_dir, f'{slug}{extension}'))
+                ),
+                None,
+            )
+        resolved_url = (
+            f'/static/media/exercises/{existing_asset}'
+            if existing_asset
+            else f'/static/media/exercises/{slug}.mp4'
+        )
+
+        if not current_exists and current_url != resolved_url:
+            ex.media_url = resolved_url
+            media_url_updated += 1
     if media_url_updated:
         db.session.commit()
         print(f"Migration: seeded media_url for {media_url_updated} exercise row(s)")
