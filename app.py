@@ -6764,8 +6764,6 @@ def member_fitness_save_profile():
             return jsonify(success=False, error='Please enter a valid birthday.'), 400
         if bday_date > date.today():
             return jsonify(success=False, error='Birthday cannot be in the future.'), 400
-        if _calculate_age(bday_date) < 14:
-            return jsonify(success=False, error='Body Goals is available for members aged 14 and older.'), 400
         user.birthday = bday_date
 
     # Keep the member's most recent progress row's current_weight in sync
