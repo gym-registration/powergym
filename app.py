@@ -35,7 +35,7 @@ try:
     import google.generativeai as genai
     GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
     if GEMINI_API_KEY:
-        genai.configure(api_key=GEMINI_API_KEY)
+        genai.configure(api_key=GEMINI_API_KEY) # type: ignore[reportPrivateImportUsage]
 except ImportError:
     genai = None
     GEMINI_API_KEY = None
@@ -7141,7 +7141,7 @@ def member_fitness_ai_coach():
         return jsonify(success=True, message=fallback_banner, cached=False)
 
     try:
-        genai.configure(api_key=api_key)
+        genai.configure(api_key=api_key) # type: ignore[reportPrivateImportUsage]
     except Exception as e:
         print(f"[ai-coach] Error configuring Gemini: {e}")
 
@@ -7152,7 +7152,7 @@ def member_fitness_ai_coach():
             model_name = os.environ.get('GEMINI_MODEL', 'gemini-3.5-flash-lite')
             if attempt == 2 and model_name != 'gemini-3.5-flash-lite':
                 model_name = 'gemini-3.5-flash-lite'
-            model = genai.GenerativeModel(model_name, system_instruction=system_instruction)
+            model = genai.GenerativeModel(model_name, system_instruction=system_instruction) # type: ignore[reportPrivateImportUsage]
             response = model.generate_content(user_content, generation_config=generation_config)
 
             candidate_text = None

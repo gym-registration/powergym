@@ -800,6 +800,36 @@ function togglePasswordVisibility(btn) {
   btn.setAttribute('aria-label', willShow ? 'Hide password' : 'Show password');
 }
 function doLogout() {
+  let modal = document.getElementById('confirm-signout-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'confirm-signout-modal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', 'confirm-signout-title');
+    modal.innerHTML = `
+      <div class="modal" style="max-width:400px;">
+        <button class="modal-close" type="button" aria-label="Close" onclick="cancelSignOut()">✕</button>
+        <div class="modal-title" id="confirm-signout-title" style="text-align:center;">SIGN OUT</div>
+        <div style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 20px;">
+          Are you sure you want to sign out?
+        </div>
+        <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+          <button class="btn btn-outline" type="button" style="width:100%;justify-content:center;" onclick="cancelSignOut()">NO</button>
+          <button class="btn btn-red" type="button" style="width:100%;justify-content:center;" onclick="confirmSignOut()">YES</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+  }
+  openModal('confirm-signout-modal');
+}
+
+function cancelSignOut() {
+  closeModal('confirm-signout-modal');
+}
+
+function confirmSignOut() {
   window.location.href = '/logout';
 }
 
