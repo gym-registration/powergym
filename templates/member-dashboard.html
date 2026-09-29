@@ -302,9 +302,9 @@
             <div class="proof-upload-box">
               <div class="form-group">
                 <label class="form-label">When do you want to start?</label>
-                <input class="form-input" type="date" id="member-renew-start" onchange="updateCoachAvailabilityNote()" oninput="validateStartDateField()">
+                <input class="form-input" type="date" id="member-renew-start" onchange="updateCoachAvailabilityNote()" oninput="validateStartDateField()" onblur="validateStartDateField()">
                 <div style="font-size:15px;color:#c7c7cf;margin-top:4px;">
-                  Membership can only start at least 1 month after your application date. Select your preferred start date.
+                  You can pick any start date from today up to 1 month from today. Select your preferred start date.
                 </div>
                 <div style="font-size:13px;color:var(--gold);margin-top:6px;line-height:1.4;">
                   ⓘ Choose carefully — once approved, you can only check in starting on this date, not before.
@@ -315,7 +315,7 @@
                   <span style="font-size:13px;color:#8d8d99;">(calculated automatically)</span>
                 </div>
                 <div id="member-renew-start-error" role="alert" style="display:none;font-size:13px;font-weight:600;color:#ff4d4d;margin-top:6px;line-height:1.4;">
-                  ⚠ Membership start date must be at least 1 month from today.
+                  ⚠ Membership start date must be between today and 1 month from today.
                 </div>
               </div>
               <div class="form-group" id="member-renew-student-group">

@@ -573,13 +573,19 @@ def _add_calendar_month(d, months=1):
     return date(year, month, day)
 
 
-MIN_START_MESSAGE = 'Membership start date must be at least 1 month from today.'
+MIN_START_MESSAGE = 'Start date cannot be in the past.'
+MAX_START_MESSAGE = 'Membership start date must be within 1 month from today.'
 
 
 def _min_membership_start_date(today=None):
-    """Earliest start date a member may request: one calendar month after the
-    day the request is submitted (Manila time). Reuses _add_calendar_month, so
-    month lengths, leap years and year changes are handled (Sep 29 -> Oct 29,
+    """Earliest start date a member may request: today (Manila time)."""
+    return today or _today_manila()
+
+
+def _max_membership_start_date(today=None):
+    """Latest start date a member may request: exactly one calendar month
+    after today (Manila time). Reuses _add_calendar_month, so month lengths,
+    leap years and year changes are handled (Sep 30 -> Oct 30,
     Dec 15 -> Jan 15 next year, Jan 31 -> Feb 28/29)."""
     return _add_calendar_month(today or _today_manila(), 1)
 
@@ -5212,10 +5218,10 @@ def member_submit_payment():
         requested_start = date.fromisoformat(start_date_raw)
     except ValueError:
         return jsonify(success=False, error='Invalid start date.'), 400
-    if requested_start < today:
-        return jsonify(success=False, error='Start date cannot be in the past.'), 400
     if requested_start < _min_membership_start_date(today):
         return jsonify(success=False, error=MIN_START_MESSAGE), 400
+    if requested_start > _max_membership_start_date(today):
+        return jsonify(success=False, error=MAX_START_MESSAGE), 400
 
     # The end date is always calculated here from the start date and the
     # plan's fixed duration (month plans = exactly 1 calendar month). The

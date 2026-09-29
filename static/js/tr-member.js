@@ -94,13 +94,12 @@ const MemberModule = (() => {
   };
 
   /* ── "When do you want to start?" date guard ──────────────
-     A membership can only start at least 1 calendar month after the day
-     the request is filled out. The minimum is calculated from today's date
-     (Philippines time) every time, so nothing is hard-coded; the native
-     picker disables every earlier date via input.min. The upper bound
-     (+2 years) still catches a stray extra digit in the year segment
-     ("20026" instead of "2026"). The server re-checks the same rule. */
-  const START_DATE_MIN_MESSAGE = 'Membership start date must be at least 1 month from today.';
+     A membership start date can be today or any day up to exactly 1
+     calendar month from today (e.g. Sep 30 -> Oct 30). Both bounds are
+     calculated from today's date (Philippines time) every time, so nothing
+     is hard-coded; the native picker disables every date outside the range
+     via input.min / input.max. The server re-checks the same rule. */
+  const START_DATE_MIN_MESSAGE = 'Membership start date must be between today and 1 month from today.';
 
   function _pad2(n) { return String(n).padStart(2, '0'); }
 
@@ -123,13 +122,14 @@ const MemberModule = (() => {
     return _fmtYMD(year, month, Math.min(d, lastDay));
   }
 
-  /** Earliest selectable start date: today + 1 calendar month. */
+  /** Earliest selectable start date: today. */
   function _startDateMinStr() {
-    return _addMonthsStr(_todayStr(), 1);
+    return _todayStr();
   }
 
+  /** Latest selectable start date: today + 1 calendar month. */
   function _startDateMaxStr() {
-    return _addMonthsStr(_todayStr(), 24);
+    return _addMonthsStr(_todayStr(), 1);
   }
 
   function _setupStartDateGuard() {
@@ -154,9 +154,18 @@ const MemberModule = (() => {
     const input = document.getElementById('member-renew-start');
     const errNote = document.getElementById('member-renew-start-error');
     if (!input) return;
-    input.min = _startDateMinStr();
-    input.max = _startDateMaxStr();
-    const failedCheck = !!input.value && !isStartDateValid();
+    // Only touch min/max when they actually changed (e.g. after midnight) so
+    // we don't disturb the browser's segment-by-segment typing.
+    const minStr = _startDateMinStr(), maxStr = _startDateMaxStr();
+    if (input.min !== minStr) input.min = minStr;
+    if (input.max !== maxStr) input.max = maxStr;
+    // While the year is still being typed, the browser reports 0002, 0020,
+    // 0202 before it reaches 2026. Don't flag those partial values as
+    // errors; the full check runs once the year has 4 digits, on blur, and
+    // at submit time.
+    const yearStillTyping = !!input.value && input.value < '1000-01-01' &&
+                            document.activeElement === input;
+    const failedCheck = !!input.value && !yearStillTyping && !isStartDateValid();
     if (errNote) errNote.style.display = failedCheck ? 'block' : 'none';
     input.style.borderColor = failedCheck ? '#ff4d4d' : '';
     updateMembershipEndDateDisplay();
