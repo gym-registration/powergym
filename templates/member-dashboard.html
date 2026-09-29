@@ -304,13 +304,18 @@
                 <label class="form-label">When do you want to start?</label>
                 <input class="form-input" type="date" id="member-renew-start" onchange="updateCoachAvailabilityNote()" oninput="validateStartDateField()">
                 <div style="font-size:15px;color:#c7c7cf;margin-top:4px;">
-                  Pick today to start right away, or a future date if you'd rather begin later.
+                  Membership can only start at least 1 month after your application date. Select your preferred start date.
                 </div>
                 <div style="font-size:13px;color:var(--gold);margin-top:6px;line-height:1.4;">
                   ⓘ Choose carefully — once approved, you can only check in starting on this date, not before.
                 </div>
+                <div id="member-term-box" style="display:none;font-size:15px;color:#c7c7cf;margin-top:8px;line-height:1.6;">
+                  Membership Duration: <strong id="member-term-duration" style="color:#fff;">1 Month</strong><br>
+                  Membership End Date: <strong id="member-term-end" style="color:#fff;">—</strong>
+                  <span style="font-size:13px;color:#8d8d99;">(calculated automatically)</span>
+                </div>
                 <div id="member-renew-start-error" role="alert" style="display:none;font-size:13px;font-weight:600;color:#ff4d4d;margin-top:6px;line-height:1.4;">
-                  ⚠ Please pick a valid date — today or a date within the next 2 years.
+                  ⚠ Membership start date must be at least 1 month from today.
                 </div>
               </div>
               <div class="form-group" id="member-renew-student-group">
@@ -854,7 +859,7 @@
               <div class="form-group">
                 <label class="form-label" for="fw-sex">Sex</label>
                 <select class="form-input" id="fw-sex" {{ 'disabled' if not plan_active }}>
-                  <option value="">Select</option>
+                  <option value="" hidden disabled {{ 'selected' if not (fitness_profile and fitness_profile.sex) }}>Select</option>
                   <option value="male"   {{ 'selected' if fitness_profile and fitness_profile.sex == 'male' }}>Male</option>
                   <option value="female" {{ 'selected' if fitness_profile and fitness_profile.sex == 'female' }}>Female</option>
                 </select>
@@ -862,7 +867,7 @@
               <div class="form-group">
                 <label class="form-label" for="fw-activity">Activity Level</label>
                 <select class="form-input" id="fw-activity" onchange="updateActivityHelperText()" {{ 'disabled' if not plan_active }}>
-                  <option value="">Select</option>
+                  <option value="" hidden disabled {{ 'selected' if not (fitness_profile and fitness_profile.activity_level) }}>Select</option>
                   <option value="low_activity"      {{ 'selected' if fitness_profile and fitness_profile.activity_level == 'low_activity' }}>Low Activity</option>
                   <option value="moderate_activity" {{ 'selected' if fitness_profile and fitness_profile.activity_level == 'moderate_activity' }}>Moderate Activity</option>
                   <option value="high_activity"     {{ 'selected' if fitness_profile and fitness_profile.activity_level == 'high_activity' }}>High Activity</option>

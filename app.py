@@ -573,6 +573,17 @@ def _add_calendar_month(d, months=1):
     return date(year, month, day)
 
 
+MIN_START_MESSAGE = 'Membership start date must be at least 1 month from today.'
+
+
+def _min_membership_start_date(today=None):
+    """Earliest start date a member may request: one calendar month after the
+    day the request is submitted (Manila time). Reuses _add_calendar_month, so
+    month lengths, leap years and year changes are handled (Sep 29 -> Oct 29,
+    Dec 15 -> Jan 15 next year, Jan 31 -> Feb 28/29)."""
+    return _add_calendar_month(today or _today_manila(), 1)
+
+
 def _is_promo_payment(p):
     """True if a Payment record represents a promo request rather than a
     regular membership plan request — see _payment_display_plan above."""
@@ -899,6 +910,26 @@ def _norm_audience(value):
 def _is_walkin_only(item):
     """True for a MembershipPlan / GymPromo that was added for the Walk In tab only."""
     return _norm_audience(getattr(item, 'audience', None)) == AUDIENCE_WALKIN
+
+
+def _norm_plan_name(name):
+    """Case/whitespace-insensitive plan-name key ('Daily ' == 'daily')."""
+    return ' '.join(str(name or '').split()).lower()
+
+
+def _builtin_walkin_plan(name):
+    """The ONE built-in walk-in plan ('Daily' / 'Boxing') — matched
+    case/whitespace-insensitively and deterministic: prefers the regular
+    (member-audience) row, then an active one, then the oldest. Used by the
+    staff Walk In tab and /staff/walkin so they always agree on which row
+    is 'the' Daily / Boxing plan."""
+    key = _norm_plan_name(name)
+    matches = [p for p in MembershipPlan.query.order_by(MembershipPlan.id).all()
+               if _norm_plan_name(p.name) == key]
+    if not matches:
+        return None
+    matches.sort(key=lambda p: (_is_walkin_only(p), not p.is_active, p.id))
+    return matches[0]
 
 
 def _member_selectable_plans():
@@ -2517,12 +2548,17 @@ def api_save_plan():
         plan = MembershipPlan.query.get(plan_id)
         if not plan:
             return jsonify(success=False, error='Plan not found.'), 404
-        dupe = MembershipPlan.query.filter(MembershipPlan.name == name, MembershipPlan.id != plan.id).first()
     else:
         plan = MembershipPlan()
-        dupe = MembershipPlan.query.filter_by(name=name).first()
 
+    # Case/whitespace-insensitive, so 'daily', 'Daily ' and 'Daily' are one plan.
+    norm_name = _norm_plan_name(name)
+    dupe = next((p for p in MembershipPlan.query.all()
+                 if _norm_plan_name(p.name) == norm_name and p.id != plan.id), None)
     if dupe:
+        if norm_name in MEMBER_HIDDEN_PLAN_NAMES:
+            return jsonify(success=False, error=f'"{dupe.name}" is already a built-in walk-in plan. '
+                                                'Edit it from Manage Content → Walk-In instead of adding another.'), 400
         return jsonify(success=False, error='A plan with that name already exists.'), 400
 
     # A plan members are already on can't be flipped to walk-in-only — it
@@ -4760,7 +4796,15 @@ def admin_delete_member(member_id):
     # happen before db.session.delete(user) below, since User.payments has
     # no delete cascade — flushing the detach here is what keeps these rows
     # out of that deletion entirely.
-    for payment in user.payments:
+    # In-progress requests (pending approval / approved-awaiting-payment) are
+    # NOT revenue yet, so they are removed with the member instead of being
+    # left behind as ghost rows in Pending Verifications (admin + staff).
+    # Verified payments (and rejected ones, kept as audit trail) are still
+    # detached and snapshotted so Analytics/Revenue history stays intact.
+    for payment in list(user.payments):
+        if payment.status in ('pending', 'approved'):
+            db.session.delete(payment)
+            continue
         if not payment.member_name_snapshot:
             payment.member_name_snapshot = user.full_name
         payment.member_id = None
@@ -5170,6 +5214,17 @@ def member_submit_payment():
         return jsonify(success=False, error='Invalid start date.'), 400
     if requested_start < today:
         return jsonify(success=False, error='Start date cannot be in the past.'), 400
+    if requested_start < _min_membership_start_date(today):
+        return jsonify(success=False, error=MIN_START_MESSAGE), 400
+
+    # The end date is always calculated here from the start date and the
+    # plan's fixed duration (month plans = exactly 1 calendar month). The
+    # form never sends one, so a client-supplied end date / duration is a
+    # tampering attempt — reject it instead of silently ignoring it.
+    if any((data.get(k) or '').strip()
+           for k in ('end_date', 'expiry_date', 'expiration_date', 'duration_days', 'duration')):
+        return jsonify(success=False,
+                       error='The membership end date is calculated automatically and cannot be changed.'), 400
 
     # ── Promo request: a member picking a promo card sends is_promo=1 +
     #    promo_id instead of a regular plan key. Promos don't carry a
@@ -5356,7 +5411,7 @@ def member_submit_payment():
 
     db.session.commit()
 
-    return jsonify(success=True, message=f'Plan requested to start {requested_start.strftime("%b %d, %Y")}. Please wait for staff approval before proceeding to payment.')
+    return jsonify(success=True, message=f'Plan requested: {requested_start.strftime("%b %d, %Y")} to {membership.expiry_date.strftime("%b %d, %Y")}. Please wait for staff approval before proceeding to payment.')
 
 
 @app.route('/member/cancel-plan-request', methods=['POST'])
@@ -6246,12 +6301,12 @@ def staff_walkin():
     if custom_item is not None:
         base_amount = float(custom_item.price)
     elif plan_type == 'Daily':
-        daily_plan = MembershipPlan.query.filter_by(name='Daily').first()
+        daily_plan = _builtin_walkin_plan('Daily')
         if daily_plan is None:
             return jsonify(success=False, error='No "Daily" plan is set up yet. Add one from Admin → Plans first.'), 400
         base_amount = float(daily_plan.price)
     else:  # Boxing — flat walk-in rate, editable via the "Boxing" MembershipPlan row
-        boxing_plan = MembershipPlan.query.filter_by(name='Boxing').first()
+        boxing_plan = _builtin_walkin_plan('Boxing')
         if boxing_plan is None:
             return jsonify(success=False, error='No "Boxing" plan is set up yet. Add one from Admin → Plans first.'), 400
         base_amount = float(boxing_plan.price)
@@ -8042,6 +8097,10 @@ def member():
         'price':          p.price,
         'student_price':  _student_price(p),
         'duration_days':  p.duration_days,
+        # Month plans run exactly 1 calendar month (see _plan_expiry); the
+        # form's live end-date preview reads this flag so it always matches
+        # what the server will store.
+        'is_calendar_month': _plan_is_calendar_month(p),
         'description':    p.description or '',
         'inclusions':     p.inclusions_list,
         'image_path':     url_for('static', filename=p.image_path) if p.image_path else '',
@@ -8401,7 +8460,8 @@ def staff():
     pending_requests_rows = (
         Payment.query
         .options(joinedload(Payment.member), joinedload(Payment.plan))
-        .filter(Payment.status.in_(['pending', 'approved']))
+        .filter(Payment.status.in_(['pending', 'approved']),
+                Payment.member_id.isnot(None))  # hide requests of deleted members
         .order_by(Payment.paid_at.desc())
         .all()
     )
@@ -8470,7 +8530,8 @@ def staff():
     coach_rows = (
         Payment.query
         .options(joinedload(Payment.member), joinedload(Payment.plan))
-        .filter(Payment.wants_coach.is_(True))
+        .filter(Payment.wants_coach.is_(True),
+                Payment.member_id.isnot(None))  # skip deleted members
         .order_by(Payment.paid_at.desc())
         .all()
     )
@@ -8496,8 +8557,8 @@ def staff():
     # ── Walk In tab: the Daily and Boxing plans' current price/description
     #    (both editable from Admin → Manage Content → Walk-In), plus the
     #    list of walk-ins recorded today (most recent first) ──
-    daily_plan = MembershipPlan.query.filter_by(name='Daily').first()
-    boxing_plan = MembershipPlan.query.filter_by(name='Boxing').first()
+    daily_plan = _builtin_walkin_plan('Daily')
+    boxing_plan = _builtin_walkin_plan('Boxing')
 
     # Plans added from Manage Content as "Walk-ins only" — they get their
     # own selectable cards after Daily and Boxing. Keyed "plan:<id>", which
@@ -8511,6 +8572,10 @@ def staff():
     for wp in (MembershipPlan.query
                .filter_by(is_active=True, audience=AUDIENCE_WALKIN)
                .order_by(MembershipPlan.sort_order, MembershipPlan.id).all()):
+        # Daily and Boxing already have their own built-in cards above —
+        # a walk-in-only row with the same name must never render a 2nd copy.
+        if _norm_plan_name(wp.name) in MEMBER_HIDDEN_PLAN_NAMES:
+            continue
         walkin_extra_items.append({
             'key': f'plan:{wp.id}', 'name': wp.name, 'price': float(wp.price),
             'price_text': _walkin_price_text(wp.price),
@@ -9401,7 +9466,8 @@ def admin():
     pending_payments_rows = (
         Payment.query
         .options(joinedload(Payment.member), joinedload(Payment.plan))
-        .filter(Payment.status.in_(['pending', 'approved']))
+        .filter(Payment.status.in_(['pending', 'approved']),
+                Payment.member_id.isnot(None))  # hide requests of deleted members
         .order_by(Payment.paid_at.desc())
         .all()
     )
@@ -9609,14 +9675,43 @@ def seed_default_plans():
             # (e.g. a price adjustment). Content fields (description/
             # inclusions/image) are left alone once set, so staff/admin
             # edits made from the dashboard aren't overwritten.
-            existing.duration_days = p['duration_days']
-            existing.price         = p['price']
+            # Daily / Boxing are editable from Manage Content → Walk-In, so
+            # their price/duration are NOT reset to the seed values on every
+            # restart (that silently undid admin/staff edits).
+            if _norm_plan_name(p['name']) not in MEMBER_HIDDEN_PLAN_NAMES:
+                existing.duration_days = p['duration_days']
+                existing.price         = p['price']
             if existing.description is None:
                 existing.description = p['description']
             if existing.inclusions is None:
                 existing.inclusions = p['inclusions']
             if not existing.sort_order:
                 existing.sort_order = p['sort_order']
+    db.session.commit()
+
+
+def _dedupe_walkin_builtin_plans():
+    """One-time-safe cleanup: keep exactly ONE Daily and ONE Boxing plan.
+    Extra rows with the same (case/whitespace-insensitive) name are deleted,
+    or just deactivated if a membership/payment still points at them. A
+    no-op once there is only one of each."""
+    plans = MembershipPlan.query.order_by(MembershipPlan.id).all()
+    for key in MEMBER_HIDDEN_PLAN_NAMES:
+        group = [p for p in plans if _norm_plan_name(p.name) == key]
+        if len(group) < 2:
+            continue
+        keeper = _builtin_walkin_plan(key)
+        for p in group:
+            if p.id == keeper.id:
+                continue
+            in_use = (Membership.query.filter_by(plan_id=p.id).first() is not None
+                      or Payment.query.filter_by(plan_id=p.id).first() is not None)
+            if in_use:
+                p.is_active = False
+                p.audience = AUDIENCE_WALKIN
+            else:
+                db.session.delete(p)
+            print(f"Cleanup: removed duplicate walk-in plan '{p.name}' (id {p.id})")
     db.session.commit()
 
 
@@ -10719,6 +10814,7 @@ def _run_startup_sequence():
     db.create_all()
     _run_startup_migrations()
     seed_default_plans()
+    _dedupe_walkin_builtin_plans()
     seed_default_promos()
     seed_default_coaches()
     seed_default_equipment()

@@ -94,25 +94,48 @@ const MemberModule = (() => {
   };
 
   /* ── "When do you want to start?" date guard ──────────────
-     Mirrors the birthday guard on registration: bounds the native date
-     picker so it can't offer, or silently accept, a bogus year (e.g. a
-     stray extra digit typed into the year segment — "20026" instead of
-     "2026"). Range is today .. +2 years: wide enough for any real future
-     start date, narrow enough to catch that kind of typo. */
+     A membership can only start at least 1 calendar month after the day
+     the request is filled out. The minimum is calculated from today's date
+     (Philippines time) every time, so nothing is hard-coded; the native
+     picker disables every earlier date via input.min. The upper bound
+     (+2 years) still catches a stray extra digit in the year segment
+     ("20026" instead of "2026"). The server re-checks the same rule. */
+  const START_DATE_MIN_MESSAGE = 'Membership start date must be at least 1 month from today.';
+
+  function _pad2(n) { return String(n).padStart(2, '0'); }
+
+  function _fmtYMD(y, m, d) { return `${y}-${_pad2(m)}-${_pad2(d)}`; }
+
+  /** Today as YYYY-MM-DD in Manila time (not UTC, which is a day behind
+   *  between midnight and 8 AM in the Philippines). */
   function _todayStr() {
-    return new Date().toISOString().split('T')[0];
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+  }
+
+  /** Adds whole calendar months, clamping to the last day of a shorter
+   *  month (Jan 31 + 1 month = Feb 28/29). Handles the year change. */
+  function _addMonthsStr(ymd, months) {
+    const [y, m, d] = ymd.split('-').map(Number);
+    const idx = (m - 1) + months;
+    const year = y + Math.floor(idx / 12);
+    const month = ((idx % 12) + 12) % 12 + 1;
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    return _fmtYMD(year, month, Math.min(d, lastDay));
+  }
+
+  /** Earliest selectable start date: today + 1 calendar month. */
+  function _startDateMinStr() {
+    return _addMonthsStr(_todayStr(), 1);
   }
 
   function _startDateMaxStr() {
-    const d = new Date();
-    d.setFullYear(d.getFullYear() + 2);
-    return d.toISOString().split('T')[0];
+    return _addMonthsStr(_todayStr(), 24);
   }
 
   function _setupStartDateGuard() {
     const input = document.getElementById('member-renew-start');
     if (!input) return;
-    input.min = _todayStr();
+    input.min = _startDateMinStr();
     input.max = _startDateMaxStr();
     validateStartDateField();
   }
@@ -120,7 +143,8 @@ const MemberModule = (() => {
   function isStartDateValid() {
     const input = document.getElementById('member-renew-start');
     if (!input || !input.value) return true; // emptiness is checked separately at submit time
-    return input.value >= _todayStr() && input.value <= _startDateMaxStr();
+    // Recompute at check time so a form left open past midnight can't slip through.
+    return input.value >= _startDateMinStr() && input.value <= _startDateMaxStr();
   }
 
   /** Renders the inline error note under the start-date field as the
@@ -130,9 +154,12 @@ const MemberModule = (() => {
     const input = document.getElementById('member-renew-start');
     const errNote = document.getElementById('member-renew-start-error');
     if (!input) return;
+    input.min = _startDateMinStr();
+    input.max = _startDateMaxStr();
     const failedCheck = !!input.value && !isStartDateValid();
     if (errNote) errNote.style.display = failedCheck ? 'block' : 'none';
     input.style.borderColor = failedCheck ? '#ff4d4d' : '';
+    updateMembershipEndDateDisplay();
   }
 
   /* ── Init ─────────────────────────────────────────────── */
@@ -384,19 +411,69 @@ const MemberModule = (() => {
     }
   }
 
-  /** Best-effort client-side preview of a plan's expiry date, mirroring
-   *  app.py's _plan_expiry(): Monthly plans add one real calendar month,
-   *  everything else adds duration_days flat. Purely cosmetic — the
-   *  server always computes the authoritative value on submit. */
+  /** Client-side preview of a plan's end date, mirroring app.py's
+   *  _plan_expiry(): month plans add exactly 1 calendar month (same day
+   *  next month, clamped — Jan 31 -> Feb 28/29), every other plan adds its
+   *  own duration_days. Display only — the server always calculates and
+   *  stores the authoritative value on submit. */
   function _previewExpiry(plan, startDate) {
-    const d = new Date(startDate + 'T00:00:00');
-    if (isNaN(d.getTime())) return '—';
-    if (plan && plan.name === 'Monthly') {
-      d.setMonth(d.getMonth() + 1);
-    } else {
-      d.setDate(d.getDate() + (plan ? plan.duration_days : 30));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate || '')) return '—';
+    const isMonth = plan && (plan.is_calendar_month ?? plan.name === 'Monthly');
+    if (isMonth) return _fmtLongDate(_addMonthsStr(startDate, 1));
+    return _fmtLongDate(_addDaysStr(startDate, plan ? plan.duration_days : 30));
+  }
+
+  function _fmtLongDate(ymd) {
+    return new Date(ymd + 'T00:00:00')
+      .toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+  }
+
+  function _addDaysStr(ymd, days) {
+    const [y, m, d] = ymd.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d + Number(days || 0)));
+    return _fmtYMD(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate());
+  }
+
+  function _formatDurationLabel(days) {
+    days = Number(days) || 0;
+    if (days === 365 || days === 366) return '1 Year';
+    return `${days} Day${days === 1 ? '' : 's'}`;
+  }
+
+  /** Duration label + end date for whatever is currently selected — same
+   *  rules as the server: month plans (and the default, before anything
+   *  is picked) = exactly 1 month; other plans/promos use their own length. */
+  function _computeTerm(startYmd) {
+    const promo = (_selectedPromoIndex != null) ? _promosList[_selectedPromoIndex] : null;
+    if (promo) {
+      if (promo.session_limit) {
+        return { label: `${promo.session_limit} coach-guided sessions`, endText: 'No expiration' };
+      }
+      const days = promo.duration_days || 30;
+      return { label: _formatDurationLabel(days), endText: _fmtLongDate(_addDaysStr(startYmd, days)) };
     }
-    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+    const plan = _selectedPlanKey ? _plansByKey[_selectedPlanKey] : null;
+    if (!plan || (plan.is_calendar_month ?? plan.name === 'Monthly')) {
+      return { label: '1 Month', endText: _fmtLongDate(_addMonthsStr(startYmd, 1)) };
+    }
+    return { label: _formatDurationLabel(plan.duration_days),
+             endText: _fmtLongDate(_addDaysStr(startYmd, plan.duration_days)) };
+  }
+
+  /** Shows the read-only "Membership Duration / End Date" lines under the
+   *  start-date field once a valid start date is picked. Text only — the
+   *  member cannot edit the end date from this form. */
+  function updateMembershipEndDateDisplay() {
+    const box = document.getElementById('member-term-box');
+    const input = document.getElementById('member-renew-start');
+    if (!box || !input) return;
+    if (!input.value || !isStartDateValid()) { box.style.display = 'none'; return; }
+    const term = _computeTerm(input.value);
+    const durEl = document.getElementById('member-term-duration');
+    const endEl = document.getElementById('member-term-end');
+    if (durEl) durEl.textContent = term.label;
+    if (endEl) endEl.textContent = term.endText;
+    box.style.display = 'block';
   }
 
   function _apiForm(url, formData) {
@@ -440,6 +517,7 @@ const MemberModule = (() => {
     _applyStudentFieldVisibility();
     _applyCoachFieldVisibility();
     _applySubmitButtonLabel();
+    updateMembershipEndDateDisplay();
   }
 
   /** Toggle-selects a promo card. Availing a promo hides the "Are you a
@@ -475,6 +553,7 @@ const MemberModule = (() => {
     _applyStudentFieldVisibility();
     _applyCoachFieldVisibility();
     _applySubmitButtonLabel();
+    updateMembershipEndDateDisplay();
   }
 
   /** Swaps the submit button's label — and color — between the plan look
@@ -799,7 +878,7 @@ const MemberModule = (() => {
       return;
     }
     if (!isStartDateValid()) {
-      showToast('Please pick a valid start date — today or within the next 2 years.', 'error');
+      showToast(START_DATE_MIN_MESSAGE, 'error');
       validateStartDateField();
       return;
     }
@@ -877,7 +956,7 @@ const MemberModule = (() => {
       return;
     }
     if (!isStartDateValid()) {
-      showToast('Please pick a valid start date — today or within the next 2 years.', 'error');
+      showToast(START_DATE_MIN_MESSAGE, 'error');
       validateStartDateField();
       return;
     }
@@ -3520,6 +3599,7 @@ const MemberModule = (() => {
     init, tab, selectPlan, selectPromo, openPlanModal, openPromoModal, selectPlanFromModal,
     toggleStudentIdField, previewStudentId, removeStudentId, submitRenewalPayment, updateCoachAvailabilityNote,
     validateStartDateField,
+    updateMembershipEndDateDisplay,
     cancelPlanRequest, confirmPlanRequest, closePlanSuccessModal,
     closePlanApprovedModal, goToPaymentFromApproval, closePaymentApprovedModal,
     closePlanDeclinedModal, withdrawPlanRequest, cancelWithdrawRequest, confirmWithdrawRequest,
@@ -3567,6 +3647,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.toggleStudentIdField    = (el) => MemberModule.toggleStudentIdField(el);
   window.updateCoachAvailabilityNote = () => MemberModule.updateCoachAvailabilityNote();
   window.validateStartDateField      = () => MemberModule.validateStartDateField();
+  window.updateMembershipEndDateDisplay = () => MemberModule.updateMembershipEndDateDisplay();
   window.previewStudentId        = (input, side) => MemberModule.previewStudentId(input, side);
   window.removeStudentId         = (side) => MemberModule.removeStudentId(side);
   window.submitRenewalPayment    = () => MemberModule.submitRenewalPayment();
