@@ -776,8 +776,8 @@
               </div>
               <div class="form-group">
                 <label class="form-label">M.I.</label>
-                <input class="form-input" id="pi-mi" maxlength="5" value="{{ current_user.middle_initial if current_user else '' }}"
-                       oninput="this.value=this.value.replace(/[^A-Za-z]/g,'')">
+                <input class="form-input" id="pi-mi" maxlength="1" value="{{ current_user.middle_initial if current_user else '' }}"
+                       oninput="this.value=this.value.replace(/[^A-Za-z]/g,'').toUpperCase()">
               </div>
               <div class="form-group">
                 <label class="form-label">Last Name</label>
@@ -1380,7 +1380,7 @@
     <div class="modal-title">ADD NEW MEMBER</div>
     <div class="form-row-4">
       <div class="form-group"><label class="form-label">First Name</label><input id="add-member-fname" class="form-input" placeholder="Juan"></div>
-      <div class="form-group"><label class="form-label">Middle Initial</label><input id="add-member-mi" class="form-input" placeholder="D" maxlength="5"></div>
+      <div class="form-group"><label class="form-label">Middle Initial</label><input id="add-member-mi" class="form-input" placeholder="D" maxlength="1" oninput="this.value=this.value.replace(/[^A-Za-z]/g,'').toUpperCase()"></div>
       <div class="form-group"><label class="form-label">Last Name</label> <input id="add-member-lname" class="form-input" placeholder="Dela Cruz"></div>
       <div class="form-group"><label class="form-label">Extension Name</label><input id="add-member-ext" class="form-input" placeholder="Jr., Sr., III (optional)" maxlength="10"></div>
     </div>
@@ -1405,7 +1405,7 @@
     <div class="modal-title">EDIT MEMBER</div>
     <div class="form-row-4">
       <div class="form-group"><label class="form-label">First Name</label><input id="edit-member-fname" class="form-input"></div>
-      <div class="form-group"><label class="form-label">Middle Initial</label><input id="edit-member-mi" class="form-input" placeholder="D" maxlength="5"></div>
+      <div class="form-group"><label class="form-label">Middle Initial</label><input id="edit-member-mi" class="form-input" placeholder="D" maxlength="1" oninput="this.value=this.value.replace(/[^A-Za-z]/g,'').toUpperCase()"></div>
       <div class="form-group"><label class="form-label">Last Name</label><input id="edit-member-lname" class="form-input"></div>
       <div class="form-group"><label class="form-label">Extension Name</label><input id="edit-member-ext" class="form-input" placeholder="Jr., Sr., III (optional)" maxlength="10"></div>
     </div>

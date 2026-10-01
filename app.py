@@ -3189,20 +3189,8 @@ def api_detect_role():
 
 # ── Forgot / Reset Password (OTP-based) ──────────────────────
 OTP_LENGTH           = 6
-OTP_VALID_MINUTES    = 3
+OTP_VALID_MINUTES    = 10
 OTP_MAX_ATTEMPTS     = 3
-
-
-def _otp_resend_wait(user, now):
-    """Seconds until the current OTP expires (0 = no active code, resend allowed).
-    A new code can only be requested once the previous one has expired."""
-    if not user or not user.reset_otp or not user.reset_otp_expires:
-        return 0
-    secs = (user.reset_otp_expires - now).total_seconds()
-    # A leftover code saved under an older, longer expiry setting is treated as expired.
-    if secs > OTP_VALID_MINUTES * 60 + 5:
-        return 0
-    return int(secs) + 1 if secs > 0 else 0
 OTP_LOCKOUT_MINUTES  = 30
 
 
@@ -3662,12 +3650,6 @@ def forgot_password():
                 flash(f'Too many incorrect attempts. Please wait {remaining} more minute(s) before requesting a new code.', 'error')
                 return render_template('forgot-password.html')
 
-            # Current code is still valid -> no new code until it expires.
-            if _otp_resend_wait(user, now) > 0:
-                session['otp_email'] = email
-                flash('cooldown', 'cooldown')  # live countdown shown in verify-otp.html
-                return redirect(url_for('verify_otp'))
-
             otp = _generate_otp()
             user.reset_otp              = generate_password_hash(otp)
             user.reset_otp_expires      = now + timedelta(minutes=OTP_VALID_MINUTES)
@@ -3705,8 +3687,9 @@ def forgot_password():
 
             return redirect(url_for('verify_otp'))
         else:
-            # Tell the user plainly that no account uses this email.
-            flash('That email does not exist. Please check the address and try again.', 'error')
+            # Same message whether or not the email exists, so we don't leak
+            # which addresses are registered.
+            flash('If an account with that email exists, a verification code has been sent.', 'success')
 
         return render_template('forgot-password.html')
 
@@ -3736,7 +3719,7 @@ def verify_otp():
     if request.method == 'POST':
         code = (request.form.get('otp') or '').strip()
 
-        if _otp_resend_wait(user, now) <= 0:
+        if not user.reset_otp or not user.reset_otp_expires or user.reset_otp_expires <= now:
             flash('Your verification code has expired. Please request a new one.', 'error')
             session.pop('otp_email', None)
             return redirect(url_for('forgot_password'))
@@ -3768,11 +3751,9 @@ def verify_otp():
         db.session.commit()
         remaining_attempts = OTP_MAX_ATTEMPTS - user.reset_otp_attempts
         flash(f'Incorrect code. {remaining_attempts} attempt(s) remaining.', 'error')
-        return render_template('verify-otp.html', email=email,
-                               resend_in=_otp_resend_wait(user, _now()))
+        return render_template('verify-otp.html', email=email)
 
-    return render_template('verify-otp.html', email=email,
-                               resend_in=_otp_resend_wait(user, _now()))
+    return render_template('verify-otp.html', email=email)
 
 
 @app.route('/reset-password/<token>', methods=['GET', 'POST'])
@@ -3834,8 +3815,8 @@ def register():
     if not _valid_name(first_name, require_capital=True, lowercase_rest=True) or not _valid_name(last_name, require_capital=True, lowercase_rest=True):
         return jsonify(success=False, error='First and last name must start with a capital letter, with the rest in lowercase.'), 400
 
-    if not _valid_name(middle_initial, extra_chars='', require_capital=True):
-        return jsonify(success=False, error='Middle initial can only contain letters and must start with a capital letter.'), 400
+    if not _valid_middle_initial(middle_initial):
+        return jsonify(success=False, error=MIDDLE_INITIAL_ERROR), 400
 
     if not _valid_name(extension_name, extra_chars=' .'):
         return jsonify(success=False, error='Extension name can only contain letters.'), 400
@@ -3916,6 +3897,17 @@ def _valid_name(name, extra_chars=" '-", require_capital=False, lowercase_rest=F
             if any(ch.isalpha() and ch.isupper() for ch in word[1:]):
                 return False
     return True
+
+
+MIDDLE_INITIAL_ERROR = 'Middle initial must be a single capital letter (1 letter only).'
+
+
+def _valid_middle_initial(mi):
+    """A middle initial is optional, but when given it must be exactly ONE
+    letter (A-Z, capital) — no digits, spaces, symbols, or longer text."""
+    if not mi:
+        return True
+    return len(mi) == 1 and mi.isalpha() and mi.isupper()
 
 
 # ── Fitness Goal & Recommendation feature — Step 1/2 validation ──
@@ -4639,6 +4631,9 @@ def admin_add_member():
     if not first_name or not last_name or not email:
         return jsonify(success=False, error='Please fill in first name, last name, and email.'), 400
 
+    if not _valid_middle_initial(middle_initial):
+        return jsonify(success=False, error=MIDDLE_INITIAL_ERROR), 400
+
     if not _valid_phone(phone):
         return jsonify(success=False, error='Phone number must start with 09 and be exactly 11 digits.'), 400
 
@@ -4719,6 +4714,9 @@ def admin_edit_member(member_id):
 
     if not first_name or not last_name or not email:
         return jsonify(success=False, error='First name, last name, and email are required.'), 400
+
+    if not _valid_middle_initial(middle_initial):
+        return jsonify(success=False, error=MIDDLE_INITIAL_ERROR), 400
 
     if not _valid_phone(phone):
         return jsonify(success=False, error='Phone number must start with 09 and be exactly 11 digits.'), 400
@@ -6307,6 +6305,8 @@ def staff_walkin():
         return jsonify(success=False, error='First and last name are required.'), 400
     if not _valid_name(first_name) or not _valid_name(last_name):
         return jsonify(success=False, error='Names can only contain letters, spaces, apostrophes, and hyphens.'), 400
+    if not _valid_middle_initial(middle_initial):
+        return jsonify(success=False, error=MIDDLE_INITIAL_ERROR), 400
     if phone and not _valid_phone(phone):
         return jsonify(success=False, error='Phone number must start with 09 and be 11 digits.'), 400
 
@@ -6409,8 +6409,8 @@ def update_profile():
         return jsonify(success=False, error='First name, last name, and email are required.'), 400
     if not _valid_name(first_name, require_capital=True, lowercase_rest=True) or not _valid_name(last_name, require_capital=True, lowercase_rest=True):
         return jsonify(success=False, error='Names must start with a capital letter, with the rest in lowercase.'), 400
-    if middle_initial and not _valid_name(middle_initial, extra_chars='', require_capital=True):
-        return jsonify(success=False, error='Middle initial can only contain letters and must start with a capital letter.'), 400
+    if not _valid_middle_initial(middle_initial):
+        return jsonify(success=False, error=MIDDLE_INITIAL_ERROR), 400
     if extension_name and not _valid_name(extension_name, extra_chars='. '):
         return jsonify(success=False, error='Extension name can only contain letters.'), 400
     if phone and not _valid_phone(phone):

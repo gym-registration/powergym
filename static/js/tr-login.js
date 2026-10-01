@@ -782,6 +782,7 @@ function completeRegistration() {
       showToast(data.message || 'Account created! Sign in to continue.', 'success');
       _regProfilePictureBlob = null;
       _regProfilePictureName = null;
+      if (window.TrRegDraft) window.TrRegDraft.clear();
       const loginEmail = document.getElementById('login-email');
       if (loginEmail) loginEmail.value = email;
       goTo('login');
@@ -962,3 +963,134 @@ document.addEventListener('DOMContentLoaded', () => {
   // selectPlan is re-assigned per page (login/member) where relevant; keep a fallback
   if (!window.selectPlan) window.selectPlan = selectPlan;
 });
+
+
+/* ════════════════════════════════════════════════
+   7. REGISTRATION REFRESH-PERSISTENCE
+   Refreshing used to throw the member back to the Member Login screen
+   and wipe everything typed into "Personal Information". This keeps, for
+   the current browser tab only (sessionStorage — gone when the tab is
+   closed): which screen is open, the typed fields, and the cropped
+   profile picture. Passwords and the Terms & Policy checkbox are
+   deliberately NEVER stored — the member re-enters passwords and
+   re-reads the terms (the read-timer gate) after a refresh.
+════════════════════════════════════════════════ */
+(function () {
+  const KEY    = 'tr_reg_draft_v1';
+  const FIELDS = ['reg-fname', 'reg-mi', 'reg-lname', 'reg-ext', 'reg-email', 'reg-phone', 'reg-bday'];
+
+  function _read() {
+    try { return JSON.parse(sessionStorage.getItem(KEY) || 'null') || {}; }
+    catch (e) { return {}; }
+  }
+  function _write(patch) {
+    try { sessionStorage.setItem(KEY, JSON.stringify(Object.assign(_read(), patch))); }
+    catch (e) { /* storage full/unavailable — skip silently */ }
+  }
+  function _clear() {
+    try { sessionStorage.removeItem(KEY); } catch (e) { /* ignore */ }
+  }
+  window.TrRegDraft = { clear: _clear };
+
+  function _activeScreen() {
+    const el = document.querySelector('.screen.active');
+    return el && el.id ? el.id.replace(/^screen-/, '') : null;
+  }
+
+  function _snapshotFields() {
+    const vals = {};
+    FIELDS.forEach(id => { const el = document.getElementById(id); vals[id] = el ? el.value : ''; });
+    return vals;
+  }
+
+  function _showScreen(name) {
+    if (typeof window.showAuthScreen === 'function') window.showAuthScreen(name);   // landing page overlay
+    else if (typeof Navigation !== 'undefined') Navigation.goToScreen(name);         // trmem.html
+  }
+
+  /* ── profile picture <-> data URL ── */
+  function _blobToDataUrl(blob, cb) {
+    const r = new FileReader();
+    r.onload = () => cb(r.result);
+    r.onerror = () => cb(null);
+    r.readAsDataURL(blob);
+  }
+  function _dataUrlToBlob(url) {
+    const [head, b64] = url.split(',');
+    const mime = (head.match(/data:(.*?);base64/) || [])[1] || 'image/jpeg';
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+  }
+
+  let _restoringPicture = false;
+
+  function _restorePicture(pfp) {
+    try {
+      if (!pfp || !pfp.data) return;
+      const blob = _dataUrlToBlob(pfp.data);
+      _regProfilePictureBlob = blob;
+      _regProfilePictureName = pfp.name || 'profile.jpg';
+      const preview  = document.getElementById('pfp-upload-preview');
+      const icon     = document.getElementById('pfp-upload-icon');
+      const circle   = document.getElementById('pfp-upload-circle');
+      const filename = document.getElementById('pfp-upload-filename');
+      _restoringPicture = true;
+      if (preview) { preview.src = URL.createObjectURL(blob); preview.style.display = 'block'; }
+      if (icon) icon.style.display = 'none';
+      if (circle) circle.classList.add('has-image');
+      if (filename) filename.textContent = pfp.filename || '';
+      setTimeout(() => { _restoringPicture = false; }, 0);
+    } catch (e) { /* bad data — ignore, member just re-uploads */ }
+  }
+
+  function _restore() {
+    const d = _read();
+    if (d.screen !== 'register' || !document.getElementById('screen-register')) return;
+
+    _showScreen('register');
+    const vals = d.fields || {};
+    FIELDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (el && typeof vals[id] === 'string') el.value = vals[id];
+    });
+    const bday = document.getElementById('reg-bday');
+    if (bday) bday.dispatchEvent(new Event('input', { bubbles: true })); // re-run birthday note
+    _restorePicture(d.pfp);
+  }
+
+  function _track() {
+    // typed fields
+    FIELDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      ['input', 'change'].forEach(evt => el.addEventListener(evt, () => _write({ fields: _snapshotFields() })));
+    });
+
+    // which screen is showing (covers goTo, Create account, Back to Login, close, etc.)
+    const obs = new MutationObserver(() => _write({ screen: _activeScreen() }));
+    document.querySelectorAll('.screen').forEach(el => obs.observe(el, { attributes: true, attributeFilter: ['class'] }));
+
+    // profile picture: the cropper sets the preview <img> src when confirmed
+    const preview = document.getElementById('pfp-upload-preview');
+    if (preview) {
+      new MutationObserver(() => {
+        if (_restoringPicture || typeof _regProfilePictureBlob === 'undefined' || !_regProfilePictureBlob) return;
+        const fn = document.getElementById('pfp-upload-filename');
+        _blobToDataUrl(_regProfilePictureBlob, url => {
+          if (url) _write({ pfp: { data: url, name: _regProfilePictureName, filename: fn ? fn.textContent : '' } });
+        });
+      }).observe(preview, { attributes: true, attributeFilter: ['src'] });
+    }
+  }
+
+  // 'load' fires after every DOMContentLoaded handler and inline script on
+  // the page (incl. the landing page's "blank the birthday field" guard),
+  // so the restore below is the last word and nothing overwrites it.
+  window.addEventListener('load', () => {
+    if (!document.getElementById('screen-register')) return;
+    _restore();
+    _track();
+  });
+})();

@@ -652,6 +652,52 @@ const FormChangeTracker = (() => {
     PROFILE_FIELD_IDS.forEach(id => { profileBaseline[id] = _fieldValue(id); });
   }
 
+  /* ── Unsaved-draft persistence ─────────────────────────────────────
+     A refresh used to wipe whatever the user had typed into Personal
+     Information but not yet saved, because the form is re-rendered from
+     the database. The in-progress values are now kept in sessionStorage
+     (this tab only, gone when the tab closes) and put back after a
+     reload. A draft is only restored if the saved profile it was started
+     from is unchanged, so it can never overwrite newer saved data or leak
+     into a different account. */
+  const DRAFT_KEY = 'tr_profile_draft_v1';
+
+  function _snapshot() {
+    const vals = {};
+    PROFILE_FIELD_IDS.forEach(id => { vals[id] = _fieldValue(id); });
+    return vals;
+  }
+
+  function _saveDraft() {
+    try {
+      if (_profileHasChanges()) {
+        sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ base: profileBaseline, values: _snapshot() }));
+      } else {
+        sessionStorage.removeItem(DRAFT_KEY);
+      }
+    } catch (e) { /* storage unavailable (private mode, quota) — just skip */ }
+  }
+
+  function _clearDraft() {
+    try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) { /* ignore */ }
+  }
+
+  /** Returns true if an unsaved draft was put back into the form. */
+  function _restoreDraft() {
+    try {
+      const raw = sessionStorage.getItem(DRAFT_KEY);
+      if (!raw) return false;
+      const draft = JSON.parse(raw);
+      const sameBase = draft && draft.base && PROFILE_FIELD_IDS.every(id => draft.base[id] === profileBaseline[id]);
+      if (!sameBase) { _clearDraft(); return false; }
+      PROFILE_FIELD_IDS.forEach(id => {
+        const el = document.getElementById(id);
+        if (el && typeof draft.values[id] === 'string') el.value = draft.values[id];
+      });
+      return true;
+    } catch (e) { return false; }
+  }
+
   function _profileHasChanges() {
     return PROFILE_FIELD_IDS.some(id => _fieldValue(id) !== profileBaseline[id]);
   }
@@ -672,6 +718,7 @@ const FormChangeTracker = (() => {
   /** Re-capture the profile baseline (call after a successful save) and hide the button. */
   function resetProfileBaseline() {
     _captureProfileBaseline();
+    _clearDraft();
     _updateProfileButton();
   }
 
@@ -694,12 +741,33 @@ const FormChangeTracker = (() => {
   /** Wire up listeners for whichever of the two forms exist on this page. */
   function init() {
     if (document.getElementById('pi-save-btn') && PROFILE_FIELD_IDS.some(id => document.getElementById(id))) {
-      _captureProfileBaseline();
+      // Baseline = the saved values the server rendered into the HTML
+      // (defaultValue), so a browser-restored value can't masquerade as "saved".
+      profileBaseline = {};
+      PROFILE_FIELD_IDS.forEach(id => {
+        const el = document.getElementById(id);
+        profileBaseline[id] = el ? el.defaultValue : '';
+      });
+
+      const restored = _restoreDraft();
       _updateProfileButton();
       PROFILE_FIELD_IDS.forEach(id => {
         const el = document.getElementById(id);
-        if (el) el.addEventListener('input', _updateProfileButton);
+        if (!el) return;
+        el.addEventListener('input', _updateProfileButton);
+        el.addEventListener('input', _saveDraft);
+        el.addEventListener('change', _saveDraft);
       });
+
+      // Member dashboard: if the page was refreshed mid-edit, reopen on the
+      // Settings tab so the restored form is what they see.
+      if (restored && document.getElementById('nav-member-settings')) {
+        setTimeout(() => {
+          if (typeof window.memberTab === 'function') {
+            window.memberTab('settings', document.getElementById('nav-member-settings'));
+          }
+        }, 0);
+      }
     }
 
     if (document.getElementById('cp-submit-btn')) {
