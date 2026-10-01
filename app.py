@@ -3189,8 +3189,20 @@ def api_detect_role():
 
 # ── Forgot / Reset Password (OTP-based) ──────────────────────
 OTP_LENGTH           = 6
-OTP_VALID_MINUTES    = 10
+OTP_VALID_MINUTES    = 3
 OTP_MAX_ATTEMPTS     = 3
+
+
+def _otp_resend_wait(user, now):
+    """Seconds until the current OTP expires (0 = no active code, resend allowed).
+    A new code can only be requested once the previous one has expired."""
+    if not user or not user.reset_otp or not user.reset_otp_expires:
+        return 0
+    secs = (user.reset_otp_expires - now).total_seconds()
+    # A leftover code saved under an older, longer expiry setting is treated as expired.
+    if secs > OTP_VALID_MINUTES * 60 + 5:
+        return 0
+    return int(secs) + 1 if secs > 0 else 0
 OTP_LOCKOUT_MINUTES  = 30
 
 
@@ -3650,6 +3662,12 @@ def forgot_password():
                 flash(f'Too many incorrect attempts. Please wait {remaining} more minute(s) before requesting a new code.', 'error')
                 return render_template('forgot-password.html')
 
+            # Current code is still valid -> no new code until it expires.
+            if _otp_resend_wait(user, now) > 0:
+                session['otp_email'] = email
+                flash('cooldown', 'cooldown')  # live countdown shown in verify-otp.html
+                return redirect(url_for('verify_otp'))
+
             otp = _generate_otp()
             user.reset_otp              = generate_password_hash(otp)
             user.reset_otp_expires      = now + timedelta(minutes=OTP_VALID_MINUTES)
@@ -3687,9 +3705,8 @@ def forgot_password():
 
             return redirect(url_for('verify_otp'))
         else:
-            # Same message whether or not the email exists, so we don't leak
-            # which addresses are registered.
-            flash('If an account with that email exists, a verification code has been sent.', 'success')
+            # Tell the user plainly that no account uses this email.
+            flash('That email does not exist. Please check the address and try again.', 'error')
 
         return render_template('forgot-password.html')
 
@@ -3719,7 +3736,7 @@ def verify_otp():
     if request.method == 'POST':
         code = (request.form.get('otp') or '').strip()
 
-        if not user.reset_otp or not user.reset_otp_expires or user.reset_otp_expires <= now:
+        if _otp_resend_wait(user, now) <= 0:
             flash('Your verification code has expired. Please request a new one.', 'error')
             session.pop('otp_email', None)
             return redirect(url_for('forgot_password'))
@@ -3751,9 +3768,11 @@ def verify_otp():
         db.session.commit()
         remaining_attempts = OTP_MAX_ATTEMPTS - user.reset_otp_attempts
         flash(f'Incorrect code. {remaining_attempts} attempt(s) remaining.', 'error')
-        return render_template('verify-otp.html', email=email)
+        return render_template('verify-otp.html', email=email,
+                               resend_in=_otp_resend_wait(user, _now()))
 
-    return render_template('verify-otp.html', email=email)
+    return render_template('verify-otp.html', email=email,
+                               resend_in=_otp_resend_wait(user, _now()))
 
 
 @app.route('/reset-password/<token>', methods=['GET', 'POST'])

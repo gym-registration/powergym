@@ -26,7 +26,7 @@
 
     <div style="font-size:15px;color:var(--muted);text-align:center;margin-bottom:20px;line-height:1.6;">
       We sent a 6-digit verification code to <strong style="color:var(--white);">{{ email }}</strong>.
-      Enter it below to continue — the code expires in 10 minutes and
+      Enter it below to continue — the code expires in 3 minutes and
       may be entered up to 3 times.
     </div>
 
@@ -34,7 +34,13 @@
     {% if messages %}
     <div class="flash-messages">
       {% for category, message in messages %}
+      {% if category == 'cooldown' %}
+      <div class="flash error" id="cooldown-note" style="word-break:break-word;{% if not resend_in or resend_in <= 0 %}display:none;{% endif %}">
+        Your code is still valid. You can request a new one in <strong id="cooldown-count"></strong>.
+      </div>
+      {% else %}
       <div class="flash {{ category }}" style="word-break:break-word;">{{ message }}</div>
+      {% endif %}
       {% endfor %}
     </div>
     {% endif %}
@@ -55,7 +61,11 @@
 
     <div style="margin-top:18px;text-align:center;font-size:15px;color:var(--muted);">
       Didn't get the code?
-      <a href="{{ url_for('forgot_password') }}" class="link-btn">Resend / try another email</a>
+      <a href="{{ url_for('forgot_password') }}" class="link-btn" id="resend-link"
+         {% if resend_in and resend_in > 0 %}style="display:none;"{% endif %}>Resend / try another email</a>
+      <span id="resend-wait" {% if not resend_in or resend_in <= 0 %}style="display:none;"{% endif %}>
+        Resend available in <strong id="resend-count"></strong>
+      </span>
     </div>
     <div style="margin-top:8px;text-align:center;font-size:15px;color:var(--muted);">
       <a href="{{ url_for('login') }}" class="link-btn">← Back to Sign In</a>
@@ -64,6 +74,37 @@
   </div>
 </div>
 
+<script>
+(function () {
+  var left = {{ resend_in or 0 }};
+  if (left <= 0) return;
+  var link = document.getElementById('resend-link');
+  var wait = document.getElementById('resend-wait');
+  var count = document.getElementById('resend-count');
+  var note = document.getElementById('cooldown-note');
+  var noteCount = document.getElementById('cooldown-count');
+  function fmt(n) {
+    var m = Math.floor(n / 60), s = n % 60;
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+  function render() {
+    count.textContent = fmt(left);
+    if (noteCount) noteCount.textContent = fmt(left);
+  }
+  render();
+  var t = setInterval(function () {
+    left -= 1;
+    if (left <= 0) {
+      clearInterval(t);
+      wait.style.display = 'none';
+      link.style.display = '';
+      if (note) note.style.display = 'none';
+    } else {
+      render();
+    }
+  }, 1000);
+})();
+</script>
 <script src="{{ url_for('static', filename='js/tr-common.js') }}"></script>
 </body>
 </html>
