@@ -182,9 +182,10 @@ function _termsUpdateCloseButton() {
 }
 
 function _termsFormatTime(s) {
+  // Under a minute: "30s". A minute or more: m:ss — e.g. 90 seconds → "1:30".
   if (s >= 60) {
     const m = Math.floor(s / 60), r = s % 60;
-    return r ? `${m}m ${r}s` : `${m}m`;
+    return `${m}:${String(r).padStart(2, '0')}`;
   }
   return `${s}s`;
 }
@@ -281,7 +282,8 @@ function openTermsModal() {
 
   if (termsSecondsLeft === null) {
     const configured = parseInt(modal.dataset.readSeconds, 10);
-    termsSecondsLeft = termsTotalSeconds = Number.isFinite(configured) && configured > 0 ? configured : 30;
+    // 30 seconds is the enforced minimum, even if an older/lower value is stored.
+    termsSecondsLeft = termsTotalSeconds = Math.max(30, Number.isFinite(configured) && configured > 0 ? configured : 30);
   }
   _termsUpdateTimerDisplay();
 

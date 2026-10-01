@@ -1280,15 +1280,15 @@ const AdminModule = (() => {
    *  GCash) since this doesn't affect money — just a toast on success. */
   function submitTermsSettings() {
     const terms_content      = (document.getElementById('terms-content-editor') || {}).value || '';
-    const terms_read_minutes = _val('terms-read-minutes');
+    const terms_read_seconds = _val('terms-read-seconds');
 
     if (!terms_content.trim()) {
       showToast('Terms & Policy content cannot be empty.', 'error');
       return;
     }
-    const minutes = parseInt(terms_read_minutes, 10);
-    if (!Number.isFinite(minutes) || minutes < 1 || minutes > 10) {
-      showToast('Estimated read time must be between 1 and 10 minutes.', 'error');
+    const seconds = parseInt(terms_read_seconds, 10);
+    if (!Number.isFinite(seconds) || seconds < 30 || seconds > 600) {
+      showToast('Estimated read time must be between 30 and 600 seconds (minimum 30 seconds).', 'error');
       return;
     }
 
@@ -1298,7 +1298,7 @@ const AdminModule = (() => {
     fetch('/admin/update-terms-settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ terms_content, terms_read_minutes: minutes })
+      body: JSON.stringify({ terms_content, terms_read_seconds: seconds })
     })
       .then(res => res.json().then(data => ({ ok: res.ok, data })))
       .then(({ ok, data }) => {

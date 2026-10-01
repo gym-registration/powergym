@@ -1867,8 +1867,9 @@ class GymSettings(db.Model):
     # opens) before a new member is allowed to check "I agree" — an
     # estimated-reading-time gate so members can't just tick the box
     # without spending any time on it. Stored in seconds internally; the
-    # admin UI shows/collects this as whole minutes.
-    terms_read_seconds  = db.Column(db.Integer, nullable=False, default=60)
+    # admin UI shows/collects this in whole seconds (minimum
+    # TERMS_READ_SECONDS_MIN = 30, maximum TERMS_READ_SECONDS_MAX = 600).
+    terms_read_seconds  = db.Column(db.Integer, nullable=False, default=30)
     # Public "GYM SCHEDULE" card on the home page (Schedule section). Two
     # editable rows — each a free-text day label paired with a free-text
     # hours string — so admin/staff can describe whatever split they run
@@ -1983,6 +1984,13 @@ def terms_text_to_html(text):
 app.jinja_env.filters['terms_html'] = terms_text_to_html
 
 
+# Terms & Policy "read time" gate: the shortest the admin may set, and the
+# longest. Enforced on save (admin_update_terms_settings) and again in the
+# browser, so a value below the minimum can never reach members.
+TERMS_READ_SECONDS_MIN = 30
+TERMS_READ_SECONDS_MAX = 600
+
+
 def _get_gym_settings():
     """Fetch the singleton settings row, creating it with sensible
     defaults on first use so callers never have to null-check."""
@@ -1990,7 +1998,7 @@ def _get_gym_settings():
     if settings is None:
         settings = GymSettings(id=1, gcash_number='0945 397 0594', gcash_account_name='LYDIA M. EMATA',
                                 gcash_qr_path='images/gcash-qr.jpg',
-                                terms_content=DEFAULT_TERMS_TEXT, terms_read_seconds=60)
+                                terms_content=DEFAULT_TERMS_TEXT, terms_read_seconds=TERMS_READ_SECONDS_MIN)
         db.session.add(settings)
         db.session.commit()
     elif not settings.terms_content:
@@ -6701,7 +6709,7 @@ def admin_list_gcash_accounts():
 @app.route('/admin/update-terms-settings', methods=['POST'])
 def admin_update_terms_settings():
     """Admin-only: update the Terms & Policy text shown to new members
-    during registration, and how many minutes they must keep the modal
+    during registration, and how many seconds (30 minimum) they must keep the modal
     open (an estimated-reading-time gate) before they're allowed to
     check "I agree". terms_content is always plain text — it's escaped
     and turned into safe HTML at render time, so admins never write
@@ -6711,26 +6719,32 @@ def admin_update_terms_settings():
 
     data = request.get_json(silent=True) or {}
     terms_content = (data.get('terms_content') or '').strip()
-    read_minutes_raw = data.get('terms_read_minutes')
+    read_seconds_raw = data.get('terms_read_seconds')
+    if read_seconds_raw is None and data.get('terms_read_minutes') is not None:
+        # Backward compatibility with older clients that still send minutes.
+        try:
+            read_seconds_raw = int(data.get('terms_read_minutes')) * 60
+        except (TypeError, ValueError):
+            read_seconds_raw = None
 
     if not terms_content:
         return jsonify(success=False, error='Terms & Policy content cannot be empty.'), 400
     try:
-        read_minutes = int(read_minutes_raw)
+        read_seconds = int(read_seconds_raw)
     except (TypeError, ValueError):
-        return jsonify(success=False, error='Estimated read time must be a whole number of minutes.'), 400
-    if read_minutes < 1 or read_minutes > 10:
-        return jsonify(success=False, error='Estimated read time must be between 1 and 10 minutes.'), 400
+        return jsonify(success=False, error='Estimated read time must be a whole number of seconds.'), 400
+    if read_seconds < TERMS_READ_SECONDS_MIN or read_seconds > TERMS_READ_SECONDS_MAX:
+        return jsonify(success=False,
+                       error=f'Estimated read time must be between {TERMS_READ_SECONDS_MIN} and {TERMS_READ_SECONDS_MAX} seconds (minimum {TERMS_READ_SECONDS_MIN}).'), 400
 
     settings = _get_gym_settings()
     settings.terms_content      = terms_content
-    settings.terms_read_seconds = read_minutes * 60
+    settings.terms_read_seconds = read_seconds
     db.session.commit()
 
     return jsonify(success=True, message='Terms & Policy updated.', settings={
         'terms_content':      settings.terms_content,
         'terms_read_seconds': settings.terms_read_seconds,
-        'terms_read_minutes': read_minutes,
     })
 
 

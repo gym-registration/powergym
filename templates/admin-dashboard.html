@@ -975,12 +975,17 @@
         </div>
         <div class="panel-body">
           <div class="form-group">
-            <label class="form-label">Estimated Read Time (minutes)</label>
-            <input class="form-input" id="terms-read-minutes" type="number" min="1" max="10" step="1"
-                   style="max-width:160px;"
-                   value="{{ (gcash_settings.terms_read_seconds // 60) if gcash_settings and gcash_settings.terms_read_seconds else 1 }}">
+            <label class="form-label">Estimated Read Time (seconds)</label>
+            {% set _terms_secs = ([gcash_settings.terms_read_seconds, 30] | max) if gcash_settings and gcash_settings.terms_read_seconds else 30 %}
+            <div style="display:flex;align-items:center;gap:12px;">
+              <input class="form-input" id="terms-read-seconds" type="number" min="30" max="600" step="1"
+                     style="max-width:160px;"
+                     value="{{ _terms_secs }}"
+                     oninput="var v=parseInt(this.value,10),p=document.getElementById('terms-read-preview');p.textContent=isNaN(v)?'':(v>=60?'= '+Math.floor(v/60)+':'+String(v%60).padStart(2,'0'):'= '+v+'s')">
+              <span id="terms-read-preview" style="font-size:15px;font-weight:600;color:var(--white);">{{ ('= ' ~ (_terms_secs // 60) ~ ':' ~ ('%02d' | format(_terms_secs % 60))) if _terms_secs >= 60 else ('= ' ~ _terms_secs ~ 's') }}</span>
+            </div>
             <div style="font-size:12px;color:var(--muted);margin-top:4px;">
-              Members must keep the Terms &amp; Policy popup open for this long (it can be reopened to keep counting) before the "I agree" checkbox unlocks. 1–10 minutes.
+              Members must keep the Terms &amp; Policy popup open for this long (it can be reopened to keep counting) before the "I agree" checkbox unlocks. Minimum 30 seconds, maximum 600 (10 minutes). Time of a minute or more is shown as minutes:seconds, e.g. 90 seconds = 1:30.
             </div>
           </div>
           <div class="form-group">
