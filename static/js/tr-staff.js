@@ -32,7 +32,7 @@ const StaffModule = (() => {
     _initNotificationBell(dashData.notification_center || [], dashData.notification_unread_count || 0);
 
     const payPlanEl = document.getElementById('pay-plan');
-    if (payPlanEl) payPlanEl.addEventListener('change', updatePayAmountDisplay);
+    if (payPlanEl) payPlanEl.addEventListener('change', onPayPlanChange);
     _updatePlanOptionLabels();
     updatePayAmountDisplay();
 
@@ -181,20 +181,57 @@ const StaffModule = (() => {
     return _paymentMembers;
   }
 
-  /** Select the <option> in #pay-plan whose plan name (text before the
-   *  "—") matches the given plan name, case-insensitively. No-op if the
-   *  plan isn't one of the listed options. */
-  function _selectPlanByName(planName) {
+  /** Select the <option> in #pay-plan whose value matches (case-insensitive).
+   *  Plans use their name as the value; promos use "promo:<id>". No-op if
+   *  the value isn't one of the listed options. */
+  function _selectPlanByValue(value) {
     const select = document.getElementById('pay-plan');
-    if (!select || !planName) return;
-    const target = planName.trim().toLowerCase();
+    if (!select || !value) return;
+    const target = String(value).trim().toLowerCase();
     for (const opt of select.options) {
-      const optPlanName = opt.textContent.split('—')[0].trim().toLowerCase();
-      if (optPlanName === target) {
+      if (opt.value.trim().toLowerCase() === target) {
         select.value = opt.value;
         return;
       }
     }
+  }
+
+  /** True when the Plan dropdown currently points at a promo. */
+  function _isPromoSelected() {
+    const opt = document.getElementById('pay-plan')?.selectedOptions?.[0];
+    return !!(opt && opt.dataset.promoId);
+  }
+
+  /** Student rate never applies to a promo (the promo price is fixed and
+   *  already includes the coach), so while a promo is selected the Student
+   *  checkbox is cleared and hidden and a promo note is shown instead. */
+  function _syncPromoUi() {
+    const promo = _isPromoSelected();
+    const studentEl = document.getElementById('pay-is-student');
+    const labelEl = document.getElementById('pay-student-manual-label');
+    const proofNoteEl = document.getElementById('pay-student-proof-note');
+    const promoNoteEl = document.getElementById('pay-promo-note');
+    if (promoNoteEl) promoNoteEl.style.display = promo ? '' : 'none';
+    if (promo) {
+      if (studentEl) { studentEl.checked = false; studentEl.disabled = true; }
+      if (labelEl) labelEl.style.display = 'none';
+      if (proofNoteEl) proofNoteEl.style.display = 'none';
+    }
+  }
+
+  /** Plan dropdown changed (by staff or automatically). */
+  function onPayPlanChange() {
+    const studentEl = document.getElementById('pay-is-student');
+    const labelEl = document.getElementById('pay-student-manual-label');
+    if (!_isPromoSelected() && studentEl && studentEl.disabled && labelEl && labelEl.style.display === 'none'
+        && document.getElementById('pay-student-proof-note')?.style.display === 'none') {
+      // Switched away from a promo — give the manual student checkbox back.
+      studentEl.disabled = false;
+      labelEl.style.display = '';
+    }
+    _syncPromoUi();
+    _updatePlanOptionLabels();
+    updatePayAmountDisplay();
   }
 
   /** Fired on every keystroke / dropdown pick in the Member field. When the
@@ -213,6 +250,8 @@ const StaffModule = (() => {
       if (studentEl) { studentEl.checked = false; studentEl.disabled = false; }
       if (labelEl) labelEl.style.display = '';
       if (proofNoteEl) proofNoteEl.style.display = 'none';
+      const promoNoteEl = document.getElementById('pay-promo-note');
+      if (promoNoteEl) promoNoteEl.style.display = 'none';
     };
 
     if (!identifier) {
@@ -231,15 +270,22 @@ const StaffModule = (() => {
       return;
     }
 
-    if (match.plan && match.plan !== '—') {
-      _selectPlanByName(match.plan);
+    // Priority: the promo the member availed (their request) → the plan they
+    // requested → their current plan. A promo request's membership plan is
+    // only the Monthly "anchor", so it must NOT win over the promo.
+    if (match.pending_promo_id) {
+      _selectPlanByValue('promo:' + match.pending_promo_id);
+    } else if (match.pending_plan) {
+      _selectPlanByValue(match.pending_plan);
+    } else if (match.plan && match.plan !== '—') {
+      _selectPlanByValue(match.plan);
     }
 
     // A member whose own plan request already says student (viewable above
     // in Pending Requests) is a student, full stop — no click needed and no
     // checkbox shown. The discount is applied automatically; the server
     // re-applies it independently regardless of what this form sends.
-    if (match.is_student) {
+    if (match.is_student && !_isPromoSelected()) {
       if (studentEl) { studentEl.checked = true; studentEl.disabled = true; }
       if (labelEl) labelEl.style.display = 'none';
       if (proofNoteEl) proofNoteEl.style.display = '';
@@ -247,6 +293,7 @@ const StaffModule = (() => {
       showManualCheckbox();
     }
 
+    _syncPromoUi();
     _updatePlanOptionLabels();
     updatePayAmountDisplay();
   }
@@ -269,7 +316,7 @@ const StaffModule = (() => {
       const shownPrice = isStudent && hasDiscount ? studentPrice : normalPrice;
       const priceText = '₱' + shownPrice.toLocaleString('en-PH', { minimumFractionDigits: shownPrice % 1 ? 2 : 0 });
       const suffix = isStudent && hasDiscount ? ' (student)' : '';
-      opt.textContent = `${opt.value} — ${priceText}${suffix}`;
+      opt.textContent = `${opt.dataset.label || opt.value} — ${priceText}${suffix}`;
     }
   }
 
@@ -311,7 +358,9 @@ const StaffModule = (() => {
   function promptRecordPayment() {
     const memberIdentifier = _val('pay-member');
     const select            = document.getElementById('pay-plan');
-    const planName          = select?.value || '';
+    const selOpt            = select?.selectedOptions?.[0];
+    const promoId           = selOpt?.dataset.promoId || '';
+    const planName          = promoId ? (selOpt.dataset.label || '') : (select?.value || '');
     const method            = document.getElementById('pay-method')?.value || '';
     const isStudent         = !!document.getElementById('pay-is-student')?.checked;
     const amount            = _currentPayAmount();
@@ -321,7 +370,7 @@ const StaffModule = (() => {
       return;
     }
 
-    _pendingRecordPayment = { memberIdentifier, planName, method, isStudent };
+    _pendingRecordPayment = { memberIdentifier, planName, method, isStudent: promoId ? false : isStudent, promoId };
 
     const msgEl = document.getElementById('confirm-record-payment-message');
     if (msgEl) {
@@ -347,7 +396,7 @@ const StaffModule = (() => {
   }
 
   /** Record a front-desk payment and persist it to the database */
-  function _doRecordPayment({ memberIdentifier, planName, method, isStudent }) {
+  function _doRecordPayment({ memberIdentifier, planName, method, isStudent, promoId }) {
     const btn = document.querySelector('#staff-payments .btn-red');
     if (btn) { btn.disabled = true; btn.textContent = 'RECORDING...'; }
 
@@ -358,7 +407,8 @@ const StaffModule = (() => {
         member_identifier: memberIdentifier,
         plan:    planName,
         method:  method,
-        is_student: !!isStudent
+        is_student: !!isStudent,
+        promo_id: promoId || ''
       })
     })
       .then(res => res.json().then(data => ({ ok: res.ok, data })))
@@ -379,6 +429,8 @@ const StaffModule = (() => {
         if (labelEl) labelEl.style.display = '';
         const proofNoteEl = document.getElementById('pay-student-proof-note');
         if (proofNoteEl) proofNoteEl.style.display = 'none';
+        const promoNoteEl = document.getElementById('pay-promo-note');
+        if (promoNoteEl) promoNoteEl.style.display = 'none';
         _updatePlanOptionLabels();
         updatePayAmountDisplay();
 

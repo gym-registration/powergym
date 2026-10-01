@@ -769,7 +769,17 @@
                 {% for opt in payment_plan_options %}
                 <option value="{{ opt.name }}" data-price="{{ opt.price }}" data-student-price="{{ opt.student_price }}">{{ opt.name }} — ₱{{ '{:,.0f}'.format(opt.price) if opt.price == opt.price|int else '{:,.2f}'.format(opt.price) }}</option>
                 {% endfor %}
+                {% if payment_promo_options %}
+                <optgroup label="🎁 Promos">
+                  {% for pr in payment_promo_options %}
+                  <option value="promo:{{ pr.id }}" data-promo-id="{{ pr.id }}" data-label="{{ pr.title }}" data-price="{{ pr.price }}" data-student-price="{{ pr.price }}">{{ pr.title }} — ₱{{ '{:,.0f}'.format(pr.price) if pr.price == pr.price|int else '{:,.2f}'.format(pr.price) }}</option>
+                  {% endfor %}
+                </optgroup>
+                {% endif %}
               </select>
+              <div id="pay-promo-note" style="display:none;font-size:12px;color:var(--gold);margin-top:4px;">
+                🎁 Promo availed by this member — selected automatically. Promo price includes the coach; no student rate applies.
+              </div>
             </div>
           </div>
           <script id="staff-payment-members-data" type="application/json">{{ payment_members|tojson }}</script>

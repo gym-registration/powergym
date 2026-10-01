@@ -1020,6 +1020,23 @@ def _coach_fee(coach_name):
     return float(coach.fee) if coach else 0.0
 
 
+def _promo_anchor_plan():
+    """The plan a promo payment rides on behind the scenes (see
+    /member/submit-payment): Monthly if available, else the first active plan."""
+    return (MembershipPlan.query.filter_by(name='Monthly', is_active=True).first()
+            or MembershipPlan.query.filter_by(is_active=True)
+               .order_by(MembershipPlan.sort_order, MembershipPlan.id).first())
+
+
+def _promo_notes(promo, coach_name=None):
+    """The 'Promo request: ...' tag stored in Payment.notes. Everything that
+    recognises a promo payment (_is_promo_payment, _payment_promo, session
+    terms, expiry) keys off this exact format."""
+    price_text = f'{promo.price:,.0f}' if promo.price == int(promo.price) else f'{promo.price:,.2f}'
+    suffix = f' + Coach ({coach_name})' if coach_name else ''
+    return f'Promo request: {promo.title} — ₱{price_text}{suffix}'
+
+
 def _payment_total(plan, is_student, coach_name=None):
     """Full amount a member owes: the (student-adjusted) plan price plus
     the selected coach's fee, if any. This is the single source of truth
@@ -5780,9 +5797,25 @@ def staff_record_payment():
     if error:
         return jsonify(success=False, error=error), 404
 
-    plan = MembershipPlan.query.filter_by(name=plan_name).first()
-    if plan is None or _is_walkin_only(plan):
-        return jsonify(success=False, error='Please select a valid membership plan.'), 400
+    # The Plan dropdown can also hold promos. A promo is recorded as that promo
+    # (not as the Monthly plan it rides on), exactly like a member's own promo
+    # request — see /member/submit-payment.
+    promo = None
+    promo_id_raw = data.get('promo_id')
+    if promo_id_raw not in (None, ''):
+        try:
+            promo = GymPromo.query.get(int(promo_id_raw))
+        except (TypeError, ValueError):
+            promo = None
+        if promo is None or not promo.is_active or _is_walkin_only(promo):
+            return jsonify(success=False, error='Selected promo is no longer available.'), 400
+        plan = _promo_anchor_plan()
+        if plan is None:
+            return jsonify(success=False, error='No membership plan is available to attach this promo to.'), 400
+    else:
+        plan = MembershipPlan.query.filter_by(name=plan_name).first()
+        if plan is None or _is_walkin_only(plan):
+            return jsonify(success=False, error='Please select a valid membership plan.'), 400
 
     # A member who still has sessions left on a session-based promo can't be
     # switched to another plan yet — same rule the member sees on their own
@@ -5814,7 +5847,19 @@ def staff_record_payment():
     )
     if existing_request is not None:
         existing_request.plan_id = plan.id
-        existing_request.amount = _payment_total(plan, existing_request.is_student, existing_request.coach_name)
+        if promo is not None:
+            # Promo price already bundles the coach; student rate never applies.
+            existing_request.amount = promo.price
+            existing_request.is_student = False
+            if not (_is_promo_payment(existing_request) and _payment_promo(existing_request) is not None
+                    and _payment_promo(existing_request).id == promo.id):
+                existing_request.notes = _promo_notes(promo, existing_request.coach_name)
+        else:
+            existing_request.amount = _payment_total(plan, existing_request.is_student, existing_request.coach_name)
+            if _is_promo_payment(existing_request):
+                # Staff deliberately recorded a regular plan over a promo
+                # request — drop the promo tag so the record matches what was paid.
+                existing_request.notes = None
         existing_request.method = method
         existing_request.status = 'verified'
         existing_request.recorded_by_id = session.get('user_id')
@@ -5825,11 +5870,12 @@ def staff_record_payment():
         new_payment = Payment(
             member_id=member.id,
             plan_id=plan.id,
-            amount=plan.price,
+            amount=promo.price if promo is not None else plan.price,
             method=method,
             status='verified',
             recorded_by_id=session.get('user_id'),
             verified_at=datetime.now(timezone.utc),
+            notes=_promo_notes(promo) if promo is not None else None,
         )
         db.session.add(new_payment)
 
@@ -5872,8 +5918,9 @@ def staff_record_payment():
         message='Payment recorded successfully.',
         payment={
             'member_name': member.full_name,
-            'plan': plan.name,
-            'amount': str(plan.price),
+            'plan': promo.title if promo is not None else plan.name,
+            'amount': str(new_payment.amount),
+            'is_student': bool(new_payment.is_student),
             'expiry': 'No expiry' if _is_no_expiry(membership.expiry_date) else membership.expiry_date.strftime('%b %d, %Y'),
         }
     )
@@ -8648,13 +8695,37 @@ def staff():
     #    Keyed by email (unique + always accepted by _find_member), with the
     #    member's current plan so the UI can auto-select the matching Plan
     #    option once a member is chosen. JSON-safe (no date objects). ──
-    payment_members = [{
-        'id': m['id'],
-        'name': m['name'],
-        'email': m['email'],
-        'plan': m['plan'],
-        'status': m['status'],
-    } for m in members]
+    # The newest open request per member (rows are already newest-first). If
+    # it is a promo request, the Plan dropdown must auto-select THAT promo —
+    # the membership's own plan is only the anchor (Monthly) the promo rides on.
+    _open_request_by_member = {}
+    for p in pending_requests_rows:
+        _open_request_by_member.setdefault(p.member_id, p)
+
+    def _payment_member_entry(m):
+        req = _open_request_by_member.get(m['id'])
+        promo_row = _payment_promo(req) if req is not None else None
+        return {
+            'id': m['id'],
+            'name': m['name'],
+            'email': m['email'],
+            'plan': m['plan'],
+            'status': m['status'],
+            'is_student': bool(req.is_student) if req is not None else False,
+            'pending_promo_id': promo_row.id if promo_row is not None else None,
+            'pending_promo_title': promo_row.title if promo_row is not None else None,
+            # Regular (non-promo) request: the plan the member actually asked for.
+            'pending_plan': (req.plan.name if (req is not None and promo_row is None
+                                               and not _is_promo_payment(req) and req.plan) else None),
+        }
+
+    payment_members = [_payment_member_entry(m) for m in members]
+
+    payment_promo_options = [
+        {'id': pr.id, 'title': pr.title, 'price': float(pr.price)}
+        for pr in GymPromo.query.filter_by(is_active=True).order_by(GymPromo.sort_order, GymPromo.id).all()
+        if not _is_walkin_only(pr)
+    ]
 
     # Staff only need to see notices actually meant for them — the member-
     # facing "All Members" / "Active Members Only" / "Expiring This Month"
@@ -8739,6 +8810,7 @@ def staff():
         walkin_total_today=walkin_total_today,
         WALKIN_COACH_FEE=WALKIN_COACH_FEE,
         payment_members=payment_members,
+        payment_promo_options=payment_promo_options,
 
         # Plan dropdown for the Payment Record form — read live from the
         # plans table, so a plan added in Manage Content is recordable here

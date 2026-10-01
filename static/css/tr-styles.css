@@ -1289,6 +1289,14 @@ select.form-input option {
   background: var(--dark);
   color: var(--white);
 }
+/* Group headings inside the dropdown (e.g. "Promos") — without this the browser
+   paints them on a white background where the light text can't be read. */
+select.form-input optgroup {
+  background: var(--dark);
+  color: var(--gold);
+  font-style: normal;
+  font-weight: 700;
+}
 select.form-input option:checked,
 select.form-input option:hover,
 select.form-input option:focus {
@@ -4452,4 +4460,3 @@ body.home-page { overflow-x: hidden; }
     justify-content: flex-end;
   }
 }
-
