@@ -364,9 +364,9 @@ const AdminModule = (() => {
 
     const byStaffTable = hasByStaff ? `
       <div style="flex:1;min-width:220px;">
-        <div style="font-size:13px;color:var(--muted);margin-bottom:8px;">Cash Collected by Staff</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:8px;">Cash Collected by Recorder (Staff / Admin)</div>
         <table class="data-table">
-          <thead><tr><th>Staff</th><th>Total</th><th>Txns</th></tr></thead>
+          <thead><tr><th>Recorded By</th><th>Total</th><th>Txns</th></tr></thead>
           <tbody>${report.cash_by_staff.map(r => `<tr><td>${r.staff}</td><td>\u20b1${r.total}</td><td>${r.count}</td></tr>`).join('')}</tbody>
         </table>
       </div>` : '';
@@ -389,15 +389,16 @@ const AdminModule = (() => {
 
   function exportReportPDF() {
     if (!currentReportPayload) { showToast('Generate a report first', 'error'); return; }
-    window.print();
-    showToast('Use Print dialog to save as PDF', 'success');
+    // Clean, print-only report layout (see tr-report-print.js) — not the dashboard itself.
+    window.printReport(currentReportPayload);
+    showToast('In the Print dialog, choose "Save as PDF"', 'success');
   }
 
   // ── Private helpers ──────────────────────────
 
   /** Meaningful, consistent bar colors per report type/label (not a rainbow
    *  cycle) — mirrors the palette used in the "neat" reference chart. */
-  const _MEMBERSHIP_BAR_COLORS = { Active: '#1baf7a', Pending: '#eda100', Expired: '#e34948', Declined: '#898781', 'No Plan': '#898781' };
+  const _MEMBERSHIP_BAR_COLORS = { Active: '#1baf7a', Scheduled: '#2a78d6', Pending: '#eda100', Expired: '#e34948', Declined: '#898781', 'No Plan': '#898781' };
   const _METHOD_BAR_COLORS     = { Cash: '#2a78d6', GCash: '#4a3aa7' };
   // Attendance bars are per-day/month, not a fixed set of named categories,
   // so there's no single "correct" color per label — cycle through a

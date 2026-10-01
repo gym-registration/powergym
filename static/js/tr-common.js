@@ -1828,6 +1828,8 @@ const ContentManager = (() => {
    5. TOAST SYSTEM
 ════════════════════════════════════════════════ */
 function showToast(msg, type = 'success') {
+  // Long error messages are hard to read in a thin toast bar — show them as a pop-up.
+  if (type === 'error' && String(msg).length > 70) { showErrorModal(msg); return; }
   const container = document.getElementById('toast-container');
   if (!container) return;
   const toast       = document.createElement('div');
@@ -1835,6 +1837,34 @@ function showToast(msg, type = 'success') {
   toast.innerHTML   = (type === 'success' ? '✓ ' : type === 'info' ? 'ℹ ' : '✗ ') + msg;
   container.appendChild(toast);
   setTimeout(() => toast.remove(), 3100);
+}
+
+/** Show an error as a centered pop-up message box (instead of a wide toast
+ *  bar that covers the page). Builds its own modal the first time, so it
+ *  works on every page without extra HTML. */
+function showErrorModal(msg, title) {
+  let modal = document.getElementById('error-notice-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'error-notice-modal';
+    modal.innerHTML =
+      '<div class="modal" style="max-width:420px;">' +
+        '<button class="modal-close" type="button" onclick="closeModal(\'error-notice-modal\')">\u2715</button>' +
+        '<div style="display:flex;justify-content:center;margin-bottom:14px;">' +
+          '<div style="width:56px;height:56px;border-radius:50%;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.35);display:flex;align-items:center;justify-content:center;">' +
+            '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+          '</div>' +
+        '</div>' +
+        '<div class="modal-title" style="text-align:center;" id="error-notice-title">PLEASE CHECK</div>' +
+        '<div id="error-notice-message" style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;word-break:break-word;"></div>' +
+        '<button class="btn btn-red" type="button" style="width:100%;justify-content:center;" onclick="closeModal(\'error-notice-modal\')">OK</button>' +
+      '</div>';
+    document.body.appendChild(modal);
+  }
+  document.getElementById('error-notice-title').textContent = title || 'PLEASE CHECK';
+  document.getElementById('error-notice-message').textContent = msg;
+  openModal('error-notice-modal');
 }
 
 /** Toast the receiver about announcement(s) posted since their last visit.

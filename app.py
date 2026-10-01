@@ -373,6 +373,9 @@ _GCASH_DATE_RE   = re.compile(
     r'|\d{1,2}/\d{1,2}/\d{2,4})\b',
     re.IGNORECASE,
 )
+# Mobile numbers printed on a GCash receipt (the recipient's is shown on
+# "Express Send" receipts). Matches +63 935 171 6192 / 0935 171 6192 / 09351716192.
+_GCASH_PHONE_RE  = re.compile(r'(?:\+?\s*63|0)\s*(9\d{2})[\s\-]*(\d{3})[\s\-]*(\d{4})')
 _GCASH_NAME_RE   = re.compile(r'(?:sent to|sender|from|to)\s*[:\-]?\s*([A-Za-z][A-Za-z.\-\' ]{2,40})', re.IGNORECASE)
 _GCASH_TIME_RE   = re.compile(r'\b(\d{1,2}:\d{2}\s?[APap]\.?[Mm]\.?|\d{1,2}:\d{2})\b')
 
@@ -472,7 +475,10 @@ def _extract_gcash_receipt_fields(file_path):
         'date': None, 'date_iso': None,
         'time': None, 'time_24h': None,
         'name': None,
+        'phones': [],          # every PH mobile number found on the receipt, as 10 digits (9XXXXXXXXX)
     }
+
+    result['phones'] = [''.join(m.groups()) for m in _GCASH_PHONE_RE.finditer(text_out)]
 
     for _amount_pattern in _GCASH_AMOUNT_PATTERNS:
         m = _amount_pattern.search(text_out)
@@ -1081,7 +1087,7 @@ def _walkins_today_data():
         # Who recorded it — not shown on the staff dashboard (staff already
         # knows who's at the desk) but useful on the admin dashboard, which
         # oversees multiple staff accounts.
-        'staff': w.recorded_by.full_name if w.recorded_by else '—',
+        'staff': _recorded_by_label(w.method, w.recorded_by),
     } for w in rows]
     total_today = sum(float(w.amount) for w in rows)
     return walkins, f'{total_today:,.2f}'
@@ -1248,8 +1254,8 @@ app.config['MAIL_SERVER']          = os.environ.get('MAIL_SERVER', 'smtp.gmail.c
 app.config['MAIL_PORT']            = int(os.environ.get('MAIL_PORT', 587))
 app.config['MAIL_USE_TLS']         = os.environ.get('MAIL_USE_TLS', 'true').lower() == 'true'
 app.config['MAIL_USE_SSL']         = os.environ.get('MAIL_USE_SSL', 'false').lower() == 'true'
-app.config['MAIL_USERNAME']        = os.environ.get('MAIL_USERNAME')
-app.config['MAIL_PASSWORD']        = os.environ.get('MAIL_PASSWORD')
+app.config['MAIL_USERNAME']        = (os.environ.get('MAIL_USERNAME') or '').strip().strip('"\'') or None
+app.config['MAIL_PASSWORD']        = (os.environ.get('MAIL_PASSWORD') or '').replace(' ', '').strip().strip('"\'') or None
 app.config['MAIL_DEFAULT_SENDER']  = os.environ.get('MAIL_DEFAULT_SENDER', app.config['MAIL_USERNAME'])
 
 mail = Mail(app)
@@ -3442,6 +3448,23 @@ def _plan_approved_email_html(first_name, plan_name, amount, login_url):
 """
 
 
+def _send_mail_background(msg, label):
+    """Send a Flask-Mail message on a background thread so the staff/admin
+    approval click returns instantly instead of waiting on Gmail's SMTP
+    handshake. Success and failure are both printed to the server console so
+    a missing email is never silent."""
+    import threading
+    def _worker():
+        with app.app_context():
+            try:
+                mail.send(msg)
+                print(f"[MAIL OK] {label} sent to {', '.join(msg.recipients)}")
+            except Exception as e:
+                print(f"[MAIL ERROR] Could not send {label} to {', '.join(msg.recipients)}: "
+                      f"{type(e).__name__}: {e}")
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 def _send_plan_approved_email(member, plan, amount):
     """Best-effort email sent the moment staff approves a plan REQUEST (i.e.
     payment.status flips to 'approved', not 'verified') — this is the "your
@@ -3470,9 +3493,9 @@ def _send_plan_approved_email(member, plan, amount):
                 ),
                 html=_plan_approved_email_html(member.first_name, plan_name, amount, login_url),
             )
-            mail.send(msg)
+            _send_mail_background(msg, 'plan-approved email')
         except Exception as e:
-            print(f"[MAIL ERROR] Could not send plan-approved email to {member.email}: {e}")
+            print(f"[MAIL ERROR] Could not build plan-approved email for {member.email}: {e}")
     else:
         print(f"[DEV] Email not configured. Plan-approved email would be sent to "
               f"{member.email} — plan={plan_name}, amount={amount}")
@@ -3501,9 +3524,9 @@ def _send_membership_activated_email(member, plan, start_date):
                 ),
                 html=_membership_activated_email_html(member.first_name, plan_name, start_date),
             )
-            mail.send(msg)
+            _send_mail_background(msg, 'membership-activated email')
         except Exception as e:
-            print(f"[MAIL ERROR] Could not send membership-activated email to {member.email}: {e}")
+            print(f"[MAIL ERROR] Could not build membership-activated email for {member.email}: {e}")
     else:
         print(f"[DEV] Email not configured. Membership-activated email would be sent to "
               f"{member.email} — plan={plan_name}, start={start_date}")
@@ -5301,6 +5324,10 @@ def member_submit_payment():
         occupancy = _get_coach_occupancy().get(coach.name, 0)
         if occupancy >= coach.max_members:
             return jsonify(success=False, error=f'{coach.name} is currently at full capacity. Please choose another coach.'), 409
+        _coach_days = coach.available_days_list
+        _start_abbr = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][requested_start.weekday()]
+        if _coach_days and _start_abbr not in _coach_days:
+            return jsonify(success=False, error=f'{coach.name} is unavailable on {requested_start.strftime("%A")}s. Please choose an available coach or another start date.'), 409
         wants_coach = True
 
         # The promo's access length comes from the promo itself now, so it
@@ -5509,6 +5536,73 @@ def member_cancel_plan_request():
     return jsonify(success=True, message='Plan request cancelled. You can submit a new request anytime.')
 
 
+def _payment_request_date(payment):
+    """Manila calendar date the member ORIGINALLY requested this plan/promo.
+    A rejected-payment retry row is a fresh copy created later, so we follow
+    retry_of_payment_id back to the very first request — otherwise a member
+    fixing a typo with their original (still-valid) receipt would be judged
+    against the retry row's newer date."""
+    root, seen = payment, set()
+    while root.retry_of_payment_id and root.id not in seen:
+        seen.add(root.id)
+        parent = Payment.query.get(root.retry_of_payment_id)
+        if parent is None:
+            break
+        root = parent
+    dt = _to_manila(root.paid_at)
+    return dt.date() if dt else None
+
+
+def _gcash_receipt_date_error(receipt_date_iso, payment, subject):
+    """Returns an error message if a receipt/payment date ('YYYY-MM-DD') is
+    EARLIER than the day the member requested this plan/promo — i.e. money
+    that was sent before the request even existed can't be this payment.
+    Same-day is fine. Returns None when the date is OK, missing, or
+    unreadable (OCR is best-effort; an unreadable date still goes to
+    staff/admin's manual review like before). `subject` completes the
+    sentence, e.g. 'Screenshot 1 is dated'."""
+    if not receipt_date_iso:
+        return None
+    try:
+        receipt_date = date.fromisoformat(str(receipt_date_iso)[:10])
+    except ValueError:
+        return None
+    if receipt_date > _today_manila():
+        return f"{subject} {receipt_date.strftime('%b %d, %Y')}, which is in the future. Please upload your real receipt."
+    requested_on = _payment_request_date(payment)
+    if requested_on is None or receipt_date >= requested_on:
+        return None
+    kind = 'promo' if _is_promo_payment(payment) else 'plan'
+    return (f"{subject} {receipt_date.strftime('%b %d, %Y')}, which is earlier than the day you "
+            f"requested this {kind} ({requested_on.strftime('%b %d, %Y')}). A payment made before "
+            f"your request can't be accepted. Please pay after your request and upload that receipt.")
+
+
+def _gcash_receipt_recipient_error(detected, subject):
+    """A receipt must show a payment sent to one of the gym's own GCash
+    numbers (the default account or any saved account). If OCR read mobile
+    number(s) off the screenshot and NONE of them is the gym's, the money
+    went to somebody else — reject. Allows one misread digit (OCR slips),
+    and if no number could be read at all it returns None and the receipt
+    simply goes to admin's manual review, as before."""
+    phones = (detected or {}).get('phones') or []
+    if not phones:
+        return None
+    gym = set()
+    for raw in [a.gcash_number for a in GcashAccount.query.all()] + [getattr(_get_gym_settings(), 'gcash_number', None)]:
+        d = re.sub(r'\D', '', raw or '')
+        if len(d) >= 10:
+            gym.add(d[-10:])
+    if not gym:
+        return None
+    def close(a, b):
+        return len(a) == len(b) and sum(x != y for x, y in zip(a, b)) <= 1
+    if any(close(p, g) for p in phones for g in gym):
+        return None
+    return (f"{subject} not addressed to the gym's GCash account. The receipt must show a payment sent "
+            f"to the GCash number on the Payment page. Please send to that number and upload the new receipt.")
+
+
 @app.route('/member/ocr-gcash-proof', methods=['POST'])
 def member_ocr_gcash_proof():
     """Reads the GCash screenshot the member just picked (before they hit
@@ -5569,8 +5663,20 @@ def member_ocr_gcash_proof():
                 .all()
         )
 
+    # Same receipt-date rule as the final submit check below, surfaced early
+    # so the member is told the moment they attach a too-old screenshot.
+    date_error = None
+    _pending = (Payment.query
+                .filter_by(member_id=session.get('user_id'), status='approved')
+                .order_by(Payment.paid_at.desc())
+                .first())
+    if _pending is not None:
+        date_error = (_gcash_receipt_date_error(detected.get('date_iso'), _pending, 'This screenshot is dated')
+                      or _gcash_receipt_recipient_error(detected, 'This screenshot is'))
+
     return jsonify(success=True, detected=detected, ocr_available=True,
-                    reference_already_used=reference_already_used)
+                    reference_already_used=reference_already_used,
+                    date_error=date_error)
 
 
 @app.route('/member/submit-payment-method', methods=['POST'])
@@ -5665,6 +5771,13 @@ def member_submit_payment_method():
                 f'required for this plan/promo. Please attach enough receipts to cover the full amount before submitting.'
             )), 400
 
+        # The payment date the member typed/confirmed can't be earlier than the
+        # day they requested this plan/promo either.
+        _typed_date_err = _gcash_receipt_date_error(
+            (data.get('gcash_paid_date') or '').strip(), payment, 'The payment date you entered is')
+        if _typed_date_err:
+            return jsonify(success=False, error=_typed_date_err), 400
+
         all_proof_files = [gcash_proof_file, *extra_proof_files]
 
         for f in all_proof_files:
@@ -5702,6 +5815,14 @@ def member_submit_payment_method():
             finally:
                 if tmp_path and os.path.exists(tmp_path):
                     os.remove(tmp_path)
+            _shot_date_err = _gcash_receipt_date_error(
+                detected.get('date_iso') if detected else None, payment, f'Screenshot {idx} is dated')
+            if _shot_date_err:
+                return jsonify(success=False, error=_shot_date_err), 400
+            _shot_to_err = _gcash_receipt_recipient_error(detected, f'Screenshot {idx} is')
+            if _shot_to_err:
+                return jsonify(success=False, error=_shot_to_err), 400
+
             ref = detected.get('reference') if detected else None
             if not ref:
                 continue
@@ -5901,7 +6022,14 @@ def staff_record_payment():
                                  expiry_date=today, status='active')
         db.session.add(membership)
 
-    base_date = membership.expiry_date if was_active_with_time else today
+    # Honor the start date the member selected (if it is in the future) and
+    # keep membership.start_date in sync, exactly like admin_verify_payment.
+    requested_start = new_payment.requested_start_date
+    if was_active_with_time:
+        base_date = membership.expiry_date
+    else:
+        base_date = requested_start if (requested_start and requested_start > today) else today
+        membership.start_date = base_date
     membership.plan_id     = plan.id
     membership.expiry_date = _payment_expiry(new_payment, plan, base_date)
     _apply_session_terms(membership, new_payment)
@@ -9018,7 +9146,7 @@ def _revenue_report(start_date, end_date, method=None):
         if r.method != 'Cash':
             continue
         cash_total += float(r.amount)
-        staff_name = r.recorded_by.full_name if r.recorded_by else 'Unrecorded / Unknown'
+        staff_name = _recorded_by_label(r.method, r.recorded_by)
         entry = cash_by_staff.setdefault(staff_name, {'total': 0.0, 'count': 0})
         entry['total'] += float(r.amount)
         entry['count'] += 1
@@ -9026,7 +9154,7 @@ def _revenue_report(start_date, end_date, method=None):
         if w.method != 'Cash':
             continue
         cash_total += float(w.amount)
-        staff_name = w.recorded_by.full_name if w.recorded_by else 'Unrecorded / Unknown'
+        staff_name = _recorded_by_label(w.method, w.recorded_by)
         entry = cash_by_staff.setdefault(staff_name, {'total': 0.0, 'count': 0})
         entry['total'] += float(w.amount)
         entry['count'] += 1
@@ -9043,7 +9171,7 @@ def _revenue_report(start_date, end_date, method=None):
         'method':      p.method,
         'amount':      float(p.amount),
         'raw_dt':      p.paid_at,
-        'recorded_by': p.recorded_by.full_name if p.recorded_by else '—',
+        'recorded_by': _recorded_by_label(p.method, p.recorded_by),
     } for p in rows] + [{
         'txn':         f'WI-{w.id}',
         'member':      w.full_name,
@@ -9051,7 +9179,7 @@ def _revenue_report(start_date, end_date, method=None):
         'method':      w.method,
         'amount':      float(w.amount),
         'raw_dt':      w.created_at,
-        'recorded_by': w.recorded_by.full_name if w.recorded_by else '—',
+        'recorded_by': _recorded_by_label(w.method, w.recorded_by),
     } for w in walkin_rows]
     transactions.sort(key=lambda t: t['raw_dt'], reverse=True)
 
@@ -9072,6 +9200,140 @@ def _revenue_report(start_date, end_date, method=None):
         'walkin_rows': walkin_rows,
         'transactions': transactions,
     }
+
+
+def _recorded_by_label(method, user):
+    """Who recorded a payment, as shown on reports. There are only two
+    possible values: 'Staff' or 'Admin'. It follows the role of the account
+    that actually recorded/approved the payment; if that account is unknown
+    (older rows with no recorder), it falls back to the payment method:
+    Cash is always taken at the front desk (Staff), GCash is verified by the
+    admin (Admin)."""
+    role = (getattr(user, 'role', '') or '').strip().lower() if user else ''
+    if role == 'admin':
+        return 'Admin'
+    if role == 'staff':
+        return 'Staff'
+    return 'Admin' if (method or '').strip().lower() == 'gcash' else 'Staff'
+
+
+def _attach_print_data(payload, report_type, report, start_date, end_date):
+    """Adds everything the clean "Save as PDF" layout needs on top of the
+    on-screen report: who generated it, when, and ready-made printable
+    sections (member list / walk-in guests / plan breakdown / collections).
+    Membership rows are also upgraded here so Plan shows the actual plan or
+    promo the member availed, plus how they paid and who recorded it."""
+    uid = session.get('user_id')
+    user = db.session.get(User, uid) if uid else None
+    payload['prepared_by']   = user.full_name if user else ''
+    payload['prepared_role'] = 'Admin' if session.get('role') == 'admin' else 'Staff'
+    payload['generated_at']  = _now_manila().strftime('%b %d, %Y %I:%M %p')
+    peso = '\u20b1'
+
+    def money(v):
+        return f'{float(v):,.2f}'
+
+    if report_type == 'membership':
+        members = report['members']
+        # Latest verified payment per member -> promo title / method / recorder.
+        ids = [m['id'] for m in members]
+        latest = {}
+        if ids:
+            pays = (Payment.query
+                    .options(joinedload(Payment.plan), joinedload(Payment.recorded_by))
+                    .filter(Payment.member_id.in_(ids), Payment.status == 'verified')
+                    .order_by(Payment.paid_at.asc()).all())
+            for pay in pays:
+                latest[pay.member_id] = pay   # newest wins
+
+        rows = []
+        for m in members:
+            pay = latest.get(m['id'])
+            plan_text = m['plan_label']
+            # Show the promo the member actually availed (promos ride on an
+            # anchor plan behind the scenes). Session promos already carry
+            # their own label; skip if the plan was changed after payment.
+            if m.get('sessions') is None and pay and pay.plan and pay.plan.name == m['plan']:
+                plan_text = _payment_display_plan(pay, m['plan_label'])
+            rows.append([
+                m['name'], m['email'], plan_text, m['status'], m['expiry'],
+                pay.method if pay else '\u2014',
+                _recorded_by_label(pay.method, pay.recorded_by) if pay else '\u2014',
+            ])
+        counts = report['counts']
+        payload['stats'] = [
+            {'label': 'Total Members', 'value': str(report['total_members'])},
+            {'label': 'Active',        'value': str(counts.get('Active', 0))},
+            {'label': 'Scheduled',     'value': str(counts.get('Scheduled', 0))},
+            {'label': 'Pending',       'value': str(counts.get('Pending', 0))},
+            {'label': 'Expired',       'value': str(counts.get('Expired', 0))},
+            {'label': 'New This Month','value': str(report['new_this_month'])},
+        ]
+        payload['headers'] = ['Member', 'Email', 'Plan / Promo', 'Status', 'Expiry', 'Paid Via', 'Recorded By']
+        payload['rows'] = rows
+        payload['chart_series'] = [
+            {'label': s_, 'value': counts.get(s_, 0)}
+            for s_ in ['Active', 'Scheduled', 'Pending', 'Expired', 'No Plan'] if counts.get(s_, 0)
+        ]
+
+        # Walk-in guests recorded this month (they're not members, so they
+        # never appear in the list above).
+        m_start, m_end, _lbl = _report_range('this_month')
+        wq = (WalkIn.query.options(joinedload(WalkIn.recorded_by))
+              .filter(WalkIn.created_at >= datetime.combine(m_start, datetime.min.time()),
+                      WalkIn.created_at < datetime.combine(m_end + timedelta(days=1), datetime.min.time()))
+              .order_by(WalkIn.created_at.desc()).all())
+        wrows = [[
+            w.full_name,
+            w.phone or w.email or '\u2014',
+            f'{w.plan_type} + Coach' if w.wants_coach else w.plan_type,
+            w.coach_name or '\u2014',
+            money(w.amount),
+            w.method,
+            _to_manila(w.created_at).strftime('%b %d, %Y'),
+            _recorded_by_label(w.method, w.recorded_by),
+        ] for w in wq]
+        payload['print_sections'] = [
+            {'title': 'Members', 'headers': payload['headers'], 'rows': rows},
+            {'title': f"Walk-In Guests \u2014 {m_start.strftime('%B %Y')}",
+             'headers': ['Guest', 'Contact', 'Plan / Promo', 'Coach', f'Amount ({peso})', 'Method', 'Date', 'Recorded By'],
+             'rows': wrows,
+             'footer': ['', '', '', 'Total', money(sum((w.amount for w in wq), start=0)), '', '', ''] if wrows else None},
+        ]
+
+    elif report_type == 'revenue':
+        txns = report['transactions']
+        by_plan, by_rec = {}, {}
+        for t in txns:
+            e = by_plan.setdefault(t['plan'], [0, 0.0]); e[0] += 1; e[1] += t['amount']
+            e = by_rec.setdefault((t['recorded_by'], t['method']), [0, 0.0]); e[0] += 1; e[1] += t['amount']
+
+        def txn_row(t):
+            return [t['txn'], t['member'], t['plan'], t['method'], money(t['amount']),
+                    _to_manila(t['raw_dt']).strftime('%b %d, %Y'), t['recorded_by']]
+
+        hdr = ['Txn#', 'Member', 'Plan / Promo', 'Method', f'Amount ({peso})', 'Date', 'Recorded By']
+        member_tx = [t for t in txns if not t['txn'].startswith('WI-')]
+        walkin_tx = [t for t in txns if t['txn'].startswith('WI-')]
+
+        def foot(group):
+            return ['', '', '', 'Subtotal', money(sum(t['amount'] for t in group)), '', ''] if group else None
+
+        payload['print_sections'] = [
+            {'title': 'Revenue by Plan / Promo', 'layout': 'half',
+             'headers': ['Plan / Promo', 'Txns', f'Total ({peso})'],
+             'rows': [[k, str(v[0]), money(v[1])] for k, v in sorted(by_plan.items(), key=lambda kv: -kv[1][1])]},
+            {'title': 'Collected By', 'layout': 'half',
+             'headers': ['Recorded By', 'Method', 'Txns', f'Total ({peso})'],
+             'rows': [[k[0], k[1], str(v[0]), money(v[1])] for k, v in sorted(by_rec.items(), key=lambda kv: -kv[1][1])]},
+            {'title': 'Member Payments', 'headers': ['Txn#', 'Member', 'Plan / Promo', 'Method', f'Amount ({peso})', 'Date', 'Recorded By'],
+             'rows': [txn_row(t) for t in member_tx], 'footer': foot(member_tx)},
+            {'title': 'Walk-In Guests', 'headers': ['Txn#', 'Guest', 'Plan / Promo', 'Method', f'Amount ({peso})', 'Date', 'Recorded By'],
+             'rows': [txn_row(t) for t in walkin_tx], 'footer': foot(walkin_tx)},
+        ]
+        payload['headers'] = hdr
+        payload['rows'] = [txn_row(t) for t in txns]
+
 
 
 def _membership_report():
@@ -9314,6 +9576,7 @@ def api_admin_report(report_type):
     else:
         return jsonify(success=False, error='Unknown report type.'), 400
 
+    _attach_print_data(payload, report_type, report, start_date, end_date)
     return jsonify(success=True, report=payload)
 
 
@@ -9414,6 +9677,7 @@ def api_staff_report(report_type):
             'cash_by_staff': report['cash_by_staff'],
         }
 
+    _attach_print_data(payload, report_type, report, start_date, end_date)
     return jsonify(success=True, report=payload)
 
 

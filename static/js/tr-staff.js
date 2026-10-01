@@ -1539,9 +1539,9 @@ const StaffModule = (() => {
 
     const byStaffTable = hasByStaff ? `
       <div style="flex:1;min-width:220px;">
-        <div style="font-size:13px;color:var(--muted);margin-bottom:8px;">Cash Collected by Staff</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:8px;">Cash Collected by Recorder (Staff / Admin)</div>
         <table class="data-table">
-          <thead><tr><th>Staff</th><th>Total</th><th>Txns</th></tr></thead>
+          <thead><tr><th>Recorded By</th><th>Total</th><th>Txns</th></tr></thead>
           <tbody>${report.cash_by_staff.map(r => `<tr><td>${r.staff}</td><td>\u20b1${r.total}</td><td>${r.count}</td></tr>`).join('')}</tbody>
         </table>
       </div>` : '';
@@ -1564,13 +1564,14 @@ const StaffModule = (() => {
 
   function exportStaffReportPDF() {
     if (!staffCurrentReportPayload) { showToast('Generate a report first', 'error'); return; }
-    window.print();
-    showToast('Use Print dialog to save as PDF', 'success');
+    // Clean, print-only report layout (see tr-report-print.js) — not the dashboard itself.
+    window.printReport(staffCurrentReportPayload);
+    showToast('In the Print dialog, choose "Save as PDF"', 'success');
   }
 
   /** Meaningful, consistent bar colors per report type/label — mirrors the
    *  palette used on the admin dashboard's Analytics tab. */
-  const _STAFF_MEMBERSHIP_BAR_COLORS = { Active: '#1baf7a', Pending: '#eda100', Expired: '#e34948', Declined: '#898781', 'No Plan': '#898781' };
+  const _STAFF_MEMBERSHIP_BAR_COLORS = { Active: '#1baf7a', Scheduled: '#2a78d6', Pending: '#eda100', Expired: '#e34948', Declined: '#898781', 'No Plan': '#898781' };
   const _STAFF_ATTENDANCE_PALETTE    = ['#3d7dd4', '#1baf7a', '#eda100', '#e34948', '#4a3aa7', '#2fb5c9', '#d6689a', '#8c8c1a'];
 
   function _staffColorForBar(type, label, index) {

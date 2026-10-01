@@ -368,6 +368,8 @@
                   {% for c in coaches %}
                   {% if c.is_active %}
                   <option value="{{ c.name }}" data-days="{{ c.available_days|join(',') }}"
+                          data-full="{{ 1 if c.is_full else 0 }}"
+                          data-label="{{ c.name }}{% if c.name == recommended_coach_name and not c.is_full %} — Recommended{% endif %}"
                           {% if c.is_full %}disabled{% endif %}>
                     {{ c.name }}{% if c.name == recommended_coach_name and not c.is_full %} — Recommended{% endif %}{% if c.is_full %} — Unavailable (Fully Booked){% endif %}
                   </option>
@@ -578,7 +580,7 @@
                       <div class="gcash-proof-row" id="payment-gcash-proof-row">
 
                         <div>
-                          <div style="font-size:12px;color:#c7c7cf;margin-bottom:4px;">Screenshot 1</div>
+                          <div class="gcash-slot-label">Screenshot 1</div>
                           <div class="proof-preview-wrap">
                             <img id="payment-gcash-proof-preview" class="proof-preview" alt="GCash proof preview"
                                  style="display:none;" onclick="openGcashProofPreview(1)">
@@ -606,7 +608,7 @@
                         </div>
 
                         <div id="payment-gcash-slot-2" style="display:none;">
-                          <div style="font-size:12px;color:#c7c7cf;margin-bottom:4px;">Screenshot 2 <span style="color:var(--muted);">(optional — shown when screenshot 1 isn't enough)</span></div>
+                          <div class="gcash-slot-label">Screenshot 2 <span style="color:var(--muted);">(optional — shown when screenshot 1 isn't enough)</span></div>
                           <div class="proof-preview-wrap" id="payment-gcash-preview-wrap-2">
                             <img id="payment-gcash-proof-preview-2" class="proof-preview" alt="GCash proof preview 2"
                                  style="display:none;" onclick="openGcashProofPreview(2)">
@@ -634,7 +636,7 @@
                         </div>
 
                         <div id="payment-gcash-slot-3" style="display:none;">
-                          <div style="font-size:12px;color:#c7c7cf;margin-bottom:4px;">Screenshot 3 <span style="color:var(--muted);">(optional — shown when screenshots 1–2 aren't enough)</span></div>
+                          <div class="gcash-slot-label">Screenshot 3 <span style="color:var(--muted);">(optional — shown when screenshots 1–2 aren't enough)</span></div>
                           <div class="proof-preview-wrap" id="payment-gcash-preview-wrap-3">
                             <img id="payment-gcash-proof-preview-3" class="proof-preview" alt="GCash proof preview 3"
                                  style="display:none;" onclick="openGcashProofPreview(3)">
@@ -1981,6 +1983,20 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="error-notice-modal">
+  <div class="modal" style="max-width:420px;">
+    <button class="modal-close" onclick="closeModal('error-notice-modal')">✕</button>
+    <div style="display:flex;justify-content:center;margin-bottom:14px;">
+      <div style="width:56px;height:56px;border-radius:50%;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.35);display:flex;align-items:center;justify-content:center;">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </div>
+    </div>
+    <div class="modal-title" style="text-align:center;" id="error-notice-title">PLEASE CHECK</div>
+    <div id="error-notice-message" style="font-size:16px;color:var(--white);text-align:center;line-height:1.7;margin:12px 0 22px;word-break:break-word;"></div>
+    <button class="btn btn-red" style="width:100%;justify-content:center;" onclick="closeModal('error-notice-modal')">OK</button>
+  </div>
+</div>
+
 <div class="modal-overlay" id="payment-submit-success-modal">
   <div class="modal" style="max-width:400px;">
     <button class="modal-close" onclick="closePaymentSubmitSuccessModal()">✕</button>
@@ -2083,8 +2099,8 @@
 </div>
 
 <script id="member-dashboard-data" type="application/json">{{ {'present_days': present_days, 'no_plan_days': no_plan_days, 'days_in_month': days_in_month, 'today_day': today_day, 'year': attendance_year, 'month': attendance_month, 'plan_approved_notice': plan_approved_notice, 'payment_verified_notice': payment_verified_notice, 'plan_declined_notice': plan_declined_notice, 'feedback_prompt': feedback_prompt, 'new_announcements': new_announcements, 'bot_reminders': bot_reminders, 'notification_center': notification_center, 'notification_unread_count': notification_unread_count}|tojson }}</script>
-<script src="{{ url_for('static', filename='js/tr-common.js') }}"></script>
-<script src="{{ url_for('static', filename='js/tr-member.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tr-common.js') }}?v=20261002"></script>
+<script src="{{ url_for('static', filename='js/tr-member.js') }}?v=20261002"></script>
 <script src="{{ url_for('static', filename='js/tr-chat.js') }}"></script>
 </body>
 </html>

@@ -85,6 +85,7 @@
       <!-- ── Notification Bell — only shown on the Overview tab. Lists the
            staff-targeted announcements from admin so staff can check them
            any time instead of only catching a one-time popup. ── -->
+      <div class="top-actions">
       <div class="notif-bell-wrap">
         <button class="notif-bell-btn" id="notif-bell-btn" onclick="toggleNotificationPanel()" aria-label="Notifications" aria-haspopup="true">
           🔔
@@ -97,6 +98,7 @@
           </div>
         </div>
       </div>
+      </div><!-- /top-actions -->
 
       <div class="page-header">
         <div><div class="page-title">STAFF DASHBOARD</div><div class="page-subtitle">Today's operations at a glance</div></div>
@@ -678,13 +680,19 @@
           <tbody>
             {% for m in members %}
             <tr data-name="{{ m.name|lower }}"
-                data-status="{{ 'active' if m.status == 'Active' else 'pending' if m.status == 'Pending' else 'expired' }}">
+                data-status="{{ 'active' if m.status == 'Active' else 'pending' if m.status in ('Pending', 'Scheduled') else 'expired' if m.status == 'Expired' else 'other' }}">
               <td class="col-member-id">#{{ m.id }}</td><td>{{ m.name }}</td><td>{{ m.plan_label }}</td><td>{{ m.expiry }}</td>
               <td>
                 {% if m.status == 'Active' %}
                 <span class="badge badge-green">Active</span>
                 {% elif m.status == 'Pending' %}
                 <span class="badge badge-blue">Pending</span>
+                {% elif m.status == 'Scheduled' %}
+                <span class="badge badge-gold">Scheduled</span>
+                {% elif m.status == 'Declined' %}
+                <span class="badge badge-muted">Declined</span>
+                {% elif m.status == 'No Plan' %}
+                <span class="badge badge-muted">No Plan</span>
                 {% else %}
                 <span class="badge badge-red">Expired</span>
                 {% endif %}
@@ -1410,6 +1418,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
 <script src="{{ url_for('static', filename='js/tr-common.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tr-report-print.js') }}"></script>
 <script src="{{ url_for('static', filename='js/tr-staff.js') }}"></script>
 </body>
 </html>

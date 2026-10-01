@@ -627,6 +627,48 @@ const MemberModule = (() => {
 
   const _WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+  /** Marks each coach option "— Unavailable" and disables it when the coach
+   *  is fully booked, or (once a start date is chosen) isn't working that
+   *  weekday — so only coaches who can actually take the member on that
+   *  day are selectable. If the member had already picked a coach who has
+   *  just become unavailable, the choice is cleared with an explanation. */
+  function _syncCoachOptionAvailability(coachSelect, startDate, note) {
+    const weekday = startDate ? _WEEKDAY_ABBR[new Date(startDate + 'T00:00:00').getDay()] : '';
+    const dayName = startDate
+      ? new Date(startDate + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long' })
+      : '';
+    let clearedName = '';
+
+    Array.from(coachSelect.options).forEach(opt => {
+      if (!opt.value) return;                       // the "Select a coach" placeholder
+      if (opt.dataset.label === undefined) return;
+      const days = (opt.dataset.days || '').split(',').map(d => d.trim()).filter(Boolean);
+      const isFull = opt.dataset.full === '1';
+      const offDay = !!weekday && days.length > 0 && !days.includes(weekday);
+
+      if (isFull) {
+        opt.disabled = true;
+        opt.textContent = `${opt.value} — Unavailable (Fully Booked)`;
+      } else if (offDay) {
+        opt.disabled = true;
+        opt.textContent = `${opt.value} — Unavailable on ${dayName}s`;
+      } else {
+        opt.disabled = false;
+        opt.textContent = opt.dataset.label;
+      }
+
+      if (opt.disabled && coachSelect.value === opt.value) clearedName = opt.value;
+    });
+
+    if (clearedName) {
+      coachSelect.value = '';
+      if (note) {
+        note.style.color = 'var(--gold, #e6b800)';
+        note.textContent = `${clearedName} is unavailable on ${dayName}s — please choose an available coach.`;
+      }
+    }
+  }
+
   /** Checks the currently-selected coach's available days against the
    *  chosen start date and shows a friendly heads-up if they don't line
    *  up — e.g. picking a Tuesday start for a Mon/Wed/Fri-only coach.
@@ -637,6 +679,12 @@ const MemberModule = (() => {
     const coachSelect = document.getElementById('member-renew-coach-name');
     const startInput = document.getElementById('member-renew-start');
     if (!note || !coachSelect) return;
+
+    // Grey out + label every coach who can't take the member on the chosen
+    // start day (fully booked, or not working that weekday) BEFORE reading
+    // the current selection, so a coach that just became unavailable is
+    // dropped from the select.
+    _syncCoachOptionAvailability(coachSelect, startInput?.value || '', note);
 
     const coachName = coachSelect.value;
     const startDate = startInput?.value || '';
@@ -1484,11 +1532,20 @@ const MemberModule = (() => {
         // the rest of the form first. The server repeats this check
         // independently at final submit as the real gate.
         if (data.reference_already_used) {
-          showToast(
+          showErrorModal(
             'This screenshot\'s reference number has already been used for another payment. ' +
             'Please attach a different transaction.',
-            'error'
+            'RECEIPT NOT ACCEPTED'
           );
+          removeGcashProof(slot);
+          return;
+        }
+
+        // The date printed on this receipt is earlier than the day the plan/promo
+        // was requested — that payment can't belong to this request. Reject it
+        // right away (the server repeats the check at submit as the real gate).
+        if (data.date_error) {
+          showErrorModal(data.date_error, 'RECEIPT NOT ACCEPTED');
           removeGcashProof(slot);
           return;
         }
@@ -1555,10 +1612,10 @@ const MemberModule = (() => {
       const otherRef = _gcashSlotReference[otherSlot];
       if (!otherRef) continue;
       if (otherRef.replace(/\s+/g, '').toLowerCase() === normalized) {
-        showToast(
+        showErrorModal(
           `Screenshot ${slot} looks like the same GCash receipt as Screenshot ${otherSlot} ` +
           `(same reference number). Please upload a different transaction.`,
-          'error'
+          'DUPLICATE RECEIPT'
         );
         removeGcashProof(slot);
         return;
@@ -1886,7 +1943,7 @@ const MemberModule = (() => {
       const requiredAmount = parseFloat((document.getElementById('payment-gcash-amount')?.dataset.required || '').replace(/,/g, ''));
       const paidAmount = parseFloat(amountPaid.replace(/,/g, ''));
       if (!amountPaid || isNaN(paidAmount) || (!isNaN(requiredAmount) && paidAmount + 0.01 < requiredAmount)) {
-        showToast('The amount paid must cover the full amount required for this plan/promo before you can submit.', 'error');
+        showErrorModal('The amount paid must cover the full amount required for this plan/promo before you can submit.', 'INCOMPLETE PAYMENT');
         return;
       }
 
@@ -1911,7 +1968,7 @@ const MemberModule = (() => {
         hideLoadingOverlay();
         closeModal('confirm-payment-modal');
         if (!ok || !data.success) {
-          showToast(data.error || 'Failed to submit payment.', 'error');
+          showErrorModal(data.error || 'Failed to submit payment.', 'PAYMENT NOT SUBMITTED');
           return;
         }
         _pendingPaymentMethod = null;
