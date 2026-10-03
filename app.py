@@ -1494,6 +1494,10 @@ class Coach(db.Model):
     max_members    = db.Column(db.Integer, nullable=False, default=10)
     fee            = db.Column(db.Numeric(10, 2), nullable=False, default=0)  # added on top of the plan price when a member picks this coach
     is_active      = db.Column(db.Boolean, nullable=False, default=True)
+    # ── Coach Profile fields (shown to members in the profile pop-up) ──
+    photo_path     = db.Column(db.String(255), nullable=True)   # web-relative path under /static
+    specialization = db.Column(db.String(120), nullable=True)
+    bio            = db.Column(db.Text, nullable=True)
     updated_at     = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
                                onupdate=lambda: datetime.now(timezone.utc))
 
@@ -1903,6 +1907,12 @@ class GymSettings(db.Model):
     schedule_weekday_hours = db.Column(db.String(60), nullable=False, default='6:00 AM – 10:00 PM')
     schedule_weekend_label = db.Column(db.String(60), nullable=False, default='Sunday')
     schedule_weekend_hours = db.Column(db.String(60), nullable=False, default='7:00 AM – 8:00 PM')
+    # Staff → Settings → Check-in/Out Settings → "Automatic Check-Out Alert
+    # Time". A member still checked in after this many minutes triggers the
+    # Staff-only "Forgotten Check-Out" pop-up. Stored in minutes so a custom
+    # value (e.g. 2h 30m) is exact; the UI shows/collects whole hours or a
+    # custom hours+minutes pair. Default 300 (= 5 hours).
+    checkout_alert_minutes = db.Column(db.Integer, nullable=False, default=300, server_default=db.text('300'))
     updated_at         = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
                                     onupdate=lambda: datetime.now(timezone.utc))
 
@@ -6059,8 +6069,9 @@ VALID_COACH_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 @app.route('/staff/coach/update', methods=['POST'])
 def staff_update_coach():
-    """Staff edits a coach's available days and member capacity so members
-    see accurate availability when requesting that coach."""
+    """Staff/admin edits a coach's full profile: photo, name, specialization,
+    bio, available days, capacity, fee and status. Members read the same
+    database row (see /coach/<id>/profile), so edits appear for them at once."""
     if session.get('role') not in ('staff', 'admin'):
         return jsonify(success=False, error='Unauthorized.'), 403
 
@@ -6082,20 +6093,95 @@ def staff_update_coach():
     if fee is None or fee < 0:
         return jsonify(success=False, error='Coach fee must be 0 or a positive amount.'), 400
 
-    current_occupancy = _get_coach_occupancy().get(coach.name, 0)
+    old_name = coach.name
+    current_occupancy = _get_coach_occupancy().get(old_name, 0)
     if max_members < current_occupancy:
         return jsonify(
             success=False,
-            error=f'{coach.name} currently has {current_occupancy} active member(s) — '
+            error=f'{old_name} currently has {current_occupancy} active member(s) — '
                   f'capacity cannot be set below that.'
         ), 400
+
+    # ── Name (optional in the form; only changed when a new one is sent) ──
+    new_name = (request.form.get('name') or '').strip()
+    if new_name and new_name != old_name:
+        if len(new_name) > 60:
+            return jsonify(success=False, error='Coach name must be 60 characters or fewer.'), 400
+        clash = Coach.query.filter(db.func.lower(Coach.name) == new_name.lower(),
+                                   Coach.id != coach.id).first()
+        if clash:
+            return jsonify(success=False, error=f'A coach named "{new_name}" already exists.'), 400
+        coach.name = new_name
+        # Payments / walk-ins store the coach NAME as text, so keep them
+        # pointing at the renamed coach (occupancy + fee lookups use it).
+        Payment.query.filter_by(coach_name=old_name).update({'coach_name': new_name})
+        WalkIn.query.filter_by(coach_name=old_name).update({'coach_name': new_name})
+
+    # ── Specialization / bio ──
+    if 'specialization' in request.form:
+        spec = (request.form.get('specialization') or '').strip()
+        if len(spec) > 120:
+            return jsonify(success=False, error='Specialization must be 120 characters or fewer.'), 400
+        coach.specialization = spec or None
+    if 'bio' in request.form:
+        bio = (request.form.get('bio') or '').strip()
+        if len(bio) > 2000:
+            return jsonify(success=False, error='Bio must be 2000 characters or fewer.'), 400
+        coach.bio = bio or None
+
+    # ── Status (Active / Inactive) ──
+    status = (request.form.get('status') or '').strip().lower()
+    if status in ('active', 'inactive'):
+        coach.is_active = (status == 'active')
+
+    # ── Photo (new upload replaces the old one; "remove_photo" clears it) ──
+    old_photo = coach.photo_path
+    try:
+        new_photo = _save_content_image(request.files.get('photo'), old_photo)
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    if request.form.get('remove_photo') == '1' and new_photo == old_photo:
+        new_photo = None
+    coach.photo_path = new_photo
 
     coach.available_days = ','.join(days)
     coach.max_members = max_members
     coach.fee = fee
     db.session.commit()
 
-    return jsonify(success=True, message=f"{coach.name}'s availability and fee updated.")
+    if old_photo and old_photo != coach.photo_path and old_photo.startswith('uploads/content/'):
+        _delete_content_image(old_photo)
+
+    return jsonify(success=True, message=f"{coach.name}'s profile updated.")
+
+
+@app.route('/coach/<int:coach_id>/profile', methods=['GET'])
+def coach_profile(coach_id):
+    """Read-only coach profile for the pop-up. Any logged-in user may view it.
+    Always reads the live database row, so a staff edit shows up on the very
+    next click — no cache."""
+    if 'role' not in session:
+        return jsonify(success=False, error='Please log in.'), 401
+    coach = Coach.query.get(coach_id)
+    if coach is None:
+        return jsonify(success=False, error='Coach not found.'), 404
+
+    occupied = _get_coach_occupancy().get(coach.name, 0)
+    resp = jsonify(success=True, coach={
+        'id':             coach.id,
+        'name':           coach.name,
+        'photo_url':      url_for('static', filename=coach.photo_path) if coach.photo_path else '',
+        'specialization': coach.specialization or '',
+        'bio':            coach.bio or '',
+        'available_days': coach.available_days_list,
+        'max_members':    coach.max_members,
+        'current_members': occupied,
+        'slots_left':     max(coach.max_members - occupied, 0),
+        'fee':            float(coach.fee),
+        'is_active':      bool(coach.is_active),
+    })
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
 
 
 @app.route('/staff/coach/add', methods=['POST'])
@@ -6387,6 +6473,126 @@ def staff_checkout():
         session_note=session_note,
     )
 
+
+
+# ── Automatic Forgotten Check-Out Alert (STAFF ONLY) ─────────
+# A member who is still checked in after the configured number of minutes
+# (Staff → Settings → Check-in/Out Settings) is "forgotten": the Staff
+# dashboard pops an alert, highlights the member's row and lists them under
+# "Pending Forgotten Check-Outs" until they are actually checked out.
+#
+# Role rule: every route below is `role == 'staff'` ONLY. Admin gets a 403 —
+# admins never receive the pop-up, never see these alerts and cannot change
+# the threshold. (Check-in/out itself keeps its existing staff+admin access.)
+CHECKOUT_ALERT_DEFAULT_MINUTES = 300     # 5 hours
+CHECKOUT_ALERT_MIN_MINUTES     = 15      # custom values: 15 minutes ...
+CHECKOUT_ALERT_MAX_MINUTES     = 1440    # ... up to 24 hours
+
+
+def _get_checkout_alert_minutes():
+    """The saved forgotten-check-out threshold, in minutes (default 5 h)."""
+    settings = _get_gym_settings()
+    mins = getattr(settings, 'checkout_alert_minutes', None)
+    if not isinstance(mins, int) or mins < CHECKOUT_ALERT_MIN_MINUTES:
+        return CHECKOUT_ALERT_DEFAULT_MINUTES
+    return min(mins, CHECKOUT_ALERT_MAX_MINUTES)
+
+
+def _format_elapsed(total_minutes):
+    h, m = divmod(max(0, int(total_minutes)), 60)
+    return f'{h}h {m}m' if h else f'{m}m'
+
+
+def _forgotten_checkouts():
+    """Every member who is STILL checked in past the threshold, oldest first.
+
+    Looks at all open attendance rows — not just today's — so a member who
+    checked in last night and was never checked out is still caught.
+    Check-in time is stored as naive UTC; `check_in_iso` carries a 'Z' so the
+    browser can keep the live duration ticking on its own clock."""
+    threshold = _get_checkout_alert_minutes()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    cutoff = now - timedelta(minutes=threshold)
+    today = _today_manila()
+
+    rows = (
+        Attendance.query
+        .options(joinedload(Attendance.member))
+        .filter(Attendance.check_out.is_(None), Attendance.check_in <= cutoff)
+        .order_by(Attendance.check_in.asc())
+        .all()
+    )
+    items = []
+    for a in rows:
+        member = a.member
+        if member is None or member.role != 'member':
+            continue
+        in_manila = _to_manila(a.check_in)
+        elapsed_min = int((now - a.check_in).total_seconds() // 60)
+        time_text = in_manila.strftime('%I:%M %p').lstrip('0')
+        # Checked in on an earlier day: say which, so "9:00 PM" isn't ambiguous.
+        if in_manila.date() != today:
+            time_text = f"{in_manila.strftime('%b %d').replace(' 0', ' ')}, {time_text}"
+        items.append({
+            'attendance_id': a.id,
+            'member_id': member.id,
+            'member_name': member.full_name,
+            'email': member.email,
+            'check_in_text': time_text,
+            'check_in_iso': a.check_in.isoformat() + 'Z',
+            'elapsed_minutes': elapsed_min,
+            'elapsed_text': _format_elapsed(elapsed_min),
+        })
+    return threshold, items
+
+
+@app.route('/staff/forgotten-checkouts', methods=['GET'])
+def staff_forgotten_checkouts():
+    """Pending/forgotten check-outs for the Staff dashboard (polled by the
+    page so the alert appears without a manual refresh). STAFF ONLY."""
+    if session.get('role') != 'staff':
+        return jsonify(success=False, error='Unauthorized.'), 403
+    threshold, items = _forgotten_checkouts()
+    resp = jsonify(
+        success=True,
+        threshold_minutes=threshold,
+        threshold_text=_format_elapsed(threshold),
+        server_now_iso=datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z',
+        items=items,
+    )
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
+
+
+@app.route('/staff/checkout-alert-settings', methods=['POST'])
+def staff_save_checkout_alert_settings():
+    """Save the Automatic Check-Out Alert Time (Check-in/Out Settings).
+    Accepts `minutes` (int). STAFF ONLY — admin cannot edit this."""
+    if session.get('role') != 'staff':
+        return jsonify(success=False, error='Unauthorized.'), 403
+
+    data = request.get_json(silent=True) or request.form
+    raw = data.get('minutes')
+    try:
+        minutes = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return jsonify(success=False, error='Please enter a valid time.'), 400
+    if minutes < CHECKOUT_ALERT_MIN_MINUTES or minutes > CHECKOUT_ALERT_MAX_MINUTES:
+        return jsonify(
+            success=False,
+            error=f'Alert time must be between {CHECKOUT_ALERT_MIN_MINUTES} minutes and '
+                  f'{CHECKOUT_ALERT_MAX_MINUTES // 60} hours.',
+        ), 400
+
+    settings = _get_gym_settings()
+    settings.checkout_alert_minutes = minutes
+    db.session.commit()
+    return jsonify(
+        success=True,
+        message=f'Automatic check-out alert set to {_format_elapsed(minutes)}.',
+        minutes=minutes,
+        threshold_text=_format_elapsed(minutes),
+    )
 
 
 @app.route('/staff/send-reminder/<int:member_id>', methods=['POST'])
@@ -7920,6 +8126,8 @@ def member():
             # whatever the coach's fee actually was.
             plan_wants_coach = bool(latest_payment_row and latest_payment_row.wants_coach and latest_payment_row.coach_name)
             plan_coach_name  = latest_payment_row.coach_name if plan_wants_coach else None
+            _plan_coach_row  = Coach.query.filter_by(name=plan_coach_name).first() if plan_coach_name else None
+            plan_coach_id    = _plan_coach_row.id if _plan_coach_row else None
             plan_is_promo    = bool(latest_payment_row and _is_promo_payment(latest_payment_row))
             plan_coach_fee   = (0.0 if plan_is_promo else _coach_fee(latest_payment_row.coach_name)) if plan_wants_coach else 0.0
 
@@ -7954,6 +8162,7 @@ def member():
                 'payment_status': payment_status,
                 'wants_coach': plan_wants_coach,
                 'coach_name': plan_coach_name,
+                'coach_id': plan_coach_id,
                 'coach_fee': plan_coach_fee,
             }
 
@@ -8590,11 +8799,29 @@ def _get_members_checkin_status():
         for a in todays_rows:
             todays_entries_by_member.setdefault(a.member_id, []).append(a)
 
+    # A member who checked in on an EARLIER day and was never checked out
+    # still has an open visit. Without this they'd show a CHECK IN button
+    # that can only fail with "already checked in" — show them as checked in
+    # (with a CHECK OUT button) so the forgotten visit can be closed.
+    stale_open_by_member = {}
+    if member_ids:
+        for a in (
+            Attendance.query
+            .filter(Attendance.member_id.in_(member_ids),
+                    Attendance.check_out.is_(None),
+                    Attendance.check_in < today_start)
+            .order_by(Attendance.check_in.desc())
+            .all()
+        ):
+            stale_open_by_member.setdefault(a.member_id, a)
+
     result = []
     for m in members:
         entries     = todays_entries_by_member.get(m['id'], [])
         latest      = entries[0] if entries else None
         open_entry  = next((e for e in entries if e.check_out is None), None)
+        if open_entry is None and m['id'] in stale_open_by_member:
+            open_entry = latest = stale_open_by_member[m['id']]
 
         if open_entry is not None:
             checkin_status = 'in'
@@ -8608,6 +8835,9 @@ def _get_members_checkin_status():
 
         check_in_text  = latest_check_in_manila.strftime('%I:%M %p').lstrip('0') if latest_check_in_manila else '—'
         check_out_text = latest_check_out_manila.strftime('%I:%M %p').lstrip('0') if latest_check_out_manila else '—'
+        if latest_check_in_manila and latest_check_in_manila.date() != today:
+            # leftover open visit from an earlier day — say which day
+            check_in_text = f"{latest_check_in_manila.strftime('%b %d').replace(' 0', ' ')}, {check_in_text}"
 
         duration_text = '—'
         if latest and latest.check_out:
@@ -8848,6 +9078,16 @@ def staff():
         }
 
     payment_members = [_payment_member_entry(m) for m in members]
+    # What the Member dropdown shows/fills in: the member's name. If two
+    # members share the exact same name, the email is added so each
+    # suggestion stays unique and unambiguous.
+    _name_counts = {}
+    for _pm in payment_members:
+        _k = (_pm['name'] or '').strip().lower()
+        _name_counts[_k] = _name_counts.get(_k, 0) + 1
+    for _pm in payment_members:
+        _k = (_pm['name'] or '').strip().lower()
+        _pm['display'] = _pm['name'] if _name_counts[_k] == 1 else f"{_pm['name']} ({_pm['email']})"
 
     payment_promo_options = [
         {'id': pr.id, 'title': pr.title, 'price': float(pr.price)}
@@ -9713,6 +9953,9 @@ def _get_coaches_data():
         'max_members':    c.max_members,
         'fee':            float(c.fee),
         'is_active':      c.is_active,
+        'photo_path':     c.photo_path or '',
+        'specialization': c.specialization or '',
+        'bio':            c.bio or '',
         'current_members': occupancy.get(c.name, 0),
         'slots_left':     max(c.max_members - occupancy.get(c.name, 0), 0),
         'is_full':        occupancy.get(c.name, 0) >= c.max_members,
@@ -10817,6 +11060,10 @@ def _run_startup_migrations():
         ('gym_equipment',  'is_facility', "ALTER TABLE gym_equipment ADD COLUMN is_facility TINYINT(1) NOT NULL DEFAULT 0"),
         ('users', 'last_seen_announcements_at', "ALTER TABLE users ADD COLUMN last_seen_announcements_at DATETIME NULL"),
         ('coaches', 'fee', "ALTER TABLE coaches ADD COLUMN fee DECIMAL(10,2) NOT NULL DEFAULT 0"),
+        # ── Coach Profile (photo, specialization, bio) ──
+        ('coaches', 'photo_path',     "ALTER TABLE coaches ADD COLUMN photo_path VARCHAR(255) NULL"),
+        ('coaches', 'specialization', "ALTER TABLE coaches ADD COLUMN specialization VARCHAR(120) NULL"),
+        ('coaches', 'bio',            "ALTER TABLE coaches ADD COLUMN bio TEXT NULL"),
         # ── Walk-in guests optionally availing a coach for their visit ──
         ('walk_ins', 'wants_coach', "ALTER TABLE walk_ins ADD COLUMN wants_coach TINYINT(1) NOT NULL DEFAULT 0"),
         ('walk_ins', 'coach_name',  "ALTER TABLE walk_ins ADD COLUMN coach_name VARCHAR(60) NULL"),
@@ -10876,6 +11123,8 @@ def _run_startup_migrations():
         ('fitness_profiles', 'calculated_weight', "ALTER TABLE fitness_profiles ADD COLUMN calculated_weight DECIMAL(5,2) NULL"),
         # ── Primary Objective decoupled from workout focus ──
         ('fitness_profiles', 'primary_objective', "ALTER TABLE fitness_profiles ADD COLUMN primary_objective VARCHAR(20) NULL DEFAULT 'MAINTAIN'"),
+        # ── Staff-only Automatic Forgotten Check-Out Alert threshold (minutes) ──
+        ('gym_settings', 'checkout_alert_minutes', "ALTER TABLE gym_settings ADD COLUMN checkout_alert_minutes INT NOT NULL DEFAULT 300"),
 
     ]
     with db.engine.connect() as conn:

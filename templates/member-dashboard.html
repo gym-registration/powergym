@@ -377,6 +377,22 @@
                   {% endfor %}
                 </select>
                 <div id="member-coach-availability-note" style="font-size:13px;margin-top:6px;line-height:1.5;"></div>
+                {% if coaches|selectattr('is_active')|list %}
+                <div style="font-size:13px;color:var(--muted);margin-top:12px;">Tap a coach to view their profile:</div>
+                <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;">
+                  {% for c in coaches if c.is_active %}
+                  <button type="button" onclick="openCoachProfile({{ c.id }})" title="View {{ c.name }}'s profile"
+                          style="display:flex;align-items:center;gap:8px;background:transparent;border:1px solid var(--border,#333);border-radius:999px;padding:4px 14px 4px 4px;color:var(--white);cursor:pointer;font-size:14px;">
+                    {% if c.photo_path %}
+                    <img src="{{ url_for('static', filename=c.photo_path) }}" alt="" style="width:32px;height:32px;border-radius:50%;object-fit:cover;">
+                    {% else %}
+                    <span style="width:32px;height:32px;border-radius:50%;background:var(--card2,#1d1d24);display:inline-flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:16px;color:var(--muted);">{{ c.name[:1]|upper }}</span>
+                    {% endif %}
+                    {{ c.name }}
+                  </button>
+                  {% endfor %}
+                </div>
+                {% endif %}
                 <div style="font-size:14px;color:#c7c7cf;margin-top:4px;">
                   A coach is included with this promo at no extra cost. Not sure who to pick? The coach marked "Recommended" currently has the most open slots. Staff will confirm availability when reviewing your request.
                 </div>
@@ -417,7 +433,7 @@
             <div class="goal-item"><div class="goal-header"><span>Days Left</span><span class="goal-val {% if plan.days_left > 3 %}green{% else %}red{% endif %}" style="font-weight:700;">{{ plan.days_left }} days</span></div></div>
             {% endif %}
             {% if plan.wants_coach %}
-            <div class="goal-item"><div class="goal-header"><span>Coach</span><span>{{ plan.coach_name }}</span></div></div>
+            <div class="goal-item"><div class="goal-header"><span>Coach</span><span>{% if plan.coach_id %}<a href="javascript:void(0)" onclick="openCoachProfile({{ plan.coach_id }})" title="View coach profile" style="color:var(--red);text-decoration:underline;cursor:pointer;">{{ plan.coach_name }}</a>{% else %}{{ plan.coach_name }}{% endif %}</span></div></div>
             <div class="goal-item"><div class="goal-header"><span>Coach Fee</span><span>{% if plan.coach_fee %}+₱{{ '{:,.0f}'.format(plan.coach_fee) if plan.coach_fee == plan.coach_fee|int else '{:,.2f}'.format(plan.coach_fee) }}{% else %}Free{% endif %}</span></div></div>
             {% endif %}
             <div class="progress-bar" style="margin-top:16px;"><div class="progress-fill" data-width="{{ plan.percent_used }}"></div></div>
@@ -1703,6 +1719,59 @@
     <ol class="exercise-instructions-list" id="exercise-instructions-modal-steps"></ol>
   </div>
 </div>
+
+<!-- ── Coach profile pop-up (data comes live from /coach/<id>/profile) ── -->
+<div class="modal-overlay" id="coach-profile-modal">
+  <div class="modal" style="text-align:center;">
+    <button class="modal-close" onclick="closeModal('coach-profile-modal')">✕</button>
+    <div id="coach-profile-body" style="font-size:15px;color:var(--muted);">Loading…</div>
+  </div>
+</div>
+<script>
+  function openCoachProfile(coachId) {
+    var body = document.getElementById('coach-profile-body');
+    body.textContent = 'Loading…';
+    openModal('coach-profile-modal');
+    fetch('/coach/' + coachId + '/profile', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.success) { body.textContent = d.error || 'Could not load this coach.'; return; }
+        var c = d.coach;
+        body.innerHTML = '';
+
+        function el(tag, css, text) {
+          var n = document.createElement(tag);
+          if (css) n.style.cssText = css;
+          if (text !== undefined) n.textContent = text;
+          return n;
+        }
+        function row(label, value) {
+          var r = el('div', 'display:flex;justify-content:space-between;gap:16px;padding:7px 0;border-bottom:1px solid var(--border,#333);font-size:15px;text-align:left;');
+          r.appendChild(el('span', 'color:var(--muted);', label));
+          r.appendChild(el('strong', 'color:var(--white);text-align:right;', value));
+          return r;
+        }
+
+        if (c.photo_url) {
+          var img = el('img', 'width:120px;height:120px;border-radius:50%;object-fit:cover;border:3px solid var(--red);margin-bottom:12px;');
+          img.src = c.photo_url; img.alt = c.name;
+          body.appendChild(img);
+        } else {
+          body.appendChild(el('div', "width:120px;height:120px;border-radius:50%;background:var(--card2,#1d1d24);border:3px solid var(--border,#333);display:inline-flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:52px;color:var(--muted);margin-bottom:12px;", (c.name || '?').charAt(0).toUpperCase()));
+        }
+        body.appendChild(el('div', "font-family:'Bebas Neue',sans-serif;font-size:31px;letter-spacing:2px;color:var(--white);", c.name));
+        body.appendChild(el('div', 'font-size:15px;color:var(--red);margin-bottom:14px;', c.specialization || 'Personal Coach'));
+        if (c.bio) body.appendChild(el('div', 'font-size:15px;color:#c7c7cf;line-height:1.6;margin-bottom:14px;white-space:pre-line;text-align:left;', c.bio));
+
+        body.appendChild(row('Available Days', c.available_days.length ? c.available_days.join(', ') : '—'));
+        body.appendChild(row('Capacity', c.current_members + ' / ' + c.max_members + ' members'));
+        body.appendChild(row('Slots Left', c.slots_left > 0 ? String(c.slots_left) : 'Fully booked'));
+        body.appendChild(row('Coach Fee', c.fee > 0 ? '₱' + c.fee.toLocaleString(undefined, { minimumFractionDigits: 2 }) : 'Free'));
+        body.appendChild(row('Status', c.is_active ? 'Active' : 'Inactive'));
+      })
+      .catch(function () { body.textContent = 'Could not load this coach. Please try again.'; });
+  }
+</script>
 
 <div class="modal-overlay" id="plan-modal">
   <div class="modal">

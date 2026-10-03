@@ -38,6 +38,8 @@ const StaffModule = (() => {
 
     _tickLiveDurations();
     setInterval(_tickLiveDurations, 1000);
+
+    if (window.ForgottenCheckoutAlerts) ForgottenCheckoutAlerts.start();
   }
 
   /** Parse the staff-dashboard-data JSON <script> tag embedded by the server. */
@@ -181,6 +183,27 @@ const StaffModule = (() => {
     return _paymentMembers;
   }
 
+  /** Resolve whatever is in the Member field to a member record. Accepts the
+   *  dropdown text (name, or "Name (email)" when two members share a name),
+   *  an email, a #id / numeric id, or a unique full name. Returns null when
+   *  nothing matches (staff may still be typing). */
+  function _findPaymentMember(value) {
+    const v = (value || '').trim().toLowerCase();
+    if (!v) return null;
+    const members = _loadPaymentMembers();
+    let m = members.find(x => (x.display || '').toLowerCase() === v);
+    if (m) return m;
+    m = members.find(x => (x.email || '').toLowerCase() === v);
+    if (m) return m;
+    const idText = v.replace(/^#/, '');
+    if (/^\d+$/.test(idText)) {
+      m = members.find(x => String(x.id) === idText);
+      if (m) return m;
+    }
+    const byName = members.filter(x => (x.name || '').toLowerCase() === v);
+    return byName.length === 1 ? byName[0] : null;
+  }
+
   /** Select the <option> in #pay-plan whose value matches (case-insensitive).
    *  Plans use their name as the value; promos use "promo:<id>". No-op if
    *  the value isn't one of the listed options. */
@@ -262,7 +285,7 @@ const StaffModule = (() => {
     }
 
     const members = _loadPaymentMembers();
-    const match = members.find(m => (m.email || '').toLowerCase() === identifier);
+    const match = _findPaymentMember(identifier);
     if (!match) {
       showManualCheckbox();
       _updatePlanOptionLabels();
@@ -370,12 +393,20 @@ const StaffModule = (() => {
       return;
     }
 
-    _pendingRecordPayment = { memberIdentifier, planName, method, isStudent: promoId ? false : isStudent, promoId };
+    // Send the member's email when the field matches a known member, so two
+    // members with the same name can never be mixed up. Typed ids / emails /
+    // unknown names are sent exactly as entered (the server resolves them).
+    const resolved = _findPaymentMember(memberIdentifier);
+    _pendingRecordPayment = {
+      memberIdentifier: resolved ? resolved.email : memberIdentifier,
+      memberLabel: resolved ? resolved.name : memberIdentifier,
+      planName, method, isStudent: promoId ? false : isStudent, promoId
+    };
 
     const msgEl = document.getElementById('confirm-record-payment-message');
     if (msgEl) {
       const amountText = '₱' + amount.toLocaleString('en-PH', { minimumFractionDigits: amount % 1 ? 2 : 0 });
-      msgEl.textContent = `Record a ${planName} payment of ${amountText}${isStudent ? ' (student rate)' : ''} for ${memberIdentifier}?`;
+      msgEl.textContent = `Record a ${planName} payment of ${amountText}${isStudent ? ' (student rate)' : ''} for ${_pendingRecordPayment.memberLabel}?`;
     }
     openModal('confirm-record-payment-modal');
   }
@@ -709,6 +740,8 @@ const StaffModule = (() => {
         if (data.session_note) showToast(data.session_note, 'error');
         _applyRowCheckOut(row, identifier, data.time, data.duration, data);
         _playCheckAnimation(row, 'out');
+        // Forgotten check-out alert: this member is no longer pending.
+        if (window.ForgottenCheckoutAlerts) ForgottenCheckoutAlerts.onCheckedOut(identifier);
       })
       .catch(() => {
         if (btn) { btn.disabled = false; btn.textContent = originalLabel; }
@@ -1798,6 +1831,346 @@ const StaffModule = (() => {
 
 
 /* ════════════════════════════════════════════════
+   FORGOTTEN CHECK-OUT ALERTS  (STAFF ONLY)
+   Polls /staff/forgotten-checkouts (403 for admin — and this file is
+   never loaded on the Admin dashboard). A member still checked in
+   after the saved threshold gets: a pop-up, a highlighted row in the
+   Check-in/Out table, and an entry in "Pending Forgotten Check-Outs".
+   Dismiss only hides the pop-up — the member stays flagged until they
+   are actually checked out. No page refresh needed.
+════════════════════════════════════════════════ */
+const ForgottenCheckoutAlerts = (() => {
+  const POLL_MS        = 15000;
+  const STORAGE_KEY    = 'pg_forgotten_checkout_dismissed_v1';
+
+  let items       = [];          // latest list from the server
+  let dismissed   = new Set();   // attendance ids whose pop-up was dismissed (this browser)
+  let currentId   = null;        // attendance id shown in the pop-up right now
+  let started     = false;
+  let pollTimer   = null;
+  let inFlight    = false;
+  let escBound    = false;
+
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    if (Array.isArray(saved)) dismissed = new Set(saved);
+  } catch (e) { /* storage unavailable — dismissals just won't survive a refresh */ }
+
+  function _persist() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...dismissed])); } catch (e) { /* ignore */ }
+  }
+
+  function _esc(s) {
+    return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function _minutesSince(iso) {
+    const t = new Date(iso).getTime();
+    if (Number.isNaN(t)) return 0;
+    return Math.max(0, Math.floor((Date.now() - t) / 60000));
+  }
+
+  /** "5h 15m" */
+  function _short(mins) {
+    const h = Math.floor(mins / 60), m = mins % 60;
+    return h ? `${h}h ${m}m` : `${m}m`;
+  }
+
+  /** "5 hours and 15 minutes" */
+  function _long(mins) {
+    const h = Math.floor(mins / 60), m = mins % 60;
+    const hp = h ? `${h} hour${h === 1 ? '' : 's'}` : '';
+    const mp = m ? `${m} minute${m === 1 ? '' : 's'}` : '';
+    if (hp && mp) return `${hp} and ${mp}`;
+    return hp || mp || '0 minutes';
+  }
+
+  function start() {
+    if (started) return;
+    started = true;
+
+    // Delegated clicks for the Pending list buttons (names/emails stay out of inline JS).
+    const list = document.getElementById('forgotten-list');
+    if (list) {
+      list.addEventListener('click', e => {
+        const btn = e.target.closest('button[data-fco-action]');
+        if (!btn) return;
+        const item = items.find(i => String(i.attendance_id) === btn.dataset.id);
+        if (!item) return;
+        if (btn.dataset.fcoAction === 'checkout') _checkOutItem(item);
+        else if (btn.dataset.fcoAction === 'view') _viewItem(item);
+      });
+    }
+
+    if (!escBound) {
+      escBound = true;
+      document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && _modal() && _modal().classList.contains('open')) dismiss();
+      });
+    }
+    // Backdrop click = dismiss (recorded), same as the Dismiss button.
+    const modal = _modal();
+    if (modal) modal.addEventListener('click', e => { if (e.target === modal) dismiss(); });
+
+    // Fresh data the moment staff come back to this tab/window.
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+    window.addEventListener('focus', refresh);
+
+    refresh();
+    pollTimer = setInterval(refresh, POLL_MS);
+    setInterval(_tick, 1000);   // live "Current Duration"
+  }
+
+  function _modal() { return document.getElementById('forgotten-alert-modal'); }
+
+  /** Pull the latest pending list from the server (also called after any check-in/out). */
+  let refreshQueued = false;
+  function refresh() {
+    if (inFlight) { refreshQueued = true; return Promise.resolve(); }
+    inFlight = true;
+    return fetch('/staff/forgotten-checkouts', { credentials: 'same-origin', cache: 'no-store' })
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        if (!data || !data.success) return;
+        items = Array.isArray(data.items) ? data.items : [];
+
+        // Forget dismissals for visits that are no longer pending (checked out).
+        const live = new Set(items.map(i => i.attendance_id));
+        let changed = false;
+        dismissed.forEach(id => { if (!live.has(id)) { dismissed.delete(id); changed = true; } });
+        if (changed) _persist();
+
+        _renderPanel(data.threshold_text);
+        _renderRows();
+
+        // If the pop-up is showing someone who has since been checked out, move on.
+        if (currentId !== null && !live.has(currentId)) _closeModal();
+        _showNext();
+      })
+      .catch(() => { /* offline blip — next poll will retry */ })
+      .finally(() => {
+        inFlight = false;
+        if (refreshQueued) { refreshQueued = false; refresh(); }
+      });
+  }
+
+  function _pending() { return items.filter(i => !dismissed.has(i.attendance_id)); }
+
+  function _showNext() {
+    if (currentId !== null) { _updateMore(); return; }        // pop-up already open
+    // Don't stack on top of another open dialog (e.g. the coach-guided prompt).
+    if (document.querySelector('.modal-overlay.open')) return;
+    const next = _pending()[0];
+    if (!next) return;
+    currentId = next.attendance_id;
+    _fillModal(next);
+    const m = _modal();
+    if (m) m.classList.add('open');
+  }
+
+  function _fillModal(item) {
+    const mins = _minutesSince(item.check_in_iso);
+    const msg = document.getElementById('fco-message');
+    if (msg) msg.textContent = `${item.member_name} has been checked in for ${_long(mins)} and has not checked out.`;
+    const t = document.getElementById('fco-checkin-time');
+    if (t) t.textContent = item.check_in_text;
+    const d = document.getElementById('fco-duration');
+    if (d) d.textContent = _short(mins);
+    _updateMore();
+  }
+
+  function _updateMore() {
+    const more = document.getElementById('fco-more');
+    if (!more) return;
+    const others = _pending().filter(i => i.attendance_id !== currentId).length;
+    more.style.display = others ? '' : 'none';
+    more.textContent = others ? `${others} more member${others === 1 ? '' : 's'} also ${others === 1 ? 'has' : 'have'} not checked out.` : '';
+  }
+
+  function _closeModal() {
+    currentId = null;
+    const m = _modal();
+    if (m) m.classList.remove('open');
+  }
+
+  function _current() { return items.find(i => i.attendance_id === currentId) || null; }
+
+  /** Pop-up button: hide it (never auto check-out). Member stays flagged. */
+  function dismiss() {
+    if (currentId !== null) { dismissed.add(currentId); _persist(); }
+    _closeModal();
+    _showNext();
+  }
+
+  /** Pop-up button: record the actual check-out (uses the normal check-out flow). */
+  function checkOut() {
+    const item = _current();
+    if (!item) { _closeModal(); return; }
+    _checkOutItem(item);
+  }
+
+  function _checkOutItem(item) {
+    // Count as seen so it doesn't pop again while the check-out flow (or its
+    // coach-guided prompt) is open; the row/list keep it flagged until done.
+    dismissed.add(item.attendance_id); _persist();
+    if (currentId === item.attendance_id) _closeModal();
+    if (typeof window.checkOutMember === 'function') window.checkOutMember(item.email);
+  }
+
+  /** Pop-up button: jump to the Member Directory filtered to this member. */
+  function viewMember() {
+    const item = _current();
+    if (!item) { _closeModal(); return; }
+    dismissed.add(item.attendance_id); _persist();
+    _closeModal();
+    _viewItem(item);
+    _showNext();
+  }
+
+  function _viewItem(item) {
+    if (typeof window.staffTab === 'function') window.staffTab('members', document.getElementById('nav-staff-members'));
+    const search = document.getElementById('members-search');
+    if (search) search.value = item.member_name;
+    if (typeof window.filterMembersByStatus === 'function') {
+      window.filterMembersByStatus('all', document.getElementById('members-filter-all'));
+    }
+    if (typeof window.filterMembersTable === 'function') window.filterMembersTable();
+  }
+
+  /** Called by StaffModule right after a successful check-out. */
+  function onCheckedOut(identifier) {
+    const key = String(identifier || '').toLowerCase();
+    const hit = items.find(i => (i.email || '').toLowerCase() === key || (i.member_name || '').toLowerCase() === key);
+    if (hit) {
+      items = items.filter(i => i !== hit);
+      if (currentId === hit.attendance_id) _closeModal();
+      _renderPanel();
+      _renderRows();
+    }
+    refresh();   // server is the source of truth
+  }
+
+  /* ── Pending Forgotten Check-Outs panel ── */
+  function _renderPanel(thresholdText) {
+    const panel = document.getElementById('forgotten-panel');
+    if (!panel) return;
+    const count = document.getElementById('forgotten-count');
+    if (count) count.textContent = String(items.length);
+    if (thresholdText) {
+      const t = document.getElementById('forgotten-threshold-text');
+      if (t) t.textContent = thresholdText;
+    }
+    panel.style.display = items.length ? '' : 'none';
+    const list = document.getElementById('forgotten-list');
+    if (!list) return;
+    list.innerHTML = items.map(i => `
+      <div class="fco-item" data-id="${_esc(i.attendance_id)}">
+        <div class="fco-item-main">
+          <div class="fco-item-name">${_esc(i.member_name)}</div>
+          <div class="fco-item-meta">Check-in: ${_esc(i.check_in_text)} · Duration: <strong class="fco-live" data-checkin="${_esc(i.check_in_iso)}">${_esc(_short(_minutesSince(i.check_in_iso)))}</strong></div>
+        </div>
+        <div class="fco-item-actions">
+          <button type="button" class="btn btn-red btn-sm" data-fco-action="checkout" data-id="${_esc(i.attendance_id)}">← CHECK OUT</button>
+          <button type="button" class="btn btn-outline btn-sm" data-fco-action="view" data-id="${_esc(i.attendance_id)}">VIEW MEMBER</button>
+        </div>
+      </div>`).join('');
+  }
+
+  /* ── Highlight rows in the Check-in/Out table ── */
+  function _renderRows() {
+    const flagged = new Set(items.map(i => (i.email || '').toLowerCase()));
+    document.querySelectorAll('#checkin-table tbody tr[data-email]').forEach(row => {
+      const on = flagged.has((row.dataset.email || '').toLowerCase());
+      row.classList.toggle('row-forgotten', on);
+      const statusCell = row.children[3];
+      if (!statusCell) return;
+      const existing = statusCell.querySelector('.fco-flag');
+      if (on && !existing) {
+        const tag = document.createElement('span');
+        tag.className = 'fco-flag';
+        tag.textContent = '⚠ FORGOTTEN';
+        tag.title = 'Still checked in past the alert time';
+        statusCell.appendChild(tag);
+      } else if (!on && existing) {
+        existing.remove();
+      }
+    });
+  }
+
+  /* ── 1s ticker: pop-up + list durations; cheap row re-flag after in-place row edits ── */
+  function _tick() {
+    if (currentId !== null) {
+      const item = _current();
+      if (item) {
+        const mins = _minutesSince(item.check_in_iso);
+        const d = document.getElementById('fco-duration');
+        if (d) d.textContent = _short(mins);
+        const msg = document.getElementById('fco-message');
+        if (msg) msg.textContent = `${item.member_name} has been checked in for ${_long(mins)} and has not checked out.`;
+      }
+    }
+    document.querySelectorAll('.fco-live[data-checkin]').forEach(el => {
+      el.textContent = _short(_minutesSince(el.dataset.checkin));
+    });
+  }
+
+  return { start, refresh, dismiss, checkOut, viewMember, onCheckedOut };
+})();
+window.ForgottenCheckoutAlerts = ForgottenCheckoutAlerts;
+
+
+/* ════════════════════════════════════════════════
+   CHECK-IN/OUT SETTINGS — Automatic Check-Out Alert Time (STAFF ONLY)
+════════════════════════════════════════════════ */
+function onCheckoutAlertPresetChange() {
+  const sel = document.getElementById('cs-alert-preset');
+  const row = document.getElementById('cs-alert-custom-row');
+  if (!sel || !row) return;
+  row.style.display = sel.value === 'custom' ? '' : 'none';
+}
+
+function saveCheckoutAlertSettings() {
+  const sel = document.getElementById('cs-alert-preset');
+  const btn = document.getElementById('cs-alert-save-btn');
+  if (!sel) return;
+
+  let minutes;
+  if (sel.value === 'custom') {
+    const h = parseInt(document.getElementById('cs-alert-hours').value, 10);
+    const m = parseInt(document.getElementById('cs-alert-minutes').value, 10);
+    minutes = (Number.isNaN(h) ? 0 : h) * 60 + (Number.isNaN(m) ? 0 : m);
+    if (minutes < 15 || minutes > 1440) {
+      showToast('Custom time must be between 15 minutes and 24 hours.', 'error');
+      return;
+    }
+  } else {
+    minutes = parseInt(sel.value, 10);
+  }
+
+  const original = btn ? btn.textContent : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'SAVING...'; }
+  fetch('/staff/checkout-alert-settings', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ minutes })
+  })
+    .then(res => res.json().then(data => ({ ok: res.ok, data })))
+    .then(({ ok, data }) => {
+      if (!ok || !data.success) {
+        showToast(data.error || 'Could not save the setting.', 'error');
+        return;
+      }
+      showToast(data.message || 'Setting saved.', 'success');
+      // Re-evaluate right away against the new threshold.
+      if (window.ForgottenCheckoutAlerts) ForgottenCheckoutAlerts.refresh();
+    })
+    .catch(() => showToast('Could not reach the server. Please try again.', 'error'))
+    .finally(() => { if (btn) { btn.disabled = false; btn.textContent = original; } });
+}
+
+
+/* ════════════════════════════════════════════════
    INIT — DOMContentLoaded Bootstrap
 ════════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', () => {
@@ -1850,4 +2223,6 @@ document.addEventListener('DOMContentLoaded', () => {
   window.exportStaffReportPDF         = () => StaffModule.exportStaffReportPDF();
   window.changeProfilePicture         = (input) => StaffModule.changeProfilePicture(input);
   window.toggleNotificationPanel      = () => StaffModule.toggleNotificationPanel();
+  window.onCheckoutAlertPresetChange  = onCheckoutAlertPresetChange;
+  window.saveCheckoutAlertSettings    = saveCheckoutAlertSettings;
 });

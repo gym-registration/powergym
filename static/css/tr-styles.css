@@ -4459,3 +4459,63 @@ body.home-page { overflow-x: hidden; }
     justify-content: flex-end;
   }
 }
+
+
+/* ══════════════════════════════════
+   Forgotten Check-Out Alert (STAFF dashboard only)
+   Row highlight, pending list, and the pop-up. Uses the existing
+   Power Gym dark palette (--card / --border / --red / --gold).
+══════════════════════════════════ */
+#checkin-table tr.row-forgotten td { background: rgba(230,30,37,0.10); }
+#checkin-table tr.row-forgotten td:first-child { box-shadow: inset 3px 0 0 var(--red); }
+#checkin-table tr.row-forgotten:hover td { background: rgba(230,30,37,0.15); }
+.fco-flag {
+  display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 4px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.6px; white-space: nowrap;
+  background: rgba(255,171,64,0.15); color: var(--gold); border: 1px solid rgba(255,171,64,0.35);
+  animation: fcoPulse 1.8s ease-in-out infinite;
+}
+@keyframes fcoPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+.forgotten-panel { border-color: rgba(230,30,37,0.45); }
+.fco-item {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 12px 0; border-top: 1px solid var(--border);
+}
+.fco-item:first-child { border-top: none; }
+.fco-item-main { flex: 1 1 220px; min-width: 0; }
+.fco-item-name { font-weight: 700; color: var(--white); }
+.fco-item-meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.fco-item-meta strong { color: var(--gold); }
+.fco-item-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.fco-overlay {
+  display: none; position: fixed; inset: 0; z-index: 1500;
+  background: rgba(0,0,0,0.75); backdrop-filter: blur(4px);
+  align-items: center; justify-content: center; padding: 16px;
+}
+.fco-overlay.open { display: flex; animation: fadeIn 0.2s ease; }
+.fco-modal {
+  position: relative; width: 100%; max-width: 460px; max-height: 92vh; overflow-y: auto;
+  background: var(--card); border: 1px solid var(--red); border-radius: 8px; padding: 32px 30px 24px;
+  box-shadow: 0 0 0 1px var(--red-glow), 0 18px 60px rgba(0,0,0,0.6);
+  text-align: center;
+}
+.fco-icon { font-size: 40px; line-height: 1; margin-bottom: 6px; }
+.fco-title { font-family: 'Bebas Neue', sans-serif; font-size: 30px; letter-spacing: 2px; color: var(--gold); margin-bottom: 12px; }
+.fco-message { font-size: 16px; line-height: 1.6; color: var(--white); margin-bottom: 18px; }
+.fco-facts {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; text-align: left;
+}
+.fco-facts > div { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
+.fco-facts span { display: block; font-size: 12px; color: var(--muted); letter-spacing: 0.5px; text-transform: uppercase; }
+.fco-facts strong { display: block; margin-top: 2px; font-size: 18px; color: var(--white); }
+.fco-facts .fco-duration { color: var(--red); }
+.fco-more { font-size: 13px; color: var(--gold); margin-bottom: 14px; }
+.fco-actions { display: flex; flex-direction: column; gap: 8px; }
+.fco-actions .btn { width: 100%; justify-content: center; }
+.fco-note { margin-top: 12px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+@media (min-width: 520px) {
+  .fco-actions { flex-direction: row; }
+  .fco-actions .btn { flex: 1; }
+}

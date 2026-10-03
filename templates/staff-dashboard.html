@@ -481,6 +481,17 @@
 
             <!-- View mode -->
             <div class="coach-view">
+              <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+                {% if c.photo_path %}
+                <img src="{{ url_for('static', filename=c.photo_path) }}" alt="{{ c.name }}" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid var(--red);flex-shrink:0;">
+                {% else %}
+                <div style="width:56px;height:56px;border-radius:50%;background:var(--card2,#1d1d24);border:2px solid var(--border,#333);display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:24px;color:var(--muted);flex-shrink:0;">{{ c.name[:1]|upper }}</div>
+                {% endif %}
+                <div style="min-width:0;">
+                  <div style="font-size:14px;color:var(--muted);">{{ c.specialization or 'No specialization set' }}</div>
+                  <span class="badge {{ 'badge-green' if c.is_active else 'badge-red' }}" style="margin-top:4px;">{{ 'Active' if c.is_active else 'Inactive' }}</span>
+                </div>
+              </div>
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
                 <div style="font-weight:600;font-size:17px;">{{ c.name }}</div>
                 <div style="display:flex;align-items:center;gap:8px;">
@@ -503,27 +514,65 @@
               <div style="font-size:15px;color:#c3c8da;line-height:1.7;">
                 <strong style="color:var(--white);">Coach Fee:</strong> ₱{{ '%.2f'|format(c.fee) }}
               </div>
+              {% if c.bio %}
+              <div style="font-size:14px;color:#c3c8da;line-height:1.6;margin-top:8px;white-space:pre-line;">{{ c.bio }}</div>
+              {% endif %}
             </div>
 
             <!-- Edit mode (hidden until the pencil icon is clicked) -->
             <form class="coach-edit" data-coach-update onsubmit="return submitCoachUpdate(event)" style="display:none;">
               <input type="hidden" name="coach_id" value="{{ c.id }}">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                <div style="font-weight:600;font-size:17px;">{{ c.name }}</div>
+                <div style="font-weight:600;font-size:17px;">Edit Coach Profile</div>
                 <span class="badge {{ 'badge-red' if c.is_full else 'badge-green' }}">
                   {{ c.current_members }}/{{ c.max_members }} members
                 </span>
               </div>
 
+              <label class="form-label" style="font-size:13px;">Photo</label>
+              <div style="display:flex;align-items:center;gap:12px;margin:6px 0 12px;">
+                <img id="coach-photo-preview-{{ c.id }}"
+                     src="{% if c.photo_path %}{{ url_for('static', filename=c.photo_path) }}{% else %}data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=={% endif %}"
+                     alt="" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid var(--border,#333);background:var(--card2,#1d1d24);flex-shrink:0;">
+                <input type="file" name="photo" accept="image/png,image/jpeg,image/webp" style="font-size:13px;color:var(--muted);max-width:100%;"
+                       onchange="if(this.files[0]){document.getElementById('coach-photo-preview-{{ c.id }}').src=URL.createObjectURL(this.files[0]);}">
+              </div>
+              {% if c.photo_path %}
+              <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-bottom:12px;">
+                <input type="checkbox" name="remove_photo" value="1"> Remove current photo
+              </label>
+              {% endif %}
+
+              <label class="form-label" style="font-size:13px;">Name</label>
+              <input class="form-input" type="text" name="name" maxlength="60" value="{{ c.name }}" style="margin-bottom:12px;">
+
+              <label class="form-label" style="font-size:13px;">Specialization</label>
+              <input class="form-input" type="text" name="specialization" maxlength="120"
+                     placeholder="e.g. Strength &amp; Conditioning, Boxing" value="{{ c.specialization }}" style="margin-bottom:12px;">
+
+              <label class="form-label" style="font-size:13px;">Bio</label>
+              <textarea class="form-input" name="bio" rows="4" maxlength="2000"
+                        placeholder="Short introduction members will see on the coach's profile" style="margin-bottom:12px;resize:vertical;">{{ c.bio }}</textarea>
+
+              <label class="form-label" style="font-size:13px;">Status</label>
+              <select class="form-input" name="status" style="margin-bottom:12px;">
+                <option value="active" {% if c.is_active %}selected{% endif %}>Active (members can pick this coach)</option>
+                <option value="inactive" {% if not c.is_active %}selected{% endif %}>Inactive (hidden from members)</option>
+              </select>
+
               <label class="form-label" style="font-size:13px;">Available Days</label>
-              <div style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 14px;">
-                {% for day in coach_days %}
-                <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--muted);">
-                  <input type="checkbox" name="available_days" value="{{ day }}"
-                         {% if day in c.available_days %}checked{% endif %}>
-                  {{ day }}
-                </label>
-                {% endfor %}
+              {% set day_names = {'Mon':'Monday','Tue':'Tuesday','Wed':'Wednesday','Thu':'Thursday','Fri':'Friday','Sat':'Saturday','Sun':'Sunday'} %}
+              <div class="day-dd" style="position:relative;margin:6px 0 14px;">
+                <button type="button" class="form-input day-dd-btn" onclick="toggleDayDd(this)" style="display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;cursor:pointer;"><span class="day-dd-label">Select days</span><span style="font-size:12px;opacity:.7;">&#9660;</span></button>
+                <div class="day-dd-menu" style="display:none;position:absolute;left:0;right:0;top:100%;z-index:60;margin-top:4px;background:var(--card);border:1px solid var(--border,#333);border-radius:8px;padding:6px;box-shadow:0 8px 24px rgba(0,0,0,.5);">
+                  {% for day in coach_days %}
+                  <label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;cursor:pointer;font-size:15px;color:var(--white);">
+                    <input type="checkbox" name="available_days" value="{{ day }}"
+                           {% if day in c.available_days %}checked{% endif %}>
+                    {{ day_names[day] }}
+                  </label>
+                  {% endfor %}
+                </div>
               </div>
 
               <label class="form-label" style="font-size:13px;">Max Members</label>
@@ -591,6 +640,18 @@
         <button type="button" class="status-pill" data-status="pending" onclick="filterCheckinByStatus('pending', this)">Pending</button>
         <button type="button" class="status-pill" data-status="expired" onclick="filterCheckinByStatus('expired', this)">Expired</button>
         <button type="button" class="btn btn-outline btn-sm" id="toggle-checkin-id-btn" style="margin-left:auto;" onclick="toggleCheckinIdColumn()">👁 HIDE ID</button>
+      </div>
+
+      <!-- Staff-only: members still checked in past the Automatic Check-Out Alert time.
+           Filled/hidden live by tr-staff.js (polls /staff/forgotten-checkouts). -->
+      <div class="panel forgotten-panel" id="forgotten-panel" style="display:none;margin-bottom:14px;">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">⚠️ Pending Forgotten Check-Outs <span class="badge badge-red" id="forgotten-count">0</span></div>
+            <div style="font-size:13px;color:var(--muted);margin-top:2px;">Still checked in past <strong id="forgotten-threshold-text">5h 0m</strong>. They stay here until they are checked out.</div>
+          </div>
+        </div>
+        <div class="panel-body" id="forgotten-list" style="padding-top:0;"></div>
       </div>
 
       <div class="session-rule-note" style="margin-bottom:14px;">
@@ -764,7 +825,7 @@
                      placeholder="Start typing a name, ID, or email…" oninput="onPayMemberInput(this.value)">
               <datalist id="pay-member-list">
                 {% for m in payment_members %}
-                <option value="{{ m.email }}">{{ m.name }} — {{ m.plan }}{% if m.plan != '—' %} ({{ m.status }}){% endif %}</option>
+                <option value="{{ m.display }}">{{ m.email }} — {{ m.plan }}{% if m.plan != '—' %} ({{ m.status }}){% endif %}</option>
                 {% endfor %}
               </datalist>
               <div style="font-size:12px;color:var(--muted);margin-top:4px;">
@@ -1043,6 +1104,38 @@
         </div>
       </div>
 
+      <!-- Check-in/Out Settings (STAFF ONLY — this panel does not exist on the Admin dashboard) -->
+      {% set _cam = (gcash_settings.checkout_alert_minutes if gcash_settings and gcash_settings.checkout_alert_minutes else 300) %}
+      {% set _cam_presets = [60, 120, 180, 240, 300, 360, 480] %}
+      <div class="panel" style="margin-top:24px;" id="checkin-settings-panel">
+        <div class="panel-header">
+          <div><div class="panel-title">Check-in/Out Settings</div><div style="font-size:13px;color:var(--muted);margin-top:2px;">Staff get a pop-up when a member is still checked in after this time.</div></div>
+        </div>
+        <div class="panel-body">
+          <div class="form-group">
+            <label class="form-label">Automatic Check-Out Alert Time</label>
+            <select class="form-input" id="cs-alert-preset" onchange="onCheckoutAlertPresetChange()">
+              {% for mins in _cam_presets %}
+              <option value="{{ mins }}" {% if _cam == mins %}selected{% endif %}>{{ mins // 60 }} hour{{ '' if mins == 60 else 's' }}{% if mins == 300 %} (default){% endif %}</option>
+              {% endfor %}
+              <option value="custom" {% if _cam not in _cam_presets %}selected{% endif %}>Custom</option>
+            </select>
+          </div>
+          <div class="form-row" id="cs-alert-custom-row" style="{% if _cam in _cam_presets %}display:none;{% endif %}">
+            <div class="form-group">
+              <label class="form-label">Custom — Hours</label>
+              <input class="form-input" type="number" id="cs-alert-hours" min="0" max="24" step="1" inputmode="numeric" value="{{ _cam // 60 }}">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Custom — Minutes</label>
+              <input class="form-input" type="number" id="cs-alert-minutes" min="0" max="59" step="1" inputmode="numeric" value="{{ _cam % 60 }}">
+            </div>
+          </div>
+          <div style="font-size:13px;color:var(--muted);margin:-4px 0 12px;">Custom time can be anywhere from 15 minutes to 24 hours.</div>
+          <button class="btn btn-red" id="cs-alert-save-btn" style="width:100%;" onclick="saveCheckoutAlertSettings()">SAVE CHECK-IN/OUT SETTINGS</button>
+        </div>
+      </div>
+
       <!-- Manage Content (admin/staff only) -->
       <div class="panel" style="margin-top:24px;">
         <div class="panel-header">
@@ -1300,6 +1393,27 @@
   </div>
 </div>
 
+<!-- Staff-only Forgotten Check-Out Alert pop-up -->
+<div class="fco-overlay" id="forgotten-alert-modal" role="alertdialog" aria-modal="true" aria-labelledby="fco-title">
+  <div class="fco-modal">
+    <button class="modal-close" onclick="ForgottenCheckoutAlerts.dismiss()" aria-label="Dismiss">✕</button>
+    <div class="fco-icon">⚠️</div>
+    <div class="fco-title" id="fco-title">FORGOTTEN CHECK-OUT ALERT</div>
+    <div class="fco-message" id="fco-message"></div>
+    <div class="fco-facts">
+      <div><span>Check-in Time</span><strong id="fco-checkin-time">—</strong></div>
+      <div><span>Current Duration</span><strong id="fco-duration" class="fco-duration">—</strong></div>
+    </div>
+    <div class="fco-more" id="fco-more" style="display:none;"></div>
+    <div class="fco-actions">
+      <button class="btn btn-red" onclick="ForgottenCheckoutAlerts.checkOut()">← CHECK OUT</button>
+      <button class="btn btn-outline" onclick="ForgottenCheckoutAlerts.viewMember()">VIEW MEMBER</button>
+      <button class="btn btn-outline" onclick="ForgottenCheckoutAlerts.dismiss()">DISMISS</button>
+    </div>
+    <div class="fco-note">Dismissing does not check the member out — they stay flagged until they are checked out.</div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="coach-checkout-modal">
   <div class="modal" style="max-width:430px;">
     <button class="modal-close" onclick="closeCoachCheckoutModal()">✕</button>
@@ -1351,13 +1465,17 @@
     <div class="form-group"><label class="form-label">Coach Name</label><input id="add-coach-name" class="form-input" placeholder="Juan Dela Cruz"></div>
     <div class="form-group">
       <label class="form-label">Available Days</label>
-      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;">
-        {% for day in coach_days %}
-        <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--muted);">
-          <input type="checkbox" class="add-coach-day" value="{{ day }}">
-          {{ day }}
-        </label>
-        {% endfor %}
+      {% set day_names = {'Mon':'Monday','Tue':'Tuesday','Wed':'Wednesday','Thu':'Thursday','Fri':'Friday','Sat':'Saturday','Sun':'Sunday'} %}
+      <div class="day-dd" style="position:relative;margin-top:6px;">
+        <button type="button" class="form-input day-dd-btn" onclick="toggleDayDd(this)" style="display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;cursor:pointer;"><span class="day-dd-label">Select days</span><span style="font-size:12px;opacity:.7;">&#9660;</span></button>
+        <div class="day-dd-menu" style="display:none;position:absolute;left:0;right:0;top:100%;z-index:60;margin-top:4px;background:var(--card);border:1px solid var(--border,#333);border-radius:8px;padding:6px;box-shadow:0 8px 24px rgba(0,0,0,.5);">
+          {% for day in coach_days %}
+          <label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;cursor:pointer;font-size:15px;color:var(--white);">
+            <input type="checkbox" class="add-coach-day" value="{{ day }}">
+            {{ day_names[day] }}
+          </label>
+          {% endfor %}
+        </div>
       </div>
     </div>
     <div class="form-group"><label class="form-label">Max Members</label><input id="add-coach-max" class="form-input" type="number" min="1" value="10"></div>
@@ -1415,6 +1533,35 @@
 
 <script id="staff-dashboard-data" type="application/json">{{ {'new_announcements': new_announcements, 'notification_center': notification_center, 'notification_unread_count': notification_unread_count}|tojson }}</script>
 
+<script>
+  /* Available Days dropdown (Coach tab): a list of Monday-Sunday with ticks.
+     The real checkboxes live inside the list, so saving works as before. */
+  function closeAllDayDd(except) {
+    document.querySelectorAll('.day-dd-menu').forEach(function (m) {
+      if (m !== except) m.style.display = 'none';
+    });
+  }
+  function toggleDayDd(btn) {
+    var menu = btn.parentElement.querySelector('.day-dd-menu');
+    var willOpen = menu.style.display === 'none';
+    closeAllDayDd(menu);
+    menu.style.display = willOpen ? 'block' : 'none';
+  }
+  function refreshDayDd(dd) {
+    var picked = Array.prototype.map.call(dd.querySelectorAll('input[type=checkbox]:checked'), function (i) { return i.value; });
+    dd.querySelector('.day-dd-label').textContent = picked.length ? picked.join(', ') : 'Select days';
+  }
+  document.addEventListener('change', function (e) {
+    var dd = e.target.closest && e.target.closest('.day-dd');
+    if (dd) refreshDayDd(dd);
+  });
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest('.day-dd')) closeAllDayDd();
+  });
+  document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('.day-dd').forEach(refreshDayDd);
+  });
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
 <script src="{{ url_for('static', filename='js/tr-common.js') }}"></script>
