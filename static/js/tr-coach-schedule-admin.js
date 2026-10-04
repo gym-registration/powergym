@@ -1,11 +1,13 @@
 /* ═══════════════════════════════════════════════════════════════
    Coach Schedule — staff + admin dashboards
-   Three tabs:
+   Four tabs:
      1. Member Coach Requests — sessions members booked, waiting for staff to
         confirm (save) or decline.
      2. All Schedules          — every booking, filterable, with the full
         confirm / complete / no-show / cancel workflow.
-     3. Coach Availability     — edit the weekly slots members can book.
+     3. Coach Availability     — set each coach's hours for every day of the week
+        (From / To / slot length per day) and fine-tune individual slots.
+     4. Coach Assignments      — which members requested which coach.
    Talks to the endpoints in coach_scheduling.py. The server enforces every
    rule (status transitions, credit deduction on Completed, slot validity);
    this file only presents them.
@@ -31,7 +33,8 @@
 
   const state = {
     tab: 'requests',
-    bookings: [], pending: 0, coaches: [],
+    bookings: [], pending: 0, coaches: [], assignments: [], assignError: '',
+    assignCoach: '',
     loaded: false, loading: false, error: '',
     filters: { status: '', coach: '', date: '' },
     av: { coachId: null, draft: [], snapshot: '[]', loading: false, error: '' },
@@ -97,7 +100,9 @@
   /* ── data loading ────────────────────────────────────── */
   async function loadAll() {
     state.loading = true; state.error = '';
-    const [b, c] = await Promise.all([api('/staff/coach-bookings'), api('/staff/coach-scheduling/coaches')]);
+    const [b, c, asg] = await Promise.all([api('/staff/coach-bookings'), api('/staff/coach-scheduling/coaches'), api('/staff/coach-assignments')]);
+    state.assignments = asg.success ? (asg.assignments || []) : [];
+    state.assignError = asg.success ? '' : (asg.error || 'Could not load coach assignments.');
     state.loading = false;
     if (!b.success || !c.success) {
       state.error = (!b.success ? b.error : c.error) || 'Could not load the coach schedule.';
@@ -138,6 +143,7 @@
   const ICON_CAL = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>';
   const ICON_INBOX = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 13l2.6-7.2A2 2 0 0 1 8 4.5h8a2 2 0 0 1 1.9 1.3L20.5 13v5a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 18z"/><path d="M3.5 13h5l1 2.5h5l1-2.5h5"/></svg>';
   const ICON_LIST = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6.5h12M8 12h12M8 17.5h12"/><circle cx="4" cy="6.5" r="1" fill="currentColor"/><circle cx="4" cy="12" r="1" fill="currentColor"/><circle cx="4" cy="17.5" r="1" fill="currentColor"/></svg>';
+  const ICON_USERS = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3 19c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5"/><path d="M16 5.2a3.2 3.2 0 0 1 0 5.6M18 13.8c1.8.7 3 2.3 3 5.2"/></svg>';
   const ICON_CLOCK = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>';
 
   root.innerHTML =
@@ -148,11 +154,13 @@
     '<button type="button" class="csa-tab active" role="tab" aria-selected="true" data-tab="requests">' + ICON_INBOX + '<span>Member Coach Requests</span><span class="csa-count" id="csa-tab-count" hidden>0</span></button>' +
     '<button type="button" class="csa-tab" role="tab" aria-selected="false" data-tab="all">' + ICON_LIST + '<span>All Schedules</span></button>' +
     '<button type="button" class="csa-tab" role="tab" aria-selected="false" data-tab="availability">' + ICON_CLOCK + '<span>Coach Availability</span></button>' +
+    '<button type="button" class="csa-tab" role="tab" aria-selected="false" data-tab="assignments">' + ICON_USERS + '<span>Coach Assignments</span></button>' +
     '</div>' +
     '<div id="csa-error"></div>' +
     '<div class="csa-view" id="csa-view-requests"></div>' +
     '<div class="csa-view" id="csa-view-all" hidden></div>' +
-    '<div class="csa-view" id="csa-view-availability" hidden></div>';
+    '<div class="csa-view" id="csa-view-availability" hidden></div>' +
+    '<div class="csa-view" id="csa-view-assignments" hidden></div>';
 
   const $ = (sel) => root.querySelector(sel);
 
@@ -163,7 +171,7 @@
       const on = t.getAttribute('data-tab') === tab;
       t.classList.toggle('active', on); t.setAttribute('aria-selected', on ? 'true' : 'false');
     });
-    ['requests', 'all', 'availability'].forEach((v) => { $('#csa-view-' + v).hidden = v !== tab; });
+    ['requests', 'all', 'availability', 'assignments'].forEach((v) => { $('#csa-view-' + v).hidden = v !== tab; });
     render();
     if (tab === 'availability' && state.av.coachId != null && !state.av.draft.length && !state.av.loading) loadAvailability(state.av.coachId);
   }
@@ -244,6 +252,28 @@
       '</tbody></table></div></div>';
   }
 
+  /* ── rendering: coach assignments ────────────────────── */
+  const ASSIGN_BADGE = { verified: ['badge-green', 'Active'], rejected: ['badge-red', 'Rejected'] };
+  function renderAssignments() {
+    const names = [...new Set(state.assignments.map((a) => a.coach_name))].sort();
+    const sel = state.assignCoach;
+    const list = state.assignments.filter((a) => !sel || a.coach_name === sel);
+    const opts = '<option value="">All coaches</option>' + names.map((n) => '<option value="' + esc(n) + '"' + (n === sel ? ' selected' : '') + '>' + esc(n) + '</option>').join('');
+    const rows = list.length ? list.map((a) => {
+      const b = ASSIGN_BADGE[a.status] || ['badge-blue', 'Pending'];
+      return '<tr><td><div class="csa-name">' + esc(a.member_name) + '</div></td><td>' + esc(a.coach_name) + '</td><td>' + esc(a.plan) + '</td>' +
+        '<td><span class="csa-sub" style="font-size:14px;">' + esc(a.date) + '</span></td><td><span class="badge ' + b[0] + '">' + b[1] + '</span></td></tr>';
+    }).join('') : '<tr><td colspan="5" class="csa-empty">No coach requests yet.</td></tr>';
+    $('#csa-view-assignments').innerHTML =
+      (state.assignError ? '<div class="csa-error">' + esc(state.assignError) + '</div>' : '') +
+      '<div class="csa-panel"><div class="csa-toolbar"><div class="csa-panel-title">Coach Assignments ' +
+      '<span class="csa-sub" style="font-size:14px;font-weight:500;">Members who requested a personal coach · ' + list.length + ' shown</span></div>' +
+      '<div class="csa-filters"><select class="csa-select" data-assign-filter aria-label="Filter by coach">' + opts + '</select>' +
+      '<button type="button" class="csa-btn" data-refresh>↻ Refresh</button></div></div>' +
+      '<div class="csa-table-wrap"><table class="csa-table"><thead><tr><th>Member</th><th>Coach</th><th>Plan</th><th>Requested</th><th>Status</th></tr></thead><tbody>' +
+      rows + '</tbody></table></div></div>';
+  }
+
   /* ── rendering: availability editor ──────────────────── */
   const slotCmp = (a, b) => a.weekday - b.weekday || (toMin(a.start) ?? 0) - (toMin(b.start) ?? 0);
   function sortDraft() { state.av.draft.sort(slotCmp); }
@@ -290,8 +320,24 @@
           durs.map((m) => '<option value="' + m + '"' + (m === s.duration_min ? ' selected' : '') + '>' + m + ' min</option>').join('') + '</select>' +
           '<button type="button" class="csa-slot-x" data-del="' + i + '" aria-label="Remove slot" title="Remove slot">×</button></span>';
       }).join('') : '<span class="csa-none">Not available</span>';
+      // Per-day hours: prefilled from what is saved for this day so staff edit it in place.
+      const mins = slots.map((x) => toMin(x.s.start)).filter((m) => m != null);
+      const ends = slots.filter((x) => toMin(x.s.start) != null).map((x) => toMin(x.s.start) + x.s.duration_min);
+      const hFrom = mins.length ? toHHMM(Math.min(...mins)) : '09:00';
+      const hTo = ends.length ? toHHMM(Math.min(Math.max(...ends), 24 * 60 - 1)) : '17:00';
+      const hLen = slots.length ? slots[0].s.duration_min : 60;
+      const lens = DURATIONS.includes(hLen) ? DURATIONS : DURATIONS.concat([hLen]).sort((a, b) => a - b);
+      const hours = '<div class="csa-hours"><span class="csa-hours-label">Hours</span>' +
+        '<input type="time" class="csa-input" data-hfrom="' + wd + '" value="' + hFrom + '" aria-label="' + name + ' available from">' +
+        '<span class="csa-sub">to</span>' +
+        '<input type="time" class="csa-input" data-hto="' + wd + '" value="' + hTo + '" aria-label="' + name + ' available until">' +
+        '<select class="csa-select" data-hlen="' + wd + '" aria-label="' + name + ' slot length">' +
+        lens.map((m) => '<option value="' + m + '"' + (m === hLen ? ' selected' : '') + '>' + m + ' min each</option>').join('') + '</select>' +
+        '<button type="button" class="csa-btn ok" data-apply-hours="' + wd + '">Set ' + DAYS_SHORT[wd] + ' hours</button>' +
+        '<button type="button" class="csa-btn" data-apply-hours-all="' + wd + '" title="Use these hours on every day of the week">All days</button>' +
+        (slots.length ? '<button type="button" class="csa-btn danger" data-day-off="' + wd + '">Day off</button>' : '') + '</div>';
       return '<div class="csa-day"><div class="csa-day-name">' + name + '<small>' + slots.length + ' slot' + (slots.length === 1 ? '' : 's') + '</small></div>' +
-        '<div class="csa-slots">' + chips + '</div>' +
+        '<div class="csa-day-main"><div class="csa-slots">' + chips + '</div>' + hours + '</div>' +
         '<button type="button" class="csa-btn" data-add="' + wd + '">+ Add slot</button></div>';
     }).join('');
     const w = $('#csa-week'); if (w) w.innerHTML = rows;
@@ -340,11 +386,12 @@
     if (!state.loaded) {
       const msg = '<div class="csa-panel"><div class="csa-loading">' + (state.loading ? 'Loading coach schedule…' : '') + '</div></div>';
       ['requests', 'all'].forEach((v) => { $('#csa-view-' + v).innerHTML = msg; });
-      if (state.tab === 'availability') $('#csa-view-availability').innerHTML = msg;
+      if (state.tab === 'availability' || state.tab === 'assignments') $('#csa-view-' + state.tab).innerHTML = msg;
       return;
     }
     if (state.tab === 'requests') renderRequests();
     else if (state.tab === 'all') renderAll();
+    else if (state.tab === 'assignments') renderAssignments();
     else renderAvailability();
   }
 
@@ -397,6 +444,21 @@
     sortDraft(); renderWeek();
   }
 
+  /** Replace a day's slots with back-to-back slots filling From → To (staff edit each day's hours). */
+  function applyHours(wd, allDays) {
+    const from = toMin(root.querySelector('[data-hfrom="' + wd + '"]').value);
+    const to = toMin(root.querySelector('[data-hto="' + wd + '"]').value);
+    const dur = +root.querySelector('[data-hlen="' + wd + '"]').value;
+    if (from == null || to == null || to <= from) return toast('Choose a start time that is earlier than the end time.', 'error');
+    if (from + dur > to) return toast('That time range is shorter than one slot.', 'error');
+    const days = allDays ? [0, 1, 2, 3, 4, 5, 6] : [wd];
+    state.av.draft = state.av.draft.filter((s) => !days.includes(s.weekday));
+    let n = 0;
+    days.forEach((d) => { for (let t = from; t + dur <= to; t += dur) { state.av.draft.push({ weekday: d, start: toHHMM(t), duration_min: dur }); n++; } });
+    sortDraft(); renderWeek();
+    toast((allDays ? 'All days' : DAYS[wd]) + ': ' + label12(toHHMM(from)) + ' – ' + label12(toHHMM(to)) + ' (' + n + ' slot' + (n === 1 ? '' : 's') + '). Remember to save.', 'success');
+  }
+
   function quickAdd() {
     const days = [...root.querySelectorAll('[data-qday]:checked')].map((c) => +c.getAttribute('data-qday'));
     const from = toMin($('#csa-q-from').value), to = toMin($('#csa-q-to').value), dur = +$('#csa-q-min').value;
@@ -445,6 +507,10 @@
     if (t.closest('[data-refresh]')) return loadAll();
     const act = t.closest('[data-act]'); if (act) return changeStatus(act.getAttribute('data-id'), act.getAttribute('data-act'));
     if (t.closest('[data-clear-filters]')) { state.filters = { status: '', coach: '', date: '' }; return renderAll(); }
+    const ah = t.closest('[data-apply-hours]'); if (ah) return applyHours(+ah.getAttribute('data-apply-hours'), false);
+    const aha = t.closest('[data-apply-hours-all]'); if (aha) return applyHours(+aha.getAttribute('data-apply-hours-all'), true);
+    const off = t.closest('[data-day-off]');
+    if (off) { const wd = +off.getAttribute('data-day-off'); state.av.draft = state.av.draft.filter((s) => s.weekday !== wd); return renderWeek(); }
     const add = t.closest('[data-add]'); if (add) return addSlot(+add.getAttribute('data-add'));
     const del = t.closest('[data-del]'); if (del) { state.av.draft.splice(+del.getAttribute('data-del'), 1); return renderWeek(); }
     const preset = t.closest('[data-qpreset]');
@@ -468,6 +534,7 @@
 
   root.addEventListener('change', (e) => {
     const t = e.target;
+    if (t.matches('[data-assign-filter]')) { state.assignCoach = t.value; return renderAssignments(); }
     if (t.matches('[data-filter]')) { state.filters[t.getAttribute('data-filter')] = t.value; return renderAll(); }
     if (t.id === 'csa-av-coach') return switchCoach(+t.value);
     if (t.matches('[data-slot]')) {

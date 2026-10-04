@@ -67,12 +67,14 @@
 /* coach cards */
 .cs-coaches { display: flex; flex-direction: column; gap: 14px; }
 .cs-coach {
-  display: grid; grid-template-columns: 290px minmax(0, 1fr) 160px; gap: 20px; align-items: center;
+  /* Coach on top (profile left, Book button right), time slots underneath in their own row. */
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "info book" "slots slots";
+  gap: 18px 20px; align-items: center;
   background: var(--cs-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px 22px;
   transition: border-color .2s, box-shadow .2s;
 }
 .cs-coach.selected { border: 2px solid var(--green); box-shadow: 0 0 18px rgba(0,230,118,.22); padding: 19px 21px; }
-.cs-coach-info { display: flex; gap: 16px; align-items: center; min-width: 0; }
+.cs-coach-info { grid-area: info; display: flex; gap: 16px; align-items: center; min-width: 0; }
 .cs-avatar {
   position: relative; overflow: hidden;
   flex: 0 0 82px; width: 82px; height: 82px; border-radius: 50%; border: 2px solid var(--border);
@@ -88,9 +90,13 @@
 .cs-spec { font-size: 16px; color: #dfe3ee; font-weight: 500; overflow-wrap: anywhere; }
 .cs-bio { font-size: 14px; color: var(--muted); margin-top: 4px; line-height: 1.4; overflow-wrap: anywhere; }
 
-.cs-slots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.cs-slots {
+  grid-area: slots; display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 10px;
+  padding-top: 18px; border-top: 1px solid var(--border);
+}
+.cs-book-btn { grid-area: book; min-width: 160px; }
 .cs-slot {
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 12px 6px; min-height: 66px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 10px 6px; min-height: 58px;
   background: transparent; border: 1px solid var(--green); border-radius: 6px; color: #fff;
   font: 600 16px 'Barlow', sans-serif; cursor: pointer; transition: background .15s, box-shadow .15s;
 }
@@ -204,7 +210,7 @@
   .cs-credits { grid-column: 1 / -1; }
 }
 @media (max-width: 1100px) {
-  .cs-coach { grid-template-columns: minmax(0,1fr); }
+  .cs-coach { grid-template-columns: minmax(0,1fr); grid-template-areas: "info" "slots" "book"; }
   .cs-book-btn { max-width: 260px; }
 }
 @media (max-width: 760px) {
@@ -218,6 +224,8 @@
   .cs-side { grid-template-columns: minmax(0,1fr); }
   .cs-row { grid-template-columns: 52px minmax(0,1fr); }
   .cs-row-actions { grid-column: 1 / -1; justify-content: flex-start; }
-  .cs-slots { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .cs-slots { grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; }
+  .cs-slot { font-size: 14px; }
+  .cs-slot small { font-size: 12px; }
   .cs-cal-day { min-height: 46px; font-size: 15px; }
 }

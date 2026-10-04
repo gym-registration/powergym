@@ -14,7 +14,7 @@
 .csa-subtitle { color: var(--muted); font-size: 15px; margin-top: 5px; }
 
 /* tabs */
-.csa-tabs { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--card); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-bottom: 20px; }
+.csa-tabs { display: grid; grid-template-columns: repeat(4, 1fr); background: var(--card); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-bottom: 20px; }
 .csa-tab {
   display: flex; align-items: center; justify-content: center; gap: 10px; padding: 15px 10px;
   background: transparent; color: #c9cfdd; border: 0; border-right: 1px solid var(--border);
@@ -102,7 +102,7 @@
 .csa-daychip input:focus-visible + span { outline: 2px solid var(--green); outline-offset: 2px; }
 
 .csa-week { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.csa-day { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--csa-line); }
+.csa-day { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; gap: 14px; align-items: start; padding: 12px 16px; border-bottom: 1px solid var(--csa-line); }
 .csa-day:last-child { border-bottom: 0; }
 .csa-day-name { font-weight: 700; color: var(--white); }
 .csa-day-name small { display: block; font-weight: 500; color: var(--muted); font-size: 12px; margin-top: 2px; }
@@ -144,3 +144,10 @@
 
 .csa-daychips .csa-btn { padding: 5px 10px; font-size: 12px; }
 .csa-daychips .csa-btn[data-qpreset] { margin-left: 2px; }
+
+/* per-day hours row (Coach Availability) */
+.csa-day-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.csa-hours { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 10px; border-top: 1px dashed var(--csa-line); }
+.csa-hours-label { font: 700 12px 'Barlow', sans-serif; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
+.csa-hours .csa-input, .csa-hours .csa-select { min-height: 34px; padding: 5px 10px; font-size: 14px; }
+.csa-hours .csa-btn { padding: 6px 12px; }

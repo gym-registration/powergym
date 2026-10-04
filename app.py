@@ -6316,6 +6316,33 @@ def staff_record_payment():
     )
 
 
+def _coach_assignment_rows():
+    """Every payment where a member asked for a personal coach, newest first.
+    Shown under Coach Schedule > Coach Assignments (staff + admin)."""
+    rows = (
+        Payment.query
+        .options(joinedload(Payment.member), joinedload(Payment.plan))
+        .filter(Payment.wants_coach.is_(True),
+                Payment.member_id.isnot(None))  # skip deleted members
+        .order_by(Payment.paid_at.desc())
+        .all()
+    )
+    return [{
+        'member_name': p.display_member_name,
+        'coach_name': p.coach_name or '—',
+        'plan': _payment_display_plan(p),
+        'status': p.status,
+        'date': p.paid_at.strftime('%b %d, %Y'),
+    } for p in rows]
+
+
+@app.route('/staff/coach-assignments', methods=['GET'])
+def staff_coach_assignments():
+    if session.get('role') not in ('staff', 'admin'):
+        return jsonify(success=False, error='Unauthorized.'), 403
+    return jsonify(success=True, assignments=_coach_assignment_rows())
+
+
 VALID_COACH_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 
@@ -9221,24 +9248,6 @@ def staff():
         'status': p.status,
     } for p in processed_requests_rows]
 
-    # ── Coach assignments (Coach tab) — every payment where a coach was
-    #    requested, newest first ──
-    coach_rows = (
-        Payment.query
-        .options(joinedload(Payment.member), joinedload(Payment.plan))
-        .filter(Payment.wants_coach.is_(True),
-                Payment.member_id.isnot(None))  # skip deleted members
-        .order_by(Payment.paid_at.desc())
-        .all()
-    )
-    coach_assignments = [{
-        'member_name': p.display_member_name,
-        'coach_name': p.coach_name or '—',
-        'plan': _payment_display_plan(p),
-        'status': p.status,
-        'date': p.paid_at.strftime('%b %d, %Y'),
-    } for p in coach_rows]
-
     coaches_data = _get_coaches_data()
 
     # ── Walk In tab: the coach with the most open slots is flagged as
@@ -9418,7 +9427,6 @@ def staff():
         stats=stats,
         pending_requests=pending_requests,
         processed_requests=processed_requests,
-        coach_assignments=coach_assignments,
         coaches=coaches_data,
         recommended_coach_name=recommended_coach_name,
         coach_days=VALID_COACH_DAYS,

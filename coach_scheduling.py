@@ -159,7 +159,10 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
     def _slot_error(coach_id, start, ignore_booking_id=None, member_id=None):
         """Validate that `start` is a real, future, free slot of this coach.
         Returns (coach, availability, end, error_message)."""
-        coach = Coach.query.get(coach_id) if coach_id else None
+        # Lock the coach's row: concurrent requests for the same coach queue up here, so the
+        # overlap check below can't be passed by two members/clicks at once (the unique keys
+        # only catch identical start times, not partly-overlapping slots).
+        coach = Coach.query.filter_by(id=coach_id).with_for_update().first() if coach_id else None
         if coach is None or not coach.is_active:
             return None, None, None, 'That coach is not available.'
         if start is None:
@@ -181,10 +184,22 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
                 q = q.filter(CoachBooking.id != ignore_booking_id)
             return q.first() is not None
 
+        # 1) The member can't hold two sessions at the same time — same coach or another.
+        if member_id:
+            q = CoachBooking.query.filter(CoachBooking.member_id == member_id,
+                                          CoachBooking.status.in_(ACTIVE),
+                                          CoachBooking.slot_start < end, CoachBooking.slot_end > start)
+            if ignore_booking_id:
+                q = q.filter(CoachBooking.id != ignore_booking_id)
+            mine = q.first()
+            if mine is not None:
+                if mine.coach_id == coach.id:
+                    return coach, av, end, f'You already booked {coach.name} at this time.'
+                other = mine.coach.name if mine.coach else (mine.coach_name or 'another coach')
+                return coach, av, end, f'You already have a coach session at this time (with {other}).'
+        # 2) The coach can't be booked twice at the same time (by anyone).
         if _overlap(CoachBooking.query.filter(CoachBooking.coach_id == coach.id)):
             return coach, av, end, 'That slot has just been booked. Please pick another time.'
-        if member_id and _overlap(CoachBooking.query.filter(CoachBooking.member_id == member_id)):
-            return coach, av, end, 'You already have a coach session at that time.'
         return coach, av, end, None
 
     # ── member: read endpoints ─────────────────────────────────────────
@@ -220,12 +235,14 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
                 end = start + timedelta(minutes=dur)
                 if start <= now:
                     state = 'past'
+                elif any(b.coach_id == c.id and b.slot_start < end and b.slot_end > start for b in mine):
+                    state = 'mine'          # the member already booked THIS coach at this time
                 elif (c.id, start) in taken or any(
                         b.coach_id == c.id and b.slot_start < end and b.slot_end > start
                         for b in taken.values()):
                     state = 'booked'
                 elif any(b.slot_start < end and b.slot_end > start for b in mine):
-                    state = 'conflict'
+                    state = 'conflict'      # the member has a session with another coach then
                 else:
                     state = 'available'
                 slots.append({'start': start.strftime('%Y-%m-%dT%H:%M'),

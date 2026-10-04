@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@300;400;500;600;700&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tr-styles.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/tr-coach-schedule-admin.css') }}?v=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tr-coach-schedule-admin.css') }}?v=2">
 </head>
 <body>
 
@@ -987,7 +987,7 @@
       <!-- ── Coach Management (moved here from the sidebar) ── -->
       <div id="staff-coach-manage" style="margin-top:24px;">
       <div class="page-header">
-        <div><div class="page-title">COACH MANAGEMENT</div><div class="page-subtitle">Edit each coach's profile, available days, capacity and fee. Set the exact available times in Coach Schedule → Coach Availability.</div></div>
+        <div><div class="page-title">COACH MANAGEMENT</div><div class="page-subtitle">Edit each coach's profile, available days, capacity and fee. Set the exact available times each day in Coach Schedule → Coach Availability; see who requested which coach in Coach Schedule → Coach Assignments.</div></div>
         <button class="btn btn-red" onclick="openModal('add-coach-modal')">+ ADD COACH</button>
       </div>
       <div class="panel" style="margin-bottom:20px;">
@@ -1111,35 +1111,6 @@
         </div>
       </div>
 
-      <div class="page-header">
-        <div><div class="page-title">COACH ASSIGNMENTS</div><div class="page-subtitle">Members who requested a personal coach</div></div>
-      </div>
-      <div class="panel">
-        <table class="data-table">
-          <thead><tr><th>Member</th><th>Coach</th><th>Plan</th><th>Requested</th><th>Status</th></tr></thead>
-          <tbody>
-            {% for c in coach_assignments %}
-            <tr>
-              <td>{{ c.member_name }}</td>
-              <td>{{ c.coach_name }}</td>
-              <td>{{ c.plan }}</td>
-              <td>{{ c.date }}</td>
-              <td>
-                {% if c.status == 'verified' %}
-                <span class="badge badge-green">Active</span>
-                {% elif c.status == 'rejected' %}
-                <span class="badge badge-red">Rejected</span>
-                {% else %}
-                <span class="badge badge-blue">Pending</span>
-                {% endif %}
-              </td>
-            </tr>
-            {% else %}
-            <tr><td colspan="5" style="text-align:center;color:var(--muted);">No coach requests yet.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
       </div><!-- /staff-coach-manage -->
 
       <!-- Manage Content (admin/staff only) -->
@@ -1706,6 +1677,6 @@
 <script src="{{ url_for('static', filename='js/tr-common.js') }}"></script>
 <script src="{{ url_for('static', filename='js/tr-report-print.js') }}"></script>
 <script src="{{ url_for('static', filename='js/tr-staff.js') }}"></script>
-<script src="{{ url_for('static', filename='js/tr-coach-schedule-admin.js') }}?v=1"></script>
+<script src="{{ url_for('static', filename='js/tr-coach-schedule-admin.js') }}?v=2"></script>
 </body>
 </html>
