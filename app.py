@@ -795,11 +795,19 @@ def _membership_sessions_used(membership):
     """Coach-guided visits used so far on a session-based membership."""
     if membership is None or membership.sessions_total is None or membership.sessions_started_at is None:
         return 0
-    return (Attendance.query
+    guided_visits = (Attendance.query
             .filter(Attendance.member_id == membership.member_id,
                     Attendance.coach_guided.is_(True),
                     Attendance.check_in >= membership.sessions_started_at)
             .count())
+    # Coach Scheduling: a booked coach session uses up 1 session ONLY once staff
+    # mark it Completed (see coach_scheduling.py). Same pool, same counting rule.
+    completed_bookings = (CoachBooking.query
+            .filter(CoachBooking.member_id == membership.member_id,
+                    CoachBooking.status == 'completed',
+                    CoachBooking.completed_at >= membership.sessions_started_at)
+            .count())
+    return guided_visits + completed_bookings
 
 
 def _membership_sessions_info(membership):
@@ -1299,9 +1307,6 @@ class User(db.Model):
     phone = db.Column(db.String(20), nullable=True)
     birthday = db.Column(db.Date, nullable=True)
     # Emergency contact collected at registration (number + who they are to the member).
-    # The contact's name is entered from admin Add/Edit Member (optional — members who
-    # self-registered simply have none until an admin fills it in).
-    emergency_contact_name         = db.Column(db.String(100), nullable=True)
     emergency_contact_number       = db.Column(db.String(20), nullable=True)
     emergency_contact_relationship = db.Column(db.String(40), nullable=True)
     # Free-text note staff/admin can keep on a member (Member Details panel).
@@ -1517,6 +1522,54 @@ class Coach(db.Model):
 
     def __repr__(self):
         return f"<Coach {self.name}>"
+
+
+class CoachAvailability(db.Model):
+    """One bookable time slot in a coach's weekly schedule (Coach Scheduling).
+    weekday: 0 = Monday ... 6 = Sunday. start_time is gym-local (Manila) time.
+    Staff define these; members only ever see/book slots that exist here."""
+    __tablename__ = 'coach_availability'
+    id           = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    coach_id     = db.Column(db.Integer, db.ForeignKey('coaches.id', ondelete='CASCADE'), nullable=False, index=True)
+    weekday      = db.Column(db.SmallInteger, nullable=False)
+    start_time   = db.Column(db.Time, nullable=False)
+    duration_min = db.Column(db.Integer, nullable=False, default=60)
+    is_active    = db.Column(db.Boolean, nullable=False, default=True)
+    __table_args__ = (db.UniqueConstraint('coach_id', 'weekday', 'start_time', name='uq_coach_availability_slot'),)
+
+    coach = db.relationship('Coach')
+
+
+class CoachBooking(db.Model):
+    """A member's coach session booking.
+    status: pending -> confirmed -> completed, or cancelled / no_show.
+    slot_start/slot_end are naive gym-local (Manila) datetimes.
+    A session credit is deducted ONLY when status becomes 'completed'.
+
+    Double-booking is blocked by the database itself: while a booking is
+    active (pending/confirmed) coach_key and member_key hold a unique string;
+    they are NULL once it is cancelled/completed/no_show (MySQL allows many
+    NULLs in a UNIQUE index), so a freed slot can be booked again."""
+    __tablename__ = 'coach_bookings'
+    id           = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    member_id    = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    # SET NULL (not CASCADE): staff can delete a coach, and completed bookings must survive
+    # that — they are what has already used up the member's sessions. coach_name is a snapshot.
+    coach_id     = db.Column(db.Integer, db.ForeignKey('coaches.id', ondelete='SET NULL'), nullable=True, index=True)
+    coach_name   = db.Column(db.String(60), nullable=True)
+    slot_start   = db.Column(db.DateTime, nullable=False, index=True)
+    slot_end     = db.Column(db.DateTime, nullable=False)
+    status       = db.Column(db.String(12), nullable=False, default='pending', index=True)
+    coach_key    = db.Column(db.String(40), nullable=True, unique=True)
+    member_key   = db.Column(db.String(40), nullable=True, unique=True)
+    created_at   = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at   = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
+                             onupdate=lambda: datetime.now(timezone.utc))
+    completed_at = db.Column(db.DateTime, nullable=True)
+    cancelled_at = db.Column(db.DateTime, nullable=True)
+
+    member = db.relationship('User')
+    coach  = db.relationship('Coach')
 
 
 class Payment(db.Model):
@@ -4117,27 +4170,6 @@ def _valid_middle_initial(mi):
     return len(mi) == 1 and mi.isalpha() and mi.isupper()
 
 
-def _clean_emergency_contact(data):
-    """Read + validate the optional emergency-contact fields sent by admin
-    Add/Edit Member. Returns (name, relationship, number, error). All three
-    are optional, but whatever is supplied must be well-formed (same rules as
-    registration: letters only for name/relationship, 09 + 11 digits for the
-    number)."""
-    name         = (data.get('emergency_contact_name') or '').strip()
-    relationship = (data.get('emergency_contact_relationship') or '').strip()
-    number       = (data.get('emergency_contact_number') or '').strip()
-
-    if name and (len(name) > 100 or not _valid_name(name, extra_chars=" '-.")):
-        return None, None, None, 'Emergency contact name can only contain letters (max 100 characters).'
-    if relationship:
-        if len(relationship) > 40 or not _valid_name(relationship, extra_chars=" '-/."):
-            return None, None, None, 'Emergency contact relationship can only contain letters (max 40 characters).'
-        relationship = relationship[:1].upper() + relationship[1:]
-    if number and not _valid_phone(number):
-        return None, None, None, 'Emergency contact phone must start with 09 and be exactly 11 digits.'
-    return name or None, relationship or None, number or None, None
-
-
 # ── Fitness Goal & Recommendation feature — Step 1/2 validation ──
 # Reasonable human ranges. Purposefully generous rather than tight (e.g. a
 # 240cm outlier shouldn't hard-block a real member), but tight enough to
@@ -4872,10 +4904,6 @@ def admin_add_member():
     if plan is None or _is_walkin_only(plan):
         return jsonify(success=False, error='Please select a valid membership plan.'), 400
 
-    ec_name, ec_rel, ec_number, ec_error = _clean_emergency_contact(data)
-    if ec_error:
-        return jsonify(success=False, error=ec_error), 400
-
     # Admin-added members are walk-ins who already paid at the desk,
     # so they're activated immediately (unlike self-registration, which is 'pending').
     temp_password = _generate_temp_password()
@@ -4886,9 +4914,6 @@ def admin_add_member():
         extension_name=extension_name or None,
         email=email,
         phone=phone or None,
-        emergency_contact_name=ec_name,
-        emergency_contact_relationship=ec_rel,
-        emergency_contact_number=ec_number,
         password=generate_password_hash(temp_password),
         role='member',
         status='active',
@@ -4920,9 +4945,6 @@ def admin_add_member():
             'extension_name': new_user.extension_name or '',
             'email': email,
             'phone': new_user.phone or '',
-            'emergency_name': new_user.emergency_contact_name or '',
-            'emergency_relationship': new_user.emergency_contact_relationship or '',
-            'emergency_number': new_user.emergency_contact_number or '',
             'plan': plan.name,
             'expiry': expiry.strftime('%b %d, %Y'),
             'temp_password': temp_password,
@@ -4964,26 +4986,12 @@ def admin_edit_member(member_id):
     if existing is not None:
         return jsonify(success=False, error='Another account already uses this email.'), 409
 
-    # Emergency contact is only touched when the request actually carries it,
-    # so any other caller of this endpoint can't blank it by omission.
-    ec_given = any(k in data for k in ('emergency_contact_name',
-                                       'emergency_contact_relationship',
-                                       'emergency_contact_number'))
-    if ec_given:
-        ec_name, ec_rel, ec_number, ec_error = _clean_emergency_contact(data)
-        if ec_error:
-            return jsonify(success=False, error=ec_error), 400
-
     user.first_name = first_name
     user.middle_initial = middle_initial or None
     user.last_name  = last_name
     user.extension_name = extension_name or None
     user.email      = email
     user.phone      = phone or None
-    if ec_given:
-        user.emergency_contact_name         = ec_name
-        user.emergency_contact_relationship = ec_rel
-        user.emergency_contact_number       = ec_number
 
     membership = Membership.query.filter_by(member_id=user.id).first()
 
@@ -5046,9 +5054,6 @@ def admin_edit_member(member_id):
             'extension_name': user.extension_name or '',
             'email': email,
             'phone': user.phone or '',
-            'emergency_name': user.emergency_contact_name or '',
-            'emergency_relationship': user.emergency_contact_relationship or '',
-            'emergency_number': user.emergency_contact_number or '',
             'plan': plan_display,
             'plan_label': plan_label,
             'expiry': expiry_display,
@@ -5079,7 +5084,6 @@ def staff_member_details(member_id):
         'age':          age if age is not None else '',
         'birthday':     f"{b.strftime('%B')} {b.day}, {b.year}" if b else '',
         'sex':          (fp.sex or '').capitalize() if fp else '',
-        'emergency_name':         user.emergency_contact_name or '',
         'emergency_number':       user.emergency_contact_number or '',
         'emergency_relationship': user.emergency_contact_relationship or '',
         'plan':         (row['plan_label'] if row else '—') or '—',
@@ -9139,8 +9143,7 @@ def staff():
     # "No Plan" and "Declined" members aren't relevant to staff's day-to-day
     # (check-in, payment verification, coaching) — the Member Directory only
     # needs to show members who actually have a plan in effect.
-    all_members = _get_members_with_plans()
-    members = [m for m in all_members if m['status'] not in ('No Plan', 'Declined')]
+    members = [m for m in _get_members_with_plans() if m['status'] not in ('No Plan', 'Declined')]
     active_members       = [m for m in members if m['status'] == 'Active']
     expiring_soon    = [
         m for m in members
@@ -9410,10 +9413,6 @@ def staff():
         'staff-dashboard.html',
         attendance_today=attendance_today,
         members=members,
-        # The View Members directory lists EVERY registered member (including
-        # No Plan / Declined) so staff can look anyone up; `members` above stays
-        # filtered for the Overview, payments and stats.
-        directory_members=all_members,
         members_checkin=_get_members_checkin_status(),
         expiring_soon=expiring_soon,
         stats=stats,
@@ -10296,9 +10295,6 @@ def _get_members_with_plans():
             'extension_name': user.extension_name or '',
             'email': user.email,
             'phone': user.phone or '',
-            'emergency_name': user.emergency_contact_name or '',
-            'emergency_relationship': user.emergency_contact_relationship or '',
-            'emergency_number': user.emergency_contact_number or '',
             'plan': plan_name,
             'plan_label': plan_label,
             'expiry': expiry_text,
@@ -11324,7 +11320,6 @@ def _run_startup_migrations():
         # ── Emergency contact + staff notes on members ──
         ('users', 'emergency_contact_number',       "ALTER TABLE users ADD COLUMN emergency_contact_number VARCHAR(20) NULL"),
         ('users', 'emergency_contact_relationship', "ALTER TABLE users ADD COLUMN emergency_contact_relationship VARCHAR(40) NULL"),
-        ('users', 'emergency_contact_name',         "ALTER TABLE users ADD COLUMN emergency_contact_name VARCHAR(100) NULL"),
         ('users', 'staff_notes',                    "ALTER TABLE users ADD COLUMN staff_notes TEXT NULL"),
         # ── Walk-in guests optionally availing a coach for their visit ──
         ('walk_ins', 'wants_coach', "ALTER TABLE walk_ins ADD COLUMN wants_coach TINYINT(1) NOT NULL DEFAULT 0"),
@@ -11689,6 +11684,17 @@ def _run_startup_migrations():
     if corrected:
         db.session.commit()
         print(f"Migration: corrected sub_target on {corrected} existing exercise row(s)")
+
+
+# ── Coach Scheduling (member booking of coach sessions) ──
+import coach_scheduling
+coach_scheduling.register(
+    app, db,
+    User=User, Membership=Membership, Coach=Coach,
+    CoachAvailability=CoachAvailability, CoachBooking=CoachBooking,
+    now_manila=_now_manila, today_manila=_today_manila,
+    sessions_info=_membership_sessions_info, sync_session_expiry=_sync_session_expiry,
+)
 
 
 def _run_startup_sequence():

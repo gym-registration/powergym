@@ -9,6 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@300;400;500;600;700&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tr-styles.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tr-chat.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tr-coach-scheduling.css') }}?v=1">
 </head>
 <body>
 
@@ -48,6 +49,9 @@
       </div>
       <div class="nav-item" id="nav-member-goals"       onclick="memberTab('goals',this)">
         <span class="nav-icon">🎯</span> Body Goals
+      </div>
+      <div class="nav-item" id="nav-member-coach-scheduling" onclick="memberTab('coach-scheduling',this)">
+        <span class="nav-icon">🗓️</span> Coach Scheduling
       </div>
       <div class="nav-item" id="nav-member-attendance"  onclick="memberTab('attendance',this)">
         <span class="nav-icon">📅</span> My Attendance
@@ -819,6 +823,77 @@
         </table>
       </div>
     </div><!-- /member-attendance -->
+
+    <!-- ── Coach Scheduling ─────────────── -->
+    <div id="member-coach-scheduling" class="sub-panel">
+      <div class="cs-layout" id="cs-root">
+
+        <div class="cs-main">
+          <div class="cs-header">
+            <span class="cs-header-icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg></span>
+            <div>
+              <div class="cs-title">COACH SCHEDULING</div>
+              <div class="cs-subtitle">Book a coach, get personalized guidance, and reach your goals faster.</div>
+            </div>
+          </div>
+
+          <div class="cs-tabs" role="tablist" aria-label="Coach scheduling">
+            <button type="button" class="cs-tab active" role="tab" aria-selected="true"  data-cs-tab="book">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
+              <span>Book a Coach</span>
+            </button>
+            <button type="button" class="cs-tab" role="tab" aria-selected="false" data-cs-tab="bookings">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+              <span>My Bookings</span>
+            </button>
+            <button type="button" class="cs-tab" role="tab" aria-selected="false" data-cs-tab="schedule">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4M8 14h2M14 14h2M8 17h2"/></svg>
+              <span>Schedule</span>
+            </button>
+          </div>
+
+          <div class="cs-view" id="cs-view-book"></div>
+          <div class="cs-view" id="cs-view-bookings" hidden></div>
+          <div class="cs-view" id="cs-view-schedule" hidden></div>
+        </div>
+
+        <aside class="cs-side">
+          <div class="cs-card cs-credits" id="cs-credits"></div>
+
+          <div class="cs-card">
+            <div class="cs-card-head">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
+              <span class="cs-card-title">YOUR UPCOMING SESSIONS</span>
+              <button type="button" class="cs-link" data-cs-goto="bookings">View All</button>
+            </div>
+            <div id="cs-upcoming"></div>
+          </div>
+
+          <div class="cs-card">
+            <div class="cs-card-head">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1M3.5 4.5v4h4"/><path d="M12 8v4.5l3 1.8"/></svg>
+              <span class="cs-card-title">SESSION HISTORY</span>
+              <button type="button" class="cs-link" data-cs-goto="bookings-past">View All</button>
+            </div>
+            <div id="cs-history"></div>
+          </div>
+
+          <div class="cs-card cs-how">
+            <div class="cs-card-head">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 2.5a9.5 9.5 0 1 0 0 19 9.5 9.5 0 0 0 0-19zm1 14.2h-2v-6h2zm0-8h-2V6.8h2z"/></svg>
+              <span class="cs-card-title">How It Works</span>
+            </div>
+            <ul class="cs-how-list">
+              <li>Book a coach based on your preferred date and time.</li>
+              <li>Only available time slots can be selected.</li>
+              <li>You can cancel or reschedule your session before it starts.</li>
+              <li>Each completed session deducts 1 from your remaining coach sessions.</li>
+            </ul>
+          </div>
+        </aside>
+
+      </div>
+    </div><!-- /member-coach-scheduling -->
 
     <!-- ── Body Goals ───────────────────── -->
     <div id="member-goals" class="sub-panel">
@@ -2170,6 +2245,7 @@
 <script id="member-dashboard-data" type="application/json">{{ {'present_days': present_days, 'no_plan_days': no_plan_days, 'days_in_month': days_in_month, 'today_day': today_day, 'year': attendance_year, 'month': attendance_month, 'plan_approved_notice': plan_approved_notice, 'payment_verified_notice': payment_verified_notice, 'plan_declined_notice': plan_declined_notice, 'feedback_prompt': feedback_prompt, 'new_announcements': new_announcements, 'bot_reminders': bot_reminders, 'notification_center': notification_center, 'notification_unread_count': notification_unread_count}|tojson }}</script>
 <script src="{{ url_for('static', filename='js/tr-common.js') }}?v=20261002"></script>
 <script src="{{ url_for('static', filename='js/tr-member.js') }}?v=20261002"></script>
+<script src="{{ url_for('static', filename='js/tr-coach-scheduling.js') }}?v=1"></script>
 <script src="{{ url_for('static', filename='js/tr-chat.js') }}"></script>
 </body>
 </html>

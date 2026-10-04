@@ -1,0 +1,223 @@
+/* ═══════════════════════════════════════════════════════════════
+   Coach Scheduling (member dashboard) — all selectors prefixed .cs-
+   Uses the app's tokens from tr-styles.css (--red, --green, --card, --border…)
+═══════════════════════════════════════════════════════════════ */
+#member-coach-scheduling { --cs-bg: #0b0f16; --cs-line: rgba(255,255,255,0.10); }
+
+.cs-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 22px; align-items: start; }
+.cs-main { min-width: 0; }
+.cs-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+/* header */
+.cs-header { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
+.cs-header-icon {
+  width: 44px; height: 44px; flex: 0 0 44px; display: grid; place-items: center;
+  border: 2px solid var(--red); border-radius: 8px; color: var(--red);
+}
+.cs-title { font-family: 'Bebas Neue', sans-serif; font-size: 44px; letter-spacing: 1.5px; line-height: 1; color: var(--white); }
+.cs-subtitle { color: var(--muted); font-size: 16px; margin-top: 6px; }
+
+/* tabs */
+.cs-tabs { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--card); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-bottom: 20px; }
+.cs-tab {
+  display: flex; align-items: center; justify-content: center; gap: 12px; padding: 17px 12px;
+  background: transparent; color: #c9cfdd; border: 0; border-right: 1px solid var(--border);
+  font: 600 17px 'Barlow', sans-serif; cursor: pointer; transition: background .2s, color .2s;
+}
+.cs-tab:last-child { border-right: 0; }
+.cs-tab:hover { background: rgba(255,255,255,0.05); color: #fff; }
+.cs-tab.active { background: var(--red); color: #fff; }
+.cs-tab:focus-visible, .cs-slot:focus-visible, .cs-btn:focus-visible, .cs-daybtn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+
+/* generic card */
+.cs-card, .cs-panel { background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+.cs-panel { padding: 22px; }
+.cs-card { padding: 18px 20px; }
+.cs-step { display: flex; align-items: center; gap: 12px; font-size: 19px; font-weight: 700; color: var(--white); margin-bottom: 16px; }
+.cs-step svg { color: var(--white); }
+
+/* date picker + day strip */
+.cs-date-row { display: flex; gap: 14px; align-items: stretch; margin-bottom: 26px; }
+.cs-date-input {
+  flex: 0 0 300px; display: flex; align-items: center; justify-content: space-between;
+  background: var(--cs-bg); border: 1px solid var(--border); border-radius: 6px; padding: 0 16px; min-height: 56px;
+}
+.cs-date-input input {
+  background: transparent; border: 0; color: var(--white); font: 500 19px 'Barlow', sans-serif; width: 100%; color-scheme: dark; cursor: pointer;
+}
+.cs-date-input input:focus { outline: none; }
+.cs-strip { flex: 1; min-width: 0; display: flex; align-items: stretch; background: var(--cs-bg); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.cs-strip-arrow { flex: 0 0 34px; background: transparent; border: 0; color: #c9cfdd; font-size: 20px; cursor: pointer; }
+.cs-strip-arrow:disabled { opacity: .25; cursor: not-allowed; }
+.cs-strip-arrow:not(:disabled):hover { color: #fff; background: rgba(255,255,255,.06); }
+.cs-days { flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); }
+.cs-daybtn {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 10px 2px;
+  background: transparent; color: #c9cfdd; border: 1px solid transparent; border-left: 1px solid var(--cs-line);
+  font: 500 15px 'Barlow', sans-serif; cursor: pointer; min-width: 0;
+}
+.cs-daybtn:hover { background: rgba(255,255,255,.05); color: #fff; }
+.cs-daybtn.active { background: rgba(230,30,37,0.16); border: 2px solid var(--red); color: #fff; font-weight: 700; }
+
+/* alerts */
+.cs-alert { border-radius: 6px; padding: 12px 16px; margin-bottom: 18px; font-size: 15px; line-height: 1.45; border: 1px solid; }
+.cs-alert.warn { background: rgba(255,171,64,.10); border-color: rgba(255,171,64,.45); color: var(--gold); }
+.cs-alert.info { background: rgba(61,125,212,.12); border-color: rgba(61,125,212,.45); color: #9fc2f5; display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+
+/* coach cards */
+.cs-coaches { display: flex; flex-direction: column; gap: 14px; }
+.cs-coach {
+  display: grid; grid-template-columns: 290px minmax(0, 1fr) 160px; gap: 20px; align-items: center;
+  background: var(--cs-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px 22px;
+  transition: border-color .2s, box-shadow .2s;
+}
+.cs-coach.selected { border: 2px solid var(--green); box-shadow: 0 0 18px rgba(0,230,118,.22); padding: 19px 21px; }
+.cs-coach-info { display: flex; gap: 16px; align-items: center; min-width: 0; }
+.cs-avatar {
+  position: relative; overflow: hidden;
+  flex: 0 0 82px; width: 82px; height: 82px; border-radius: 50%; border: 2px solid var(--border);
+  background: #1b2230 center/cover no-repeat; display: grid; place-items: center;
+  font: 700 28px 'Barlow Condensed', 'Barlow', sans-serif; color: var(--muted);
+}
+.cs-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cs-coach-text { min-width: 0; }
+.cs-coach-name { font-size: 22px; font-weight: 700; color: #fff; overflow-wrap: anywhere; }
+.cs-avail { display: flex; align-items: center; gap: 8px; font-size: 15px; margin: 3px 0 8px; color: var(--green); }
+.cs-avail::before { content: ''; width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
+.cs-avail.none { color: var(--muted); }
+.cs-spec { font-size: 16px; color: #dfe3ee; font-weight: 500; overflow-wrap: anywhere; }
+.cs-bio { font-size: 14px; color: var(--muted); margin-top: 4px; line-height: 1.4; overflow-wrap: anywhere; }
+
+.cs-slots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.cs-slot {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 12px 6px; min-height: 66px;
+  background: transparent; border: 1px solid var(--green); border-radius: 6px; color: #fff;
+  font: 600 16px 'Barlow', sans-serif; cursor: pointer; transition: background .15s, box-shadow .15s;
+}
+.cs-slot small { font: 500 14px 'Barlow', sans-serif; color: var(--green); }
+.cs-slot:not(:disabled):hover { background: rgba(0,230,118,.10); }
+.cs-slot.chosen { background: rgba(0,230,118,.22); box-shadow: 0 0 0 2px var(--green) inset; }
+.cs-slot:disabled { border-color: var(--border); color: #7d8498; cursor: not-allowed; background: rgba(255,255,255,.02); }
+.cs-slot:disabled small { color: #7d8498; }
+.cs-noslots { grid-column: 1 / -1; color: var(--muted); font-size: 15px; text-align: center; padding: 14px 8px; }
+
+.cs-btn {
+  display: inline-flex; align-items: center; justify-content: center; padding: 14px 16px; border-radius: 4px; cursor: pointer;
+  font: 700 14px 'Barlow', sans-serif; letter-spacing: .6px; text-transform: uppercase; white-space: nowrap; transition: background .2s, border-color .2s, opacity .2s;
+  background: transparent; color: #fff; border: 1px solid #c9cfdd;
+}
+.cs-btn:hover { border-color: #fff; background: rgba(255,255,255,.07); }
+.cs-btn.red { background: var(--red); border-color: var(--red); }
+.cs-btn.red:hover { background: var(--red-dark); border-color: var(--red-dark); }
+.cs-btn.sm { padding: 9px 14px; font-size: 13px; }
+.cs-btn.danger { border-color: rgba(230,30,37,.6); color: #ff6b70; }
+.cs-btn:disabled { opacity: .45; cursor: not-allowed; }
+.cs-book-btn { width: 100%; }
+
+.cs-empty { text-align: center; color: var(--muted); padding: 28px 12px; font-size: 16px; }
+.cs-loading { color: var(--muted); padding: 24px; text-align: center; }
+
+/* status pills */
+.cs-pill { display: inline-block; padding: 7px 16px; border-radius: 999px; font-size: 14px; font-weight: 600; background: rgba(255,255,255,.08); color: #dfe3ee; white-space: nowrap; }
+.cs-pill.confirmed { background: rgba(0,230,118,.16); color: var(--green); }
+.cs-pill.pending { background: rgba(255,255,255,.10); color: #dfe3ee; }
+.cs-pill.completed { background: rgba(0,230,118,.16); color: var(--green); }
+.cs-pill.cancelled, .cs-pill.no_show { background: rgba(230,30,37,.15); color: #ff6b70; }
+
+/* side cards */
+.cs-credits { display: flex; align-items: center; gap: 16px; padding: 22px; }
+.cs-credits svg { color: var(--white); flex: 0 0 auto; }
+.cs-credits-body { flex: 1; min-width: 0; }
+.cs-credits-title { font-size: 19px; font-weight: 600; color: #fff; }
+.cs-credits-count { font-size: 18px; color: #dfe3ee; margin-bottom: 10px; }
+.cs-credits-count strong { color: #fff; }
+.cs-bar { height: 8px; background: #232a38; border-radius: 99px; overflow: hidden; }
+.cs-bar > span { display: block; height: 100%; background: var(--green); border-radius: 99px; transition: width .4s; }
+.cs-credits-note { font-size: 13px; color: var(--muted); margin-top: 8px; line-height: 1.4; }
+
+.cs-card-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.cs-card-head svg { flex: 0 0 auto; color: #fff; }
+.cs-card-title { font-family: 'Bebas Neue', sans-serif; font-size: 21px; letter-spacing: .8px; color: #fff; flex: 1; min-width: 0; line-height: 1.1; }
+.cs-link { white-space: nowrap; background: none; border: 0; color: #c9cfdd; font: 500 14px 'Barlow', sans-serif; cursor: pointer; }
+.cs-link:hover { color: #fff; text-decoration: underline; }
+
+.cs-item { display: flex; align-items: center; gap: 14px; padding: 14px 0; border-top: 1px solid var(--cs-line); }
+.cs-item:first-child { border-top: 0; }
+.cs-datechip { flex: 0 0 52px; text-align: center; background: var(--cs-bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 0; }
+.cs-datechip small { display: block; font-size: 13px; color: #c9cfdd; letter-spacing: .5px; text-transform: uppercase; }
+.cs-datechip b { display: block; font: 700 24px 'Barlow Condensed', 'Barlow', sans-serif; color: #fff; line-height: 1.1; }
+.cs-item-main { flex: 1; min-width: 0; }
+.cs-item-title { font-size: 16px; font-weight: 600; color: #fff; overflow-wrap: anywhere; }
+.cs-item-sub { font-size: 14px; color: var(--muted); margin-top: 2px; }
+.cs-hist-date { font-size: 14px; color: #dfe3ee; white-space: nowrap; }
+.cs-hist-sub { font-size: 14px; color: #c9cfdd; margin-top: 8px; }
+.cs-chev { color: #c9cfdd; font-size: 20px; flex: 0 0 auto; }
+
+.cs-how-list { margin: 6px 0 0 0; padding-left: 18px; color: #c9cfdd; font-size: 15px; line-height: 1.55; }
+.cs-how-list li { margin-bottom: 8px; }
+.cs-how-list li::marker { color: var(--blue); }
+.cs-how .cs-card-title { font-family: 'Barlow', sans-serif; font-size: 18px; font-weight: 700; letter-spacing: 0; }
+.cs-how .cs-card-head svg { color: #4a90e2; }
+
+/* My Bookings */
+.cs-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-bottom: 16px; }
+.cs-seg button { background: transparent; border: 0; border-right: 1px solid var(--border); color: #c9cfdd; padding: 10px 18px; font: 600 15px 'Barlow', sans-serif; cursor: pointer; }
+.cs-seg button:last-child { border-right: 0; }
+.cs-seg button.active { background: rgba(230,30,37,.9); color: #fff; }
+.cs-row { display: grid; grid-template-columns: 62px minmax(0,1fr) auto; gap: 16px; align-items: center; padding: 16px 0; border-top: 1px solid var(--cs-line); }
+.cs-row:first-child { border-top: 0; }
+.cs-row-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+
+/* Schedule (month calendar) */
+.cs-cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.cs-cal-title { font-family: 'Bebas Neue', sans-serif; font-size: 28px; letter-spacing: 1px; }
+.cs-cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.cs-cal-dow { text-align: center; font-size: 13px; color: var(--muted); padding: 4px 0; text-transform: uppercase; letter-spacing: .6px; }
+.cs-cal-day {
+  position: relative; min-height: 58px; background: var(--cs-bg); border: 1px solid var(--border); border-radius: 6px; color: #dfe3ee;
+  font: 600 17px 'Barlow', sans-serif; cursor: pointer; padding: 6px 4px;
+}
+.cs-cal-day.empty { visibility: hidden; }
+.cs-cal-day.today { border-color: var(--gold); }
+.cs-cal-day.sel { border: 2px solid var(--red); background: rgba(230,30,37,.14); }
+.cs-cal-day .dots { display: flex; justify-content: center; gap: 4px; margin-top: 6px; }
+.cs-cal-day .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+.cs-cal-day .dot.pending { background: var(--gold); }
+.cs-cal-day .dot.done { background: #6e7690; }
+.cs-legend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 14px; font-size: 14px; color: var(--muted); }
+.cs-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; background: var(--green); }
+.cs-legend i.pending { background: var(--gold); } .cs-legend i.done { background: #6e7690; }
+
+/* confirmation modal */
+.cs-modal-overlay { position: fixed; inset: 0; z-index: 1100; background: rgba(0,0,0,.75); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.cs-modal { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 28px; width: 100%; max-width: 440px; }
+.cs-modal h3 { font-family: 'Bebas Neue', sans-serif; font-size: 30px; letter-spacing: 1px; margin-bottom: 14px; }
+.cs-modal dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; margin-bottom: 14px; font-size: 16px; }
+.cs-modal dt { color: var(--muted); } .cs-modal dd { color: #fff; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+.cs-modal p { color: var(--muted); font-size: 14px; line-height: 1.5; margin-bottom: 18px; }
+.cs-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* responsive */
+@media (max-width: 1280px) {
+  .cs-layout { grid-template-columns: minmax(0,1fr); }
+  .cs-side { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .cs-credits { grid-column: 1 / -1; }
+}
+@media (max-width: 1100px) {
+  .cs-coach { grid-template-columns: minmax(0,1fr); }
+  .cs-book-btn { max-width: 260px; }
+}
+@media (max-width: 760px) {
+  .cs-title { font-size: 34px; }
+  .cs-subtitle { font-size: 14px; }
+  .cs-tab { font-size: 14px; gap: 6px; padding: 14px 4px; flex-direction: column; }
+  .cs-date-row { flex-direction: column; }
+  .cs-date-input { flex: 0 0 auto; }
+  .cs-days { grid-template-columns: repeat(7, minmax(46px, 1fr)); overflow-x: auto; }
+  .cs-daybtn { font-size: 13px; }
+  .cs-side { grid-template-columns: minmax(0,1fr); }
+  .cs-row { grid-template-columns: 52px minmax(0,1fr); }
+  .cs-row-actions { grid-column: 1 / -1; justify-content: flex-start; }
+  .cs-slots { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .cs-cal-day { min-height: 46px; font-size: 15px; }
+}
