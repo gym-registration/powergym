@@ -1279,6 +1279,18 @@ body::before {
   margin-bottom: 8px;
 }
 
+/* Sub-heading that groups related fields inside a modal form (e.g. Emergency Contact) */
+.form-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 4px 0 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
 .form-input {
   width: 100%;
   background: rgba(255,255,255,0.04);

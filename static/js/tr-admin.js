@@ -61,6 +61,55 @@ const AdminModule = (() => {
     if (tabName === 'settings') ContentManager.ensureLoaded();
   }
 
+  /* ── Emergency contact helpers (shared by the Add + Edit Member modals) ── */
+  const EC_PRESET_RELATIONSHIPS = ['Mother', 'Father', 'Spouse', 'Guardian'];
+
+  /** Show the "please specify" box only while Relationship = Other */
+  function toggleMemberEcRelOther(prefix) {
+    const sel   = document.getElementById(prefix + '-ec-rel');
+    const other = document.getElementById(prefix + '-ec-rel-other');
+    if (!sel || !other) return;
+    const show = sel.value === 'Other';
+    other.style.display = show ? '' : 'none';
+    if (!show) other.value = '';
+  }
+
+  /** The relationship the user chose (or typed when "Other") */
+  function _ecRelationship(prefix) {
+    const sel = _val(prefix + '-ec-rel');
+    return sel === 'Other' ? _val(prefix + '-ec-rel-other') : sel;
+  }
+
+  /** Pre-select the dropdown — values outside the presets (e.g. "Sister") go under Other */
+  function _setEcRelationship(prefix, rel) {
+    const sel   = document.getElementById(prefix + '-ec-rel');
+    const other = document.getElementById(prefix + '-ec-rel-other');
+    if (!sel || !other) return;
+    rel = (rel || '').trim();
+    if (!rel) {
+      sel.value = '';
+      other.value = '';
+    } else if (EC_PRESET_RELATIONSHIPS.includes(rel)) {
+      sel.value = rel;
+      other.value = '';
+    } else {
+      sel.value = 'Other';
+      other.value = rel;
+    }
+    toggleMemberEcRelOther(prefix);
+  }
+
+  /** Emergency contact is optional, but anything entered must be valid. Returns an error string or '' */
+  function _validateEmergencyContact(prefix, relationship, number) {
+    if (_val(prefix + '-ec-rel') === 'Other' && !relationship) {
+      return 'Please specify the emergency contact relationship.';
+    }
+    if (number && !/^09\d{9}$/.test(number)) {
+      return 'Emergency contact phone must start with 09 and be exactly 11 digits.';
+    }
+    return '';
+  }
+
   /** Add a new member row from modal form */
   function addMember() {
     const firstName = _val('add-member-fname');
@@ -69,6 +118,9 @@ const AdminModule = (() => {
     const extensionName = _val('add-member-ext');
     const email     = _val('add-member-email');
     const phone     = _val('add-member-phone');
+    const ecName    = _val('add-member-ec-name');
+    const ecRel     = _ecRelationship('add-member');
+    const ecNumber  = _val('add-member-ec-phone');
     const planText  = document.getElementById('add-member-plan')?.value || 'Monthly';
     const planName  = planText.split('—')[0].trim();
 
@@ -78,6 +130,12 @@ const AdminModule = (() => {
     }
     if (!/^09\d{9}$/.test(phone)) {
       showToast('Phone number must start with 09 and be exactly 11 digits.', 'error');
+      return;
+    }
+
+    const ecError = _validateEmergencyContact('add-member', ecRel, ecNumber);
+    if (ecError) {
+      showToast(ecError, 'error');
       return;
     }
 
@@ -94,6 +152,9 @@ const AdminModule = (() => {
         extension_name: extensionName,
         email:          email,
         phone:          phone,
+        emergency_contact_name:         ecName,
+        emergency_contact_relationship: ecRel,
+        emergency_contact_number:       ecNumber,
         plan:           planName
       })
     })
@@ -117,6 +178,9 @@ const AdminModule = (() => {
           row.dataset.middleInitial = m.middle_initial || '';
           row.dataset.lastName      = m.last_name || '';
           row.dataset.extensionName = m.extension_name || '';
+          row.dataset.emergencyName         = m.emergency_name || '';
+          row.dataset.emergencyRelationship = m.emergency_relationship || '';
+          row.dataset.emergencyPhone        = m.emergency_number || '';
           row.innerHTML = `
             <td>#${m.id}</td>
             <td>${m.name}</td>
@@ -132,12 +196,13 @@ const AdminModule = (() => {
         }
 
         closeModal('add-member-modal');
-        ['add-member-fname', 'add-member-mi', 'add-member-lname', 'add-member-ext', 'add-member-email', 'add-member-phone'].forEach(id => {
+        ['add-member-fname', 'add-member-mi', 'add-member-lname', 'add-member-ext', 'add-member-email', 'add-member-phone', 'add-member-ec-name', 'add-member-ec-phone'].forEach(id => {
           const el = document.getElementById(id);
           if (el) el.value = '';
         });
         const planEl = document.getElementById('add-member-plan');
         if (planEl) planEl.selectedIndex = 0;
+        _setEcRelationship('add-member', '');
 
         showToast(`Member added! Temporary password: ${m.temp_password}`, 'success');
       })
@@ -163,6 +228,9 @@ const AdminModule = (() => {
     document.getElementById('edit-member-ext').value    = row.dataset.extensionName || '';
     document.getElementById('edit-member-email').value  = cells[2].textContent.trim();
     document.getElementById('edit-member-phone').value  = row.dataset.phone || '';
+    document.getElementById('edit-member-ec-name').value  = row.dataset.emergencyName || '';
+    document.getElementById('edit-member-ec-phone').value = row.dataset.emergencyPhone || '';
+    _setEcRelationship('edit-member', row.dataset.emergencyRelationship || '');
     document.getElementById('edit-member-expiry').value = row.dataset.expiryIso || '';
 
     const planSelect = document.getElementById('edit-member-plan');
@@ -183,6 +251,9 @@ const AdminModule = (() => {
     const extensionName = _val('edit-member-ext');
     const email     = _val('edit-member-email');
     const phone     = _val('edit-member-phone');
+    const ecName    = _val('edit-member-ec-name');
+    const ecRel     = _ecRelationship('edit-member');
+    const ecNumber  = _val('edit-member-ec-phone');
     const planText  = document.getElementById('edit-member-plan')?.value || '';
     const planName  = planText.split('—')[0].trim();
     const expiry    = document.getElementById('edit-member-expiry')?.value || '';
@@ -193,6 +264,12 @@ const AdminModule = (() => {
     }
     if (!/^09\d{9}$/.test(phone)) {
       showToast('Phone number must start with 09 and be exactly 11 digits.', 'error');
+      return;
+    }
+
+    const ecError = _validateEmergencyContact('edit-member', ecRel, ecNumber);
+    if (ecError) {
+      showToast(ecError, 'error');
       return;
     }
 
@@ -209,6 +286,9 @@ const AdminModule = (() => {
         extension_name: extensionName,
         email:          email,
         phone:          phone,
+        emergency_contact_name:         ecName,
+        emergency_contact_relationship: ecRel,
+        emergency_contact_number:       ecNumber,
         plan:           planName,
         expiry:         expiry
       })
@@ -236,6 +316,9 @@ const AdminModule = (() => {
           row.dataset.middleInitial = m.middle_initial || '';
           row.dataset.lastName      = m.last_name || '';
           row.dataset.extensionName = m.extension_name || '';
+          row.dataset.emergencyName         = m.emergency_name || '';
+          row.dataset.emergencyRelationship = m.emergency_relationship || '';
+          row.dataset.emergencyPhone        = m.emergency_number || '';
         }
 
         closeModal('edit-member-modal');
@@ -1727,7 +1810,7 @@ const AdminModule = (() => {
   }
 
   return {
-    init, tab, addMember, openEditMemberModal, saveEditMember, deleteMemberRow,
+    init, tab, addMember, openEditMemberModal, saveEditMember, deleteMemberRow, toggleMemberEcRelOther,
     addStaff, openEditStaffModal, saveEditStaff, promptDeleteStaff, confirmDeleteStaff,
     generateAnalyticsReport, refreshCurrentReport, exportReportPDF, clearReportDateRange,
     viewPaymentProof, viewPaymentProofs, viewStudentIdProof, filterMembersByStatus, filterMembersTable, toggleMemberIdColumn,
@@ -1758,6 +1841,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.openEditMemberModal     = AdminModule.openEditMemberModal;
   window.saveEditMember          = AdminModule.saveEditMember;
   window.deleteMemberRow         = AdminModule.deleteMemberRow;
+  window.toggleMemberEcRelOther  = AdminModule.toggleMemberEcRelOther;
   window.generateAnalyticsReport = AdminModule.generateAnalyticsReport;
   window.refreshCurrentReport    = AdminModule.refreshCurrentReport;
   window.exportCurrentReportPDF  = AdminModule.exportReportPDF;

@@ -1299,6 +1299,9 @@ class User(db.Model):
     phone = db.Column(db.String(20), nullable=True)
     birthday = db.Column(db.Date, nullable=True)
     # Emergency contact collected at registration (number + who they are to the member).
+    # The contact's name is entered from admin Add/Edit Member (optional — members who
+    # self-registered simply have none until an admin fills it in).
+    emergency_contact_name         = db.Column(db.String(100), nullable=True)
     emergency_contact_number       = db.Column(db.String(20), nullable=True)
     emergency_contact_relationship = db.Column(db.String(40), nullable=True)
     # Free-text note staff/admin can keep on a member (Member Details panel).
@@ -4114,6 +4117,27 @@ def _valid_middle_initial(mi):
     return len(mi) == 1 and mi.isalpha() and mi.isupper()
 
 
+def _clean_emergency_contact(data):
+    """Read + validate the optional emergency-contact fields sent by admin
+    Add/Edit Member. Returns (name, relationship, number, error). All three
+    are optional, but whatever is supplied must be well-formed (same rules as
+    registration: letters only for name/relationship, 09 + 11 digits for the
+    number)."""
+    name         = (data.get('emergency_contact_name') or '').strip()
+    relationship = (data.get('emergency_contact_relationship') or '').strip()
+    number       = (data.get('emergency_contact_number') or '').strip()
+
+    if name and (len(name) > 100 or not _valid_name(name, extra_chars=" '-.")):
+        return None, None, None, 'Emergency contact name can only contain letters (max 100 characters).'
+    if relationship:
+        if len(relationship) > 40 or not _valid_name(relationship, extra_chars=" '-/."):
+            return None, None, None, 'Emergency contact relationship can only contain letters (max 40 characters).'
+        relationship = relationship[:1].upper() + relationship[1:]
+    if number and not _valid_phone(number):
+        return None, None, None, 'Emergency contact phone must start with 09 and be exactly 11 digits.'
+    return name or None, relationship or None, number or None, None
+
+
 # ── Fitness Goal & Recommendation feature — Step 1/2 validation ──
 # Reasonable human ranges. Purposefully generous rather than tight (e.g. a
 # 240cm outlier shouldn't hard-block a real member), but tight enough to
@@ -4848,6 +4872,10 @@ def admin_add_member():
     if plan is None or _is_walkin_only(plan):
         return jsonify(success=False, error='Please select a valid membership plan.'), 400
 
+    ec_name, ec_rel, ec_number, ec_error = _clean_emergency_contact(data)
+    if ec_error:
+        return jsonify(success=False, error=ec_error), 400
+
     # Admin-added members are walk-ins who already paid at the desk,
     # so they're activated immediately (unlike self-registration, which is 'pending').
     temp_password = _generate_temp_password()
@@ -4858,6 +4886,9 @@ def admin_add_member():
         extension_name=extension_name or None,
         email=email,
         phone=phone or None,
+        emergency_contact_name=ec_name,
+        emergency_contact_relationship=ec_rel,
+        emergency_contact_number=ec_number,
         password=generate_password_hash(temp_password),
         role='member',
         status='active',
@@ -4889,6 +4920,9 @@ def admin_add_member():
             'extension_name': new_user.extension_name or '',
             'email': email,
             'phone': new_user.phone or '',
+            'emergency_name': new_user.emergency_contact_name or '',
+            'emergency_relationship': new_user.emergency_contact_relationship or '',
+            'emergency_number': new_user.emergency_contact_number or '',
             'plan': plan.name,
             'expiry': expiry.strftime('%b %d, %Y'),
             'temp_password': temp_password,
@@ -4930,12 +4964,26 @@ def admin_edit_member(member_id):
     if existing is not None:
         return jsonify(success=False, error='Another account already uses this email.'), 409
 
+    # Emergency contact is only touched when the request actually carries it,
+    # so any other caller of this endpoint can't blank it by omission.
+    ec_given = any(k in data for k in ('emergency_contact_name',
+                                       'emergency_contact_relationship',
+                                       'emergency_contact_number'))
+    if ec_given:
+        ec_name, ec_rel, ec_number, ec_error = _clean_emergency_contact(data)
+        if ec_error:
+            return jsonify(success=False, error=ec_error), 400
+
     user.first_name = first_name
     user.middle_initial = middle_initial or None
     user.last_name  = last_name
     user.extension_name = extension_name or None
     user.email      = email
     user.phone      = phone or None
+    if ec_given:
+        user.emergency_contact_name         = ec_name
+        user.emergency_contact_relationship = ec_rel
+        user.emergency_contact_number       = ec_number
 
     membership = Membership.query.filter_by(member_id=user.id).first()
 
@@ -4998,6 +5046,9 @@ def admin_edit_member(member_id):
             'extension_name': user.extension_name or '',
             'email': email,
             'phone': user.phone or '',
+            'emergency_name': user.emergency_contact_name or '',
+            'emergency_relationship': user.emergency_contact_relationship or '',
+            'emergency_number': user.emergency_contact_number or '',
             'plan': plan_display,
             'plan_label': plan_label,
             'expiry': expiry_display,
@@ -5028,6 +5079,7 @@ def staff_member_details(member_id):
         'age':          age if age is not None else '',
         'birthday':     f"{b.strftime('%B')} {b.day}, {b.year}" if b else '',
         'sex':          (fp.sex or '').capitalize() if fp else '',
+        'emergency_name':         user.emergency_contact_name or '',
         'emergency_number':       user.emergency_contact_number or '',
         'emergency_relationship': user.emergency_contact_relationship or '',
         'plan':         (row['plan_label'] if row else '—') or '—',
@@ -9087,7 +9139,8 @@ def staff():
     # "No Plan" and "Declined" members aren't relevant to staff's day-to-day
     # (check-in, payment verification, coaching) — the Member Directory only
     # needs to show members who actually have a plan in effect.
-    members = [m for m in _get_members_with_plans() if m['status'] not in ('No Plan', 'Declined')]
+    all_members = _get_members_with_plans()
+    members = [m for m in all_members if m['status'] not in ('No Plan', 'Declined')]
     active_members       = [m for m in members if m['status'] == 'Active']
     expiring_soon    = [
         m for m in members
@@ -9357,6 +9410,10 @@ def staff():
         'staff-dashboard.html',
         attendance_today=attendance_today,
         members=members,
+        # The View Members directory lists EVERY registered member (including
+        # No Plan / Declined) so staff can look anyone up; `members` above stays
+        # filtered for the Overview, payments and stats.
+        directory_members=all_members,
         members_checkin=_get_members_checkin_status(),
         expiring_soon=expiring_soon,
         stats=stats,
@@ -10239,6 +10296,9 @@ def _get_members_with_plans():
             'extension_name': user.extension_name or '',
             'email': user.email,
             'phone': user.phone or '',
+            'emergency_name': user.emergency_contact_name or '',
+            'emergency_relationship': user.emergency_contact_relationship or '',
+            'emergency_number': user.emergency_contact_number or '',
             'plan': plan_name,
             'plan_label': plan_label,
             'expiry': expiry_text,
@@ -11264,6 +11324,7 @@ def _run_startup_migrations():
         # ── Emergency contact + staff notes on members ──
         ('users', 'emergency_contact_number',       "ALTER TABLE users ADD COLUMN emergency_contact_number VARCHAR(20) NULL"),
         ('users', 'emergency_contact_relationship', "ALTER TABLE users ADD COLUMN emergency_contact_relationship VARCHAR(40) NULL"),
+        ('users', 'emergency_contact_name',         "ALTER TABLE users ADD COLUMN emergency_contact_name VARCHAR(100) NULL"),
         ('users', 'staff_notes',                    "ALTER TABLE users ADD COLUMN staff_notes TEXT NULL"),
         # ── Walk-in guests optionally availing a coach for their visit ──
         ('walk_ins', 'wants_coach', "ALTER TABLE walk_ins ADD COLUMN wants_coach TINYINT(1) NOT NULL DEFAULT 0"),

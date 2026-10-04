@@ -739,7 +739,7 @@
         <table class="data-table" id="members-table">
           <thead><tr><th class="col-member-id">ID</th><th>Name</th><th>Plan</th><th>Expiry</th><th>Status</th></tr></thead>
           <tbody>
-            {% for m in members %}
+            {% for m in directory_members %}
             <tr data-id="{{ m.id }}" data-name="{{ m.name|lower }}"
                 data-status="{{ 'active' if m.status == 'Active' else 'pending' if m.status in ('Pending', 'Scheduled') else 'expired' if m.status == 'Expired' else 'other' }}">
               <td class="col-member-id">#{{ m.id }}</td><td>{{ m.name }}</td><td>{{ m.plan_label }}</td><td>{{ m.expiry }}</td>
@@ -1628,6 +1628,9 @@
       g1.appendChild(card('Sex', [m.sex]));
       var ec = [m.emergency_number];
       if (m.emergency_number && m.emergency_relationship) ec.push('(' + m.emergency_relationship + ')');
+      if (m.emergency_name) {
+        ec = [m.emergency_name, [m.emergency_number, m.emergency_relationship ? '(' + m.emergency_relationship + ')' : ''].filter(Boolean).join(' ')];
+      }
       g1.appendChild(card('Emergency Contact', ec));
       body.appendChild(g1);
 
