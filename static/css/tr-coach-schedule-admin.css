@@ -1,0 +1,143 @@
+/* ═══════════════════════════════════════════════════════════════
+   Coach Schedule (staff + admin dashboards) — selectors prefixed .csa-
+   Uses the app's own tokens from tr-styles.css (--red, --green, --card…)
+═══════════════════════════════════════════════════════════════ */
+.csa-root { --csa-bg: #0b0f16; --csa-line: rgba(255,255,255,0.08); max-width: 1180px; }
+
+/* header */
+.csa-header { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
+.csa-header-icon {
+  width: 44px; height: 44px; flex: 0 0 44px; display: grid; place-items: center;
+  border: 2px solid var(--red); border-radius: 8px; color: var(--red);
+}
+.csa-title { font-family: 'Bebas Neue', sans-serif; font-size: 40px; letter-spacing: 1.5px; line-height: 1; color: var(--white); }
+.csa-subtitle { color: var(--muted); font-size: 15px; margin-top: 5px; }
+
+/* tabs */
+.csa-tabs { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--card); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-bottom: 20px; }
+.csa-tab {
+  display: flex; align-items: center; justify-content: center; gap: 10px; padding: 15px 10px;
+  background: transparent; color: #c9cfdd; border: 0; border-right: 1px solid var(--border);
+  font: 600 16px 'Barlow', sans-serif; cursor: pointer; transition: background .2s, color .2s;
+}
+.csa-tab:last-child { border-right: 0; }
+.csa-tab:hover { background: rgba(255,255,255,0.05); color: #fff; }
+.csa-tab.active { background: var(--red); color: #fff; }
+.csa-tab:focus-visible, .csa-btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.csa-count {
+  min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; display: inline-grid; place-items: center;
+  background: var(--red); color: #fff; font: 700 12px 'Barlow', sans-serif;
+}
+.csa-tab.active .csa-count { background: #fff; color: var(--red); }
+.csa-count[hidden] { display: none; }
+
+/* panel + toolbar */
+.csa-panel { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 20px 22px; }
+.csa-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
+.csa-panel-title { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 700; color: var(--white); }
+.csa-filters { display: flex; gap: 10px; flex-wrap: wrap; }
+.csa-select, .csa-input {
+  background: var(--csa-bg); color: var(--white); border: 1px solid var(--border); border-radius: 6px;
+  padding: 9px 12px; font: 500 15px 'Barlow', sans-serif; color-scheme: dark; min-height: 40px;
+}
+.csa-select:focus, .csa-input:focus { outline: none; border-color: var(--red); box-shadow: 0 0 0 3px var(--red-glow); }
+
+/* table */
+.csa-table-wrap { overflow-x: auto; }
+.csa-table { width: 100%; border-collapse: collapse; min-width: 720px; }
+.csa-table th {
+  text-align: left; padding: 11px 14px; font: 600 13px 'Barlow', sans-serif; letter-spacing: 1px;
+  text-transform: uppercase; color: var(--muted); background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--border);
+}
+.csa-table td { padding: 14px; border-bottom: 1px solid var(--csa-line); font-size: 15px; vertical-align: middle; }
+.csa-table tr:last-child td { border-bottom: 0; }
+.csa-table tbody tr:hover td { background: rgba(255,255,255,0.02); }
+.csa-person { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.csa-avatar {
+  flex: 0 0 38px; width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--border);
+  background: #1b2230 center/cover no-repeat; display: grid; place-items: center;
+  font: 700 14px 'Barlow Condensed', 'Barlow', sans-serif; color: var(--muted);
+}
+.csa-name { font-weight: 600; color: var(--white); }
+.csa-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.csa-when { white-space: nowrap; }
+.csa-when .csa-sub { font-size: 13.5px; }
+.csa-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.csa-empty { text-align: center; color: var(--muted); padding: 34px 10px !important; }
+
+/* buttons */
+.csa-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 14px; border-radius: 6px;
+  border: 1px solid var(--border); background: transparent; color: var(--white);
+  font: 600 13.5px 'Barlow', sans-serif; letter-spacing: .3px; cursor: pointer; transition: background .2s, border-color .2s, opacity .2s;
+}
+.csa-btn:hover:not(:disabled) { background: rgba(255,255,255,0.07); }
+.csa-btn:disabled { opacity: .5; cursor: not-allowed; }
+.csa-btn.ok { background: rgba(34,197,94,.15); border-color: rgba(34,197,94,.35); color: var(--green); }
+.csa-btn.ok:hover:not(:disabled) { background: rgba(34,197,94,.25); }
+.csa-btn.danger { border-color: rgba(230,30,37,.45); color: #ff6b70; }
+.csa-btn.danger:hover:not(:disabled) { background: rgba(230,30,37,.14); }
+.csa-btn.primary { background: var(--red); border-color: var(--red); color: #fff; }
+.csa-btn.primary:hover:not(:disabled) { background: var(--red-dark); }
+
+/* availability editor */
+.csa-av-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+.csa-av-coach { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.csa-dirty { font-size: 13px; color: var(--gold); display: none; }
+.csa-dirty.show { display: inline; }
+.csa-quick {
+  display: grid; grid-template-columns: auto 1fr; gap: 10px 14px; align-items: center;
+  background: var(--csa-bg); border: 1px dashed var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 18px;
+}
+.csa-quick-label { font-weight: 700; color: var(--white); font-size: 14px; letter-spacing: .5px; text-transform: uppercase; }
+.csa-quick-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.csa-daychips { display: flex; gap: 6px; flex-wrap: wrap; }
+.csa-daychip { position: relative; }
+.csa-daychip input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
+.csa-daychip span {
+  display: inline-block; padding: 7px 11px; border-radius: 6px; border: 1px solid var(--border);
+  color: #c9cfdd; font: 600 13.5px 'Barlow', sans-serif; user-select: none;
+}
+.csa-daychip input:checked + span { background: rgba(230,30,37,.18); border-color: var(--red); color: #fff; }
+.csa-daychip input:focus-visible + span { outline: 2px solid var(--green); outline-offset: 2px; }
+
+.csa-week { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.csa-day { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--csa-line); }
+.csa-day:last-child { border-bottom: 0; }
+.csa-day-name { font-weight: 700; color: var(--white); }
+.csa-day-name small { display: block; font-weight: 500; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.csa-slots { display: flex; flex-wrap: wrap; gap: 8px; min-height: 38px; align-items: center; }
+.csa-slot {
+  display: inline-flex; align-items: center; gap: 6px; background: var(--csa-bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 4px 4px 8px;
+}
+.csa-slot input, .csa-slot select {
+  background: transparent; color: var(--white); border: 0; font: 500 14px 'Barlow', sans-serif; color-scheme: dark;
+}
+.csa-slot select { cursor: pointer; }
+.csa-slot input:focus, .csa-slot select:focus { outline: none; }
+.csa-slot select option { background: #141820; }
+.csa-slot-x { background: none; border: 0; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; padding: 2px 7px; border-radius: 4px; }
+.csa-slot-x:hover { color: #ff6b70; background: rgba(230,30,37,.12); }
+.csa-slot.dup { border-color: var(--red); }
+.csa-none { color: var(--muted); font-size: 14px; font-style: italic; }
+.csa-av-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+.csa-hint { color: var(--muted); font-size: 13.5px; line-height: 1.5; max-width: 640px; }
+
+.csa-loading { text-align: center; color: var(--muted); padding: 40px 10px; }
+.csa-error { background: rgba(230,30,37,.10); border: 1px solid rgba(230,30,37,.4); color: #ff9da0; border-radius: 6px; padding: 12px 16px; margin-bottom: 16px; font-size: 15px; }
+
+@media (max-width: 760px) {
+  .csa-title { font-size: 32px; }
+  .csa-tab { font-size: 14px; padding: 12px 6px; flex-direction: column; gap: 4px; }
+  .csa-day { grid-template-columns: 1fr; gap: 8px; }
+  .csa-quick { grid-template-columns: 1fr; }
+  .csa-panel { padding: 16px; }
+}
+
+/* sidebar badge: pending request count on the "Coach Schedule" nav item */
+.csa-nav-badge {
+  margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; display: inline-grid; place-items: center;
+  background: var(--red); color: #fff; font: 700 12px 'Barlow', sans-serif;
+}
+.csa-nav-badge[hidden] { display: none; }

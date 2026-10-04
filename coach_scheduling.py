@@ -19,7 +19,7 @@ Business rules (all enforced SERVER-SIDE, the UI only mirrors them):
 Slot datetimes are naive gym-local (Manila) times; created/completed/cancelled
 timestamps are naive UTC like the rest of the app.
 """
-from datetime import datetime, timedelta, date, time, timezone
+from datetime import datetime, timedelta, time, timezone
 
 from flask import jsonify, request, session, url_for
 from sqlalchemy.exc import IntegrityError
@@ -357,14 +357,42 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
         if day:
             q = q.filter(CoachBooking.slot_start >= datetime.combine(day, time.min),
                          CoachBooking.slot_start < datetime.combine(day + timedelta(days=1), time.min))
+        try:
+            coach_filter = int(request.args.get('coach_id') or 0)
+        except ValueError:
+            coach_filter = 0
+        if coach_filter:
+            q = q.filter(CoachBooking.coach_id == coach_filter)
         now = _now()
         out = []
-        for b in q.order_by(CoachBooking.slot_start.desc()).limit(200).all():
+        for b in q.order_by(CoachBooking.slot_start.desc()).limit(300).all():
             j = _booking_json(b, now)
             j['member_id'] = b.member_id
             j['member_name'] = b.member.full_name if b.member else ''
+            j['member_photo'] = (url_for('static', filename=b.member.profile_picture)
+                                 if b.member and getattr(b.member, 'profile_picture', None) else '')
+            j['created_label'] = b.created_at.strftime('%b %d, %Y') if b.created_at else ''
             out.append(j)
-        return jsonify(success=True, bookings=out)
+        # Requests still waiting for staff (future ones only) — drives the tab badge.
+        pending_count = (CoachBooking.query
+                         .filter(CoachBooking.status == 'pending', CoachBooking.slot_start > now).count())
+        return jsonify(success=True, bookings=out, pending_count=pending_count)
+
+    @app.route('/staff/coach-scheduling/coaches', methods=['GET'])
+    def cs_staff_coaches():
+        """Coach picker for the Coach Schedule screen: every coach plus how many
+        weekly slots they currently offer."""
+        err = _staff_or_error()
+        if err:
+            return err
+        counts = dict(db.session.query(CoachAvailability.coach_id, db.func.count(CoachAvailability.id))
+                      .filter(CoachAvailability.is_active.is_(True))
+                      .group_by(CoachAvailability.coach_id).all())
+        return jsonify(success=True, coaches=[{
+            'id': c.id, 'name': c.name, 'photo': _coach_photo(c),
+            'specialization': c.specialization or '', 'is_active': bool(c.is_active),
+            'slot_count': int(counts.get(c.id, 0)),
+        } for c in Coach.query.order_by(Coach.name).all()])
 
     @app.route('/staff/coach-bookings/<int:booking_id>/status', methods=['POST'])
     def cs_staff_status(booking_id):
@@ -447,5 +475,15 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
         for wd, t, dur in parsed:
             db.session.add(CoachAvailability(coach_id=coach.id, weekday=wd, start_time=t,
                                              duration_min=dur, is_active=True))
+        # Upcoming pending/confirmed bookings that no longer sit on an offered slot.
+        # They are NOT cancelled — staff decide — but we tell the UI so it can warn.
+        offered = {(wd, t) for wd, t, _dur in parsed}
+        affected = sum(1 for b in CoachBooking.query
+                       .filter(CoachBooking.coach_id == coach.id, CoachBooking.status.in_(ACTIVE),
+                               CoachBooking.slot_start > _now()).all()
+                       if (b.slot_start.weekday(), b.slot_start.time()) not in offered)
         db.session.commit()
-        return jsonify(success=True, message=f'Saved {len(parsed)} slot(s) for {coach.name}.')
+        msg = f'Saved {len(parsed)} slot(s) for {coach.name}.'
+        if affected:
+            msg += f' {affected} upcoming booking(s) are outside the new schedule — review them in All Schedules.'
+        return jsonify(success=True, message=msg, affected_bookings=affected)

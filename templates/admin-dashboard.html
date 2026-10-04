@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@300;400;500;600;700&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tr-styles.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tr-coach-schedule-admin.css') }}?v=1">
 </head>
 <body>
 
@@ -56,6 +57,9 @@
       </div>
       <div class="nav-item" id="nav-admin-coach" onclick="adminTab('coach',this)">
         <span class="nav-icon">🏋</span> Coach
+      </div>
+      <div class="nav-item" id="nav-admin-coach-schedule" onclick="adminTab('coach-schedule',this)">
+        <span class="nav-icon">📅</span> Coach Schedule <span class="csa-nav-badge" id="csa-nav-badge" hidden>0</span>
       </div>
       <div class="nav-item" id="nav-admin-feedback" onclick="adminTab('feedback',this)">
         <span class="nav-icon">⭐</span> Feedback
@@ -663,6 +667,11 @@
         </div>
       </div>
     </div><!-- /admin-coach -->
+
+    <!-- ── Coach Schedule (member bookings + coach availability) ───────────────── -->
+    <div id="admin-coach-schedule" class="sub-panel">
+      <div class="csa-root" id="csa-root"></div>
+    </div><!-- /admin-coach-schedule -->
 
     <!-- ── Member Feedback ──────────────────────── -->
     <div id="admin-feedback" class="sub-panel">
@@ -1734,5 +1743,6 @@
 <script src="{{ url_for('static', filename='js/tr-common.js') }}"></script>
 <script src="{{ url_for('static', filename='js/tr-report-print.js') }}"></script>
 <script src="{{ url_for('static', filename='js/tr-admin.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tr-coach-schedule-admin.js') }}?v=1"></script>
 </body>
 </html>
