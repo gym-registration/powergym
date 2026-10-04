@@ -141,3 +141,6 @@
   background: var(--red); color: #fff; font: 700 12px 'Barlow', sans-serif;
 }
 .csa-nav-badge[hidden] { display: none; }
+
+.csa-daychips .csa-btn { padding: 5px 10px; font-size: 12px; }
+.csa-daychips .csa-btn[data-qpreset] { margin-left: 2px; }

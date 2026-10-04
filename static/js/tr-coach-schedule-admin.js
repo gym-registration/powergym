@@ -16,6 +16,10 @@
   const root = document.getElementById('csa-root');
   if (!root) return;
 
+  // Only STAFF may act on bookings (confirm / decline / complete / no-show / cancel).
+  // Admins get a read-only view. The server enforces this too (coach_scheduling.py).
+  const CAN_ACT = (root.getAttribute('data-role') || 'staff') === 'staff';
+
   const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   const DAYS_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -182,6 +186,7 @@
   function statusBadge(b) { return '<span class="badge ' + (STATUS_BADGE[b.status] || 'badge-muted') + '">' + esc(b.status_label) + '</span>'; }
 
   function actionButtons(b) {
+    if (!CAN_ACT) return '<span class="csa-sub" title="Only staff can confirm or change bookings">View only</span>';
     const id = esc(b.id);
     const btn = (act, text, cls) => '<button type="button" class="csa-btn ' + (cls || '') + '" data-act="' + act + '" data-id="' + id + '">' + text + '</button>';
     if (b.status === 'pending') return btn('confirmed', 'Confirm', 'ok') + btn('cancelled', 'Decline', 'danger');
@@ -297,7 +302,7 @@
   function renderAvailability() {
     const a = state.av;
     if (!state.coaches.length) {
-      $('#csa-view-availability').innerHTML = '<div class="csa-panel"><div class="csa-empty" style="padding:30px;">No coaches have been added yet. Add a coach in the Coach tab first.</div></div>';
+      $('#csa-view-availability').innerHTML = '<div class="csa-panel"><div class="csa-empty" style="padding:30px;">No coaches have been added yet. Add a coach in Settings → Coach Management first.</div></div>';
       return;
     }
     const coachOpts = state.coaches.map((c) => '<option value="' + esc(c.id) + '"' + (c.id === a.coachId ? ' selected' : '') + '>' +
@@ -311,14 +316,17 @@
       '<button type="button" class="csa-btn danger" data-clear-all' + (a.loading ? ' disabled' : '') + '>Clear all slots</button></div>' +
       (a.error ? '<div class="csa-error">' + esc(a.error) + '</div>' : '') +
       '<div class="csa-quick"><div class="csa-quick-label">Quick add</div><div class="csa-quick-row">' +
-      '<div class="csa-daychips">' + dayChips + '</div>' +
+      '<div class="csa-daychips">' + dayChips +
+      '<button type="button" class="csa-btn" data-qpreset="all">All days</button>' +
+      '<button type="button" class="csa-btn" data-qpreset="weekdays">Mon–Fri</button>' +
+      '<button type="button" class="csa-btn" data-qpreset="none">Clear</button></div>' +
       '<input type="time" class="csa-input" id="csa-q-from" value="09:00" aria-label="First slot starts">' +
       '<span class="csa-sub">to</span>' +
       '<input type="time" class="csa-input" id="csa-q-to" value="12:00" aria-label="Last slot ends by">' +
       '<select class="csa-select" id="csa-q-min" aria-label="Slot length">' + DURATIONS.map((m) => '<option value="' + m + '"' + (m === 60 ? ' selected' : '') + '>' + m + ' min each</option>').join('') + '</select>' +
       '<button type="button" class="csa-btn" data-quick-add>Add slots</button></div></div>' +
       (a.loading ? '<div class="csa-loading">Loading schedule…</div>' : '<div class="csa-week" id="csa-week"></div>') +
-      '<div class="csa-av-foot"><div class="csa-hint">Members can only book the slots listed here. Times are gym-local. Changing availability never cancels existing bookings — any that fall outside the new schedule will be flagged so you can review them in All Schedules.</div>' +
+      '<div class="csa-av-foot"><div class="csa-hint">Set the hours this coach can be booked on each day — members can only book the slots listed here, and a day with no slots shows as Not available. Times are gym-local. Changing availability never cancels existing bookings — any that fall outside the new schedule will be flagged so you can review them in All Schedules.</div>' +
       '<div style="display:flex;gap:10px;"><button type="button" class="csa-btn" data-reset>Reset</button>' +
       '<button type="button" class="csa-btn primary" id="csa-save" data-save disabled>Save availability</button></div></div></div>';
     if (!a.loading) renderWeek();
@@ -360,7 +368,7 @@
   };
 
   async function changeStatus(id, status) {
-    if (state.busy) return;
+    if (state.busy || !CAN_ACT) return;
     const b = state.bookings.find((x) => String(x.id) === String(id));
     if (!b) return;
     if (CONFIRM_COPY[status]) {
@@ -439,6 +447,15 @@
     if (t.closest('[data-clear-filters]')) { state.filters = { status: '', coach: '', date: '' }; return renderAll(); }
     const add = t.closest('[data-add]'); if (add) return addSlot(+add.getAttribute('data-add'));
     const del = t.closest('[data-del]'); if (del) { state.av.draft.splice(+del.getAttribute('data-del'), 1); return renderWeek(); }
+    const preset = t.closest('[data-qpreset]');
+    if (preset) {
+      const mode = preset.getAttribute('data-qpreset');
+      root.querySelectorAll('[data-qday]').forEach((c) => {
+        const i = +c.getAttribute('data-qday');
+        c.checked = mode === 'all' ? true : mode === 'weekdays' ? i <= 4 : false;
+      });
+      return;
+    }
     if (t.closest('[data-quick-add]')) return quickAdd();
     if (t.closest('[data-save]')) return saveAvailability();
     if (t.closest('[data-reset]')) { state.av.draft = JSON.parse(state.av.snapshot); return renderWeek(); }

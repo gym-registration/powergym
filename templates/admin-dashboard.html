@@ -55,9 +55,6 @@
       <div class="nav-item" id="nav-admin-staffmgmt" onclick="adminTab('staffmgmt',this)">
         <span class="nav-icon">🔑</span> Staff Accounts
       </div>
-      <div class="nav-item" id="nav-admin-coach" onclick="adminTab('coach',this)">
-        <span class="nav-icon">🏋</span> Coach
-      </div>
       <div class="nav-item" id="nav-admin-coach-schedule" onclick="adminTab('coach-schedule',this)">
         <span class="nav-icon">📅</span> Coach Schedule <span class="csa-nav-badge" id="csa-nav-badge" hidden>0</span>
       </div>
@@ -540,137 +537,9 @@
       </div>
     </div><!-- /admin-staffmgmt -->
 
-    <!-- ── Coach ───────────────── -->
-    <div id="admin-coach" class="sub-panel">
-      <div class="page-header">
-        <div><div class="page-title">COACHES</div><div class="page-subtitle">Set each coach's available days, capacity, and fee</div></div>
-        <button class="btn btn-red" onclick="openModal('add-coach-modal')">+ ADD COACH</button>
-      </div>
-      <div class="panel" style="margin-bottom:20px;">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
-          {% for c in coaches %}
-          <div class="coach-card" data-coach-id="{{ c.id }}" style="border:1px solid var(--border,#333);border-radius:10px;padding:16px;">
-
-            <!-- View mode -->
-            <div class="coach-view">
-              <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
-                {% if c.photo_path %}
-                <img src="{{ url_for('static', filename=c.photo_path) }}" alt="{{ c.name }}" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid var(--red);flex-shrink:0;">
-                {% else %}
-                <div style="width:56px;height:56px;border-radius:50%;background:var(--card2,#1d1d24);border:2px solid var(--border,#333);display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:24px;color:var(--muted);flex-shrink:0;">{{ c.name[:1]|upper }}</div>
-                {% endif %}
-                <div style="min-width:0;">
-                  <div style="font-size:14px;color:var(--muted);">{{ c.specialization or 'No specialization set' }}</div>
-                  <span class="badge {{ 'badge-green' if c.is_active else 'badge-red' }}" style="margin-top:4px;">{{ 'Active' if c.is_active else 'Inactive' }}</span>
-                </div>
-              </div>
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                <div style="font-weight:600;font-size:17px;">{{ c.name }}</div>
-                <div style="display:flex;align-items:center;gap:8px;">
-                  <span class="badge {{ 'badge-red' if c.is_full else 'badge-green' }}">
-                    {{ c.current_members }}/{{ c.max_members }} members
-                  </span>
-                  <button type="button" title="Edit coach" onclick="toggleCoachEdit({{ c.id }})"
-                          style="background:transparent;border:1px solid var(--border,#333);color:var(--white);border-radius:6px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;padding:0;">✏️</button>
-                  <button type="button" title="Delete coach" onclick="promptDeleteCoach({{ c.id }}, '{{ c.name|e }}')"
-                          style="background:transparent;border:1px solid var(--border,#333);color:var(--red);border-radius:6px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;padding:0;">🗑️</button>
-                </div>
-              </div>
-              <div style="font-size:15px;color:#c3c8da;margin-bottom:8px;line-height:1.7;">
-                <strong style="color:var(--white);">Available Days:</strong>
-                {{ c.available_days|join(', ') if c.available_days else '—' }}
-              </div>
-              <div style="font-size:15px;color:#c3c8da;margin-bottom:8px;line-height:1.7;">
-                <strong style="color:var(--white);">Max Members:</strong> {{ c.max_members }}
-              </div>
-              <div style="font-size:15px;color:#c3c8da;line-height:1.7;">
-                <strong style="color:var(--white);">Coach Fee:</strong> ₱{{ '%.2f'|format(c.fee) }}
-              </div>
-              {% if c.bio %}
-              <div style="font-size:14px;color:#c3c8da;line-height:1.6;margin-top:8px;white-space:pre-line;">{{ c.bio }}</div>
-              {% endif %}
-            </div>
-
-            <!-- Edit mode (hidden until the pencil icon is clicked) -->
-            <form class="coach-edit" data-coach-update onsubmit="return submitCoachUpdate(event)" style="display:none;">
-              <input type="hidden" name="coach_id" value="{{ c.id }}">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                <div style="font-weight:600;font-size:17px;">Edit Coach Profile</div>
-                <span class="badge {{ 'badge-red' if c.is_full else 'badge-green' }}">
-                  {{ c.current_members }}/{{ c.max_members }} members
-                </span>
-              </div>
-
-              <label class="form-label" style="font-size:13px;">Photo</label>
-              <div style="display:flex;align-items:center;gap:12px;margin:6px 0 12px;">
-                <img id="coach-photo-preview-{{ c.id }}"
-                     src="{% if c.photo_path %}{{ url_for('static', filename=c.photo_path) }}{% else %}data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=={% endif %}"
-                     alt="" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid var(--border,#333);background:var(--card2,#1d1d24);flex-shrink:0;">
-                <input type="file" name="photo" accept="image/png,image/jpeg,image/webp" style="font-size:13px;color:var(--muted);max-width:100%;"
-                       onchange="if(this.files[0]){document.getElementById('coach-photo-preview-{{ c.id }}').src=URL.createObjectURL(this.files[0]);}">
-              </div>
-              {% if c.photo_path %}
-              <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-bottom:12px;">
-                <input type="checkbox" name="remove_photo" value="1"> Remove current photo
-              </label>
-              {% endif %}
-
-              <label class="form-label" style="font-size:13px;">Name</label>
-              <input class="form-input" type="text" name="name" maxlength="60" value="{{ c.name }}" style="margin-bottom:12px;">
-
-              <label class="form-label" style="font-size:13px;">Specialization</label>
-              <input class="form-input" type="text" name="specialization" maxlength="120"
-                     placeholder="e.g. Strength &amp; Conditioning, Boxing" value="{{ c.specialization }}" style="margin-bottom:12px;">
-
-              <label class="form-label" style="font-size:13px;">Bio</label>
-              <textarea class="form-input" name="bio" rows="4" maxlength="2000"
-                        placeholder="Short introduction members will see on the coach's profile" style="margin-bottom:12px;resize:vertical;">{{ c.bio }}</textarea>
-
-              <label class="form-label" style="font-size:13px;">Status</label>
-              <select class="form-input" name="status" style="margin-bottom:12px;">
-                <option value="active" {% if c.is_active %}selected{% endif %}>Active (members can pick this coach)</option>
-                <option value="inactive" {% if not c.is_active %}selected{% endif %}>Inactive (hidden from members)</option>
-              </select>
-
-              <label class="form-label" style="font-size:13px;">Available Days</label>
-              {% set day_names = {'Mon':'Monday','Tue':'Tuesday','Wed':'Wednesday','Thu':'Thursday','Fri':'Friday','Sat':'Saturday','Sun':'Sunday'} %}
-              <div class="day-dd" style="position:relative;margin:6px 0 14px;">
-                <button type="button" class="form-input day-dd-btn" onclick="toggleDayDd(this)" style="display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;cursor:pointer;"><span class="day-dd-label">Select days</span><span style="font-size:12px;opacity:.7;">&#9660;</span></button>
-                <div class="day-dd-menu" style="display:none;position:absolute;left:0;right:0;top:100%;z-index:60;margin-top:4px;background:var(--card);border:1px solid var(--border,#333);border-radius:8px;padding:6px;box-shadow:0 8px 24px rgba(0,0,0,.5);">
-                  {% for day in coach_days %}
-                  <label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;cursor:pointer;font-size:15px;color:var(--white);">
-                    <input type="checkbox" name="available_days" value="{{ day }}"
-                           {% if day in c.available_days %}checked{% endif %}>
-                    {{ day_names[day] }}
-                  </label>
-                  {% endfor %}
-                </div>
-              </div>
-
-              <label class="form-label" style="font-size:13px;">Max Members</label>
-              <input class="form-input" type="number" name="max_members" min="1"
-                     value="{{ c.max_members }}" style="margin-bottom:12px;">
-
-              <label class="form-label" style="font-size:13px;">Coach Fee (₱, added on top of the plan price)</label>
-              <input class="form-input" type="number" name="fee" min="0" step="0.01"
-                     value="{{ c.fee }}" style="margin-bottom:12px;">
-
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-                <button type="button" class="btn btn-outline" style="width:100%;justify-content:center;" onclick="toggleCoachEdit({{ c.id }})">CANCEL</button>
-                <button class="btn-primary" type="submit" style="width:100%;">SAVE</button>
-              </div>
-            </form>
-          </div>
-          {% else %}
-          <div style="color:var(--muted);">No coaches set up yet.</div>
-          {% endfor %}
-        </div>
-      </div>
-    </div><!-- /admin-coach -->
-
     <!-- ── Coach Schedule (member bookings + coach availability) ───────────────── -->
     <div id="admin-coach-schedule" class="sub-panel">
-      <div class="csa-root" id="csa-root"></div>
+      <div class="csa-root" id="csa-root" data-role="admin"></div>
     </div><!-- /admin-coach-schedule -->
 
     <!-- ── Member Feedback ──────────────────────── -->
@@ -798,7 +667,7 @@
     <!-- ── Settings ─────────────────────── -->
     <div id="admin-settings" class="sub-panel">
       <div class="page-header">
-        <div><div class="page-title">SETTINGS</div><div class="page-subtitle">Manage your personal information and password</div></div>
+        <div><div class="page-title">SETTINGS</div><div class="page-subtitle">Manage your personal information, password, coaches and site content</div></div>
       </div>
 
       <div class="grid-2">
@@ -1091,6 +960,134 @@
           <button class="btn btn-red" id="schedule-settings-submit-btn" style="width:100%;margin-top:8px;" onclick="submitScheduleSettings()">SAVE GYM SCHEDULE</button>
         </div>
       </div>
+
+      <!-- ── Coach Management (moved here from the sidebar) ── -->
+      <div id="admin-coach-manage" style="margin-top:24px;">
+      <div class="page-header">
+        <div><div class="page-title">COACH MANAGEMENT</div><div class="page-subtitle">Edit each coach's profile, available days, capacity and fee. Set the exact available times in Coach Schedule → Coach Availability.</div></div>
+        <button class="btn btn-red" onclick="openModal('add-coach-modal')">+ ADD COACH</button>
+      </div>
+      <div class="panel" style="margin-bottom:20px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
+          {% for c in coaches %}
+          <div class="coach-card" data-coach-id="{{ c.id }}" style="border:1px solid var(--border,#333);border-radius:10px;padding:16px;">
+
+            <!-- View mode -->
+            <div class="coach-view">
+              <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+                {% if c.photo_path %}
+                <img src="{{ url_for('static', filename=c.photo_path) }}" alt="{{ c.name }}" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid var(--red);flex-shrink:0;">
+                {% else %}
+                <div style="width:56px;height:56px;border-radius:50%;background:var(--card2,#1d1d24);border:2px solid var(--border,#333);display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:24px;color:var(--muted);flex-shrink:0;">{{ c.name[:1]|upper }}</div>
+                {% endif %}
+                <div style="min-width:0;">
+                  <div style="font-size:14px;color:var(--muted);">{{ c.specialization or 'No specialization set' }}</div>
+                  <span class="badge {{ 'badge-green' if c.is_active else 'badge-red' }}" style="margin-top:4px;">{{ 'Active' if c.is_active else 'Inactive' }}</span>
+                </div>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <div style="font-weight:600;font-size:17px;">{{ c.name }}</div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span class="badge {{ 'badge-red' if c.is_full else 'badge-green' }}">
+                    {{ c.current_members }}/{{ c.max_members }} members
+                  </span>
+                  <button type="button" title="Edit coach" onclick="toggleCoachEdit({{ c.id }})"
+                          style="background:transparent;border:1px solid var(--border,#333);color:var(--white);border-radius:6px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;padding:0;">✏️</button>
+                  <button type="button" title="Delete coach" onclick="promptDeleteCoach({{ c.id }}, '{{ c.name|e }}')"
+                          style="background:transparent;border:1px solid var(--border,#333);color:var(--red);border-radius:6px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;padding:0;">🗑️</button>
+                </div>
+              </div>
+              <div style="font-size:15px;color:#c3c8da;margin-bottom:8px;line-height:1.7;">
+                <strong style="color:var(--white);">Available Days:</strong>
+                {{ c.available_days|join(', ') if c.available_days else '—' }}
+              </div>
+              <div style="font-size:15px;color:#c3c8da;margin-bottom:8px;line-height:1.7;">
+                <strong style="color:var(--white);">Max Members:</strong> {{ c.max_members }}
+              </div>
+              <div style="font-size:15px;color:#c3c8da;line-height:1.7;">
+                <strong style="color:var(--white);">Coach Fee:</strong> ₱{{ '%.2f'|format(c.fee) }}
+              </div>
+              {% if c.bio %}
+              <div style="font-size:14px;color:#c3c8da;line-height:1.6;margin-top:8px;white-space:pre-line;">{{ c.bio }}</div>
+              {% endif %}
+            </div>
+
+            <!-- Edit mode (hidden until the pencil icon is clicked) -->
+            <form class="coach-edit" data-coach-update onsubmit="return submitCoachUpdate(event)" style="display:none;">
+              <input type="hidden" name="coach_id" value="{{ c.id }}">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <div style="font-weight:600;font-size:17px;">Edit Coach Profile</div>
+                <span class="badge {{ 'badge-red' if c.is_full else 'badge-green' }}">
+                  {{ c.current_members }}/{{ c.max_members }} members
+                </span>
+              </div>
+
+              <label class="form-label" style="font-size:13px;">Photo</label>
+              <div style="display:flex;align-items:center;gap:12px;margin:6px 0 12px;">
+                <img id="coach-photo-preview-{{ c.id }}"
+                     src="{% if c.photo_path %}{{ url_for('static', filename=c.photo_path) }}{% else %}data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=={% endif %}"
+                     alt="" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid var(--border,#333);background:var(--card2,#1d1d24);flex-shrink:0;">
+                <input type="file" name="photo" accept="image/png,image/jpeg,image/webp" style="font-size:13px;color:var(--muted);max-width:100%;"
+                       onchange="if(this.files[0]){document.getElementById('coach-photo-preview-{{ c.id }}').src=URL.createObjectURL(this.files[0]);}">
+              </div>
+              {% if c.photo_path %}
+              <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-bottom:12px;">
+                <input type="checkbox" name="remove_photo" value="1"> Remove current photo
+              </label>
+              {% endif %}
+
+              <label class="form-label" style="font-size:13px;">Name</label>
+              <input class="form-input" type="text" name="name" maxlength="60" value="{{ c.name }}" style="margin-bottom:12px;">
+
+              <label class="form-label" style="font-size:13px;">Specialization</label>
+              <input class="form-input" type="text" name="specialization" maxlength="120"
+                     placeholder="e.g. Strength &amp; Conditioning, Boxing" value="{{ c.specialization }}" style="margin-bottom:12px;">
+
+              <label class="form-label" style="font-size:13px;">Bio</label>
+              <textarea class="form-input" name="bio" rows="4" maxlength="2000"
+                        placeholder="Short introduction members will see on the coach's profile" style="margin-bottom:12px;resize:vertical;">{{ c.bio }}</textarea>
+
+              <label class="form-label" style="font-size:13px;">Status</label>
+              <select class="form-input" name="status" style="margin-bottom:12px;">
+                <option value="active" {% if c.is_active %}selected{% endif %}>Active (members can pick this coach)</option>
+                <option value="inactive" {% if not c.is_active %}selected{% endif %}>Inactive (hidden from members)</option>
+              </select>
+
+              <label class="form-label" style="font-size:13px;">Available Days</label>
+              {% set day_names = {'Mon':'Monday','Tue':'Tuesday','Wed':'Wednesday','Thu':'Thursday','Fri':'Friday','Sat':'Saturday','Sun':'Sunday'} %}
+              <div class="day-dd" style="position:relative;margin:6px 0 14px;">
+                <button type="button" class="form-input day-dd-btn" onclick="toggleDayDd(this)" style="display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;cursor:pointer;"><span class="day-dd-label">Select days</span><span style="font-size:12px;opacity:.7;">&#9660;</span></button>
+                <div class="day-dd-menu" style="display:none;position:absolute;left:0;right:0;top:100%;z-index:60;margin-top:4px;background:var(--card);border:1px solid var(--border,#333);border-radius:8px;padding:6px;box-shadow:0 8px 24px rgba(0,0,0,.5);">
+                  {% for day in coach_days %}
+                  <label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;cursor:pointer;font-size:15px;color:var(--white);">
+                    <input type="checkbox" name="available_days" value="{{ day }}"
+                           {% if day in c.available_days %}checked{% endif %}>
+                    {{ day_names[day] }}
+                  </label>
+                  {% endfor %}
+                </div>
+              </div>
+
+              <label class="form-label" style="font-size:13px;">Max Members</label>
+              <input class="form-input" type="number" name="max_members" min="1"
+                     value="{{ c.max_members }}" style="margin-bottom:12px;">
+
+              <label class="form-label" style="font-size:13px;">Coach Fee (₱, added on top of the plan price)</label>
+              <input class="form-input" type="number" name="fee" min="0" step="0.01"
+                     value="{{ c.fee }}" style="margin-bottom:12px;">
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <button type="button" class="btn btn-outline" style="width:100%;justify-content:center;" onclick="toggleCoachEdit({{ c.id }})">CANCEL</button>
+                <button class="btn-primary" type="submit" style="width:100%;">SAVE</button>
+              </div>
+            </form>
+          </div>
+          {% else %}
+          <div style="color:var(--muted);">No coaches set up yet.</div>
+          {% endfor %}
+        </div>
+      </div>
+      </div><!-- /admin-coach-manage -->
 
       <!-- Manage Content (admin/staff only) -->
       <div class="panel" style="margin-top:24px;">

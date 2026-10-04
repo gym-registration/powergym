@@ -32,6 +32,12 @@ STATUS_LABELS = {
 }
 _WEEKDAYS = {'mon': 0, 'tue': 1, 'wed': 2, 'thu': 3, 'fri': 4, 'sat': 5, 'sun': 6}
 
+# Default bookable hours used for a coach who has "Available Days" set on the Coach
+# tab but no custom time slots saved under Coach Schedule > Coach Availability.
+DEFAULT_SLOT_START = time(8, 0)
+DEFAULT_SLOT_END = time(20, 0)      # last slot must END by this time
+DEFAULT_SLOT_MINUTES = 60
+
 
 def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBooking,
              now_manila, today_manila, sessions_info, sync_session_expiry):
@@ -77,6 +83,12 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
             return jsonify(success=False, error='Unauthorized.'), 403
         return None
 
+    def _staff_only_or_error():
+        """Confirming / declining / completing bookings is STAFF only; admins are view-only."""
+        if session.get('role') != 'staff':
+            return jsonify(success=False, error='Only staff can confirm or change coach bookings. Admins have view-only access.'), 403
+        return None
+
     def _credits(member_id, lock=False):
         """Session credits for the member (same pool as the session-based
         promo). Not enabled → the member has no coach sessions to book with."""
@@ -118,6 +130,32 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
             'credit_deducted': b.status == 'completed',
         }
 
+    def _coach_weekdays(coach):
+        """Weekdays (0=Mon..6=Sun) from the coach's 'Available Days' on the Coach tab."""
+        return {_WEEKDAYS[d.strip().lower()[:3]] for d in coach.available_days_list
+                if d.strip().lower()[:3] in _WEEKDAYS}
+
+    def _coach_slot_defs(coach, weekday):
+        """Bookable (start_time, duration_min) slots for this coach on a weekday.
+
+        The Coach tab's Available Days is the single source of truth for WHICH days
+        a coach works. If staff also saved custom time slots (Coach Availability),
+        those decide the hours for that day; otherwise default hourly slots are used. This keeps
+        the member, staff and admin views consistent."""
+        if weekday not in _coach_weekdays(coach):
+            return []
+        rows = (CoachAvailability.query
+                .filter_by(coach_id=coach.id, weekday=weekday, is_active=True)
+                .order_by(CoachAvailability.start_time).all())
+        if rows:    # custom hours saved for this specific day
+            return [(r.start_time, r.duration_min) for r in rows]
+        defs, cur = [], datetime.combine(datetime.today().date(), DEFAULT_SLOT_START)
+        stop = datetime.combine(cur.date(), DEFAULT_SLOT_END)
+        while cur + timedelta(minutes=DEFAULT_SLOT_MINUTES) <= stop:
+            defs.append((cur.time(), DEFAULT_SLOT_MINUTES))
+            cur += timedelta(minutes=DEFAULT_SLOT_MINUTES)
+        return defs
+
     def _slot_error(coach_id, start, ignore_booking_id=None, member_id=None):
         """Validate that `start` is a real, future, free slot of this coach.
         Returns (coach, availability, end, error_message)."""
@@ -130,12 +168,11 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
             return coach, None, None, 'That time has already passed.'
         if start.date() > today_manila() + timedelta(days=MAX_ADVANCE_DAYS):
             return coach, None, None, f'You can only book up to {MAX_ADVANCE_DAYS} days ahead.'
-        av = (CoachAvailability.query
-              .filter_by(coach_id=coach.id, weekday=start.weekday(), start_time=start.time(), is_active=True)
-              .first())
-        if av is None:
+        dur = next((d for t, d in _coach_slot_defs(coach, start.weekday()) if t == start.time()), None)
+        av = dur
+        if dur is None:
             return coach, None, None, 'That time slot is not offered by this coach.'
-        end = start + timedelta(minutes=av.duration_min)
+        end = start + timedelta(minutes=dur)
 
         def _overlap(q):
             q = q.filter(CoachBooking.status.in_(ACTIVE),
@@ -177,13 +214,10 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
 
         coaches_out = []
         for c in Coach.query.filter_by(is_active=True).order_by(Coach.name).all():
-            avs = (CoachAvailability.query
-                   .filter_by(coach_id=c.id, weekday=day.weekday(), is_active=True)
-                   .order_by(CoachAvailability.start_time).all())
             slots = []
-            for av in avs:
-                start = datetime.combine(day, av.start_time)
-                end = start + timedelta(minutes=av.duration_min)
+            for st, dur in _coach_slot_defs(c, day.weekday()):
+                start = datetime.combine(day, st)
+                end = start + timedelta(minutes=dur)
                 if start <= now:
                     state = 'past'
                 elif (c.id, start) in taken or any(
@@ -391,12 +425,12 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
         return jsonify(success=True, coaches=[{
             'id': c.id, 'name': c.name, 'photo': _coach_photo(c),
             'specialization': c.specialization or '', 'is_active': bool(c.is_active),
-            'slot_count': int(counts.get(c.id, 0)),
+            'slot_count': int(counts.get(c.id, 0)) or sum(len(_coach_slot_defs(c, wd)) for wd in range(7)),
         } for c in Coach.query.order_by(Coach.name).all()])
 
     @app.route('/staff/coach-bookings/<int:booking_id>/status', methods=['POST'])
     def cs_staff_status(booking_id):
-        err = _staff_or_error()
+        err = _staff_only_or_error()
         if err:
             return err
         data = request.get_json(silent=True) or request.form
@@ -450,11 +484,11 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
             return jsonify(success=False, error='Coach not found.'), 404
 
         if request.method == 'GET':
-            rows = (CoachAvailability.query.filter_by(coach_id=coach.id)
-                    .order_by(CoachAvailability.weekday, CoachAvailability.start_time).all())
+            # Always return what members actually get: saved slots, default hours on days
+            # without any, and nothing on days the coach doesn't work.
             return jsonify(success=True, slots=[
-                {'weekday': r.weekday, 'start': r.start_time.strftime('%H:%M'),
-                 'duration_min': r.duration_min, 'is_active': bool(r.is_active)} for r in rows])
+                {'weekday': wd, 'start': t.strftime('%H:%M'), 'duration_min': d, 'is_active': True}
+                for wd in range(7) for t, d in _coach_slot_defs(coach, wd)])
 
         data = request.get_json(silent=True) or {}
         parsed, seen = [], set()
@@ -475,6 +509,10 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
         for wd, t, dur in parsed:
             db.session.add(CoachAvailability(coach_id=coach.id, weekday=wd, start_time=t,
                                              duration_min=dur, is_active=True))
+        # Keep the Coach tab's "Available Days" in step with the saved schedule, so the
+        # coach card, the member booking page and this editor always agree.
+        _names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+        coach.available_days = ','.join(_names[w] for w in sorted({wd for wd, _t, _d in parsed}))
         # Upcoming pending/confirmed bookings that no longer sit on an offered slot.
         # They are NOT cancelled — staff decide — but we tell the UI so it can warn.
         offered = {(wd, t) for wd, t, _dur in parsed}
