@@ -1568,6 +1568,136 @@
     document.querySelectorAll('.day-dd').forEach(refreshDayDd);
   });
 </script>
+<!-- ── Member Details side panel (opens when a member row is clicked) ── -->
+<style>
+  #members-table tbody tr[data-id] { cursor: pointer; }
+  #members-table tbody tr[data-id]:hover { background: rgba(45,111,214,0.12); }
+  #members-table tbody tr.member-selected { background: rgba(45,111,214,0.35) !important; box-shadow: inset 3px 0 0 var(--navy-light); }
+</style>
+<div id="member-detail-panel" style="display:none;position:fixed;top:0;right:0;bottom:0;width:min(480px,100%);z-index:90;overflow-y:auto;box-sizing:border-box;padding:24px;background:linear-gradient(180deg,var(--navy-deep),#06142a);border-left:1px solid var(--navy-light);box-shadow:-12px 0 40px rgba(0,0,0,.55);">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+    <div style="font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:2px;color:var(--blue);">MEMBER DETAILS</div>
+    <button type="button" onclick="closeMemberDetail()" aria-label="Close" style="background:none;border:none;color:var(--white);font-size:24px;cursor:pointer;line-height:1;">&#10005;</button>
+  </div>
+  <div id="member-detail-body" style="color:var(--muted);font-size:15px;">Loading…</div>
+</div>
+<script>
+  (function () {
+    var currentRow = null, currentId = null;
+
+    function el(tag, css, text) {
+      var n = document.createElement(tag);
+      if (css) n.style.cssText = css;
+      if (text !== undefined) n.textContent = text;
+      return n;
+    }
+    function card(label, lines) {
+      var c = el('div', 'background:rgba(255,255,255,0.03);border:1px solid rgba(61,125,212,0.25);border-radius:10px;padding:14px;');
+      c.appendChild(el('div', 'font-size:14px;color:var(--blue);margin-bottom:6px;', label));
+      lines.forEach(function (ln, i) {
+        c.appendChild(el('div', i === 0 ? 'font-size:17px;color:var(--white);' : 'font-size:15px;color:var(--muted);margin-top:2px;', ln || '\u2014'));
+      });
+      return c;
+    }
+    function section(title) {
+      return el('div', 'font-size:13px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin:22px 0 10px;border-top:1px solid rgba(61,125,212,0.2);padding-top:16px;', title);
+    }
+    function grid() { return el('div', 'display:grid;grid-template-columns:1fr 1fr;gap:12px;'); }
+    function badgeClass(s) {
+      return s === 'Active' ? 'badge-green' : s === 'Pending' ? 'badge-blue' :
+             (s === 'Expired' || s === 'Declined') ? 'badge-red' : s === 'Scheduled' ? 'badge-gold' : 'badge-muted';
+    }
+
+    function render(m) {
+      var body = document.getElementById('member-detail-body');
+      body.textContent = '';
+
+      var top = el('div', 'display:flex;align-items:center;gap:18px;');
+      if (m.photo_url) {
+        var img = el('img', 'width:96px;height:96px;border-radius:50%;object-fit:cover;border:3px solid var(--navy-light);flex-shrink:0;');
+        img.src = m.photo_url; img.alt = m.name;
+        top.appendChild(img);
+      } else {
+        top.appendChild(el('div', "width:96px;height:96px;border-radius:50%;background:var(--card);border:3px solid var(--navy-light);display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:40px;color:var(--muted);flex-shrink:0;", (m.name || '?').charAt(0).toUpperCase()));
+      }
+      var who = el('div', 'min-width:0;');
+      who.appendChild(el('div', "font-family:'Bebas Neue',sans-serif;font-size:30px;letter-spacing:1px;color:var(--white);line-height:1.1;", m.name));
+      who.appendChild(el('div', 'font-size:15px;color:var(--blue);margin:4px 0 8px;word-break:break-all;', m.email));
+      who.appendChild(el('span', '', m.status)).className = 'badge ' + badgeClass(m.status);
+      top.appendChild(who);
+      body.appendChild(top);
+
+      body.appendChild(el('div', 'height:20px;'));
+      var g1 = grid();
+      g1.appendChild(card('Age', [m.age === '' ? '' : String(m.age)]));
+      g1.appendChild(card('Birthday', [m.birthday]));
+      g1.appendChild(card('Sex', [m.sex]));
+      var ec = [m.emergency_number];
+      if (m.emergency_number && m.emergency_relationship) ec.push('(' + m.emergency_relationship + ')');
+      g1.appendChild(card('Emergency Contact', ec));
+      body.appendChild(g1);
+
+      body.appendChild(section('Membership Information'));
+      var g2 = grid();
+      g2.appendChild(card('Plan', [m.plan]));
+      g2.appendChild(card('Expiry Date', [m.expiry]));
+      body.appendChild(g2);
+
+      body.appendChild(section('Additional Notes'));
+      var ta = el('textarea', 'width:100%;box-sizing:border-box;min-height:90px;resize:vertical;background:rgba(255,255,255,0.03);border:1px solid rgba(61,125,212,0.25);border-radius:10px;padding:12px;color:var(--white);font-family:inherit;font-size:15px;');
+      ta.id = 'member-detail-notes'; ta.maxLength = 2000; ta.placeholder = 'No additional notes.'; ta.value = m.notes || '';
+      body.appendChild(ta);
+      var row = el('div', 'display:flex;align-items:center;gap:12px;margin-top:10px;');
+      var btn = el('button', '', 'SAVE NOTES'); btn.type = 'button'; btn.className = 'btn btn-outline btn-sm';
+      var msg = el('span', 'font-size:13px;color:var(--muted);');
+      btn.onclick = function () {
+        btn.disabled = true; msg.textContent = 'Saving…';
+        fetch('/staff/member/' + m.id + '/notes', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notes: ta.value })
+        }).then(function (r) { return r.json(); }).then(function (d) {
+          btn.disabled = false; msg.textContent = d.success ? 'Saved.' : (d.error || 'Could not save.');
+        }).catch(function () { btn.disabled = false; msg.textContent = 'Could not save.'; });
+      };
+      row.appendChild(btn); row.appendChild(msg);
+      body.appendChild(row);
+    }
+
+    window.openMemberDetail = function (id, tr) {
+      var panel = document.getElementById('member-detail-panel');
+      var body = document.getElementById('member-detail-body');
+      if (currentRow) currentRow.classList.remove('member-selected');
+      currentRow = tr || null; currentId = id;
+      if (currentRow) currentRow.classList.add('member-selected');
+      body.textContent = 'Loading…';
+      panel.style.display = 'block';
+      fetch('/staff/member/' + id + '/details', { cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (currentId !== id) return;            // a newer click won
+          if (!d.success) { body.textContent = d.error || 'Could not load this member.'; return; }
+          render(d.member);
+        })
+        .catch(function () { body.textContent = 'Could not load this member. Please try again.'; });
+    };
+
+    window.closeMemberDetail = function () {
+      document.getElementById('member-detail-panel').style.display = 'none';
+      if (currentRow) currentRow.classList.remove('member-selected');
+      currentRow = null; currentId = null;
+    };
+
+    document.addEventListener('click', function (e) {
+      var tr = e.target.closest && e.target.closest('#members-table tbody tr[data-id]');
+      if (tr && !e.target.closest('button, a, input, select, textarea')) {
+        openMemberDetail(tr.getAttribute('data-id'), tr);
+        return;
+      }
+      if (e.target.closest && e.target.closest('.nav-item')) closeMemberDetail();   // leaving the tab
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMemberDetail(); });
+  })();
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
 <script src="{{ url_for('static', filename='js/tr-common.js') }}"></script>

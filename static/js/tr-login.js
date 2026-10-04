@@ -714,6 +714,8 @@ function completeRegistration() {
   const email          = _val('reg-email');
   const phone          = _val('reg-phone');
   const birthday       = document.getElementById('reg-bday')?.value || '';
+  const emergencyNumber = _val('reg-emergency-phone');
+  const emergencyRel    = _val('reg-emergency-rel');
   const password       = document.getElementById('reg-pass')?.value || '';
   const confirm        = document.getElementById('reg-confirm')?.value || '';
   const termsChecked   = document.getElementById('reg-terms-check')?.checked;
@@ -738,6 +740,14 @@ function completeRegistration() {
   }
   if (phone && !/^09\d{9}$/.test(phone)) {
     showToast('Phone number must start with 09 and be exactly 11 digits.', 'error');
+    return;
+  }
+  if (!emergencyNumber || !emergencyRel) {
+    showToast('Please enter an emergency contact number and relationship.', 'error');
+    return;
+  }
+  if (!/^09\d{9}$/.test(emergencyNumber)) {
+    showToast('Emergency contact number must start with 09 and be exactly 11 digits.', 'error');
     return;
   }
   if (password.length < 8) {
@@ -767,6 +777,8 @@ function completeRegistration() {
   formData.append('email', email);
   formData.append('phone', phone);
   formData.append('birthday', birthday);
+  formData.append('emergency_contact_number', emergencyNumber);
+  formData.append('emergency_contact_relationship', emergencyRel);
   formData.append('password', password);
   formData.append('profile_picture', _regProfilePictureBlob, _regProfilePictureName);
 
@@ -979,7 +991,7 @@ document.addEventListener('DOMContentLoaded', () => {
 ════════════════════════════════════════════════ */
 (function () {
   const KEY    = 'tr_reg_draft_v1';
-  const FIELDS = ['reg-fname', 'reg-mi', 'reg-lname', 'reg-ext', 'reg-email', 'reg-phone', 'reg-bday'];
+  const FIELDS = ['reg-fname', 'reg-mi', 'reg-lname', 'reg-ext', 'reg-email', 'reg-phone', 'reg-bday', 'reg-emergency-phone', 'reg-emergency-rel'];
 
   function _read() {
     try { return JSON.parse(sessionStorage.getItem(KEY) || 'null') || {}; }

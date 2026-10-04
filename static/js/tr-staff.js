@@ -33,6 +33,7 @@ const StaffModule = (() => {
 
     const payPlanEl = document.getElementById('pay-plan');
     if (payPlanEl) payPlanEl.addEventListener('change', onPayPlanChange);
+    _initPayMemberDropdown();
     _updatePlanOptionLabels();
     updatePayAmountDisplay();
 
@@ -204,6 +205,93 @@ const StaffModule = (() => {
     return byName.length === 1 ? byName[0] : null;
   }
 
+  /** "Select member" dropdown for the Payment Record form. Lists every member
+   *  by name (email, plan and status underneath) straight from the members
+   *  data embedded by the server. Clicking the field opens the full list;
+   *  typing narrows it by name, email or ID. Picking one fills the field and
+   *  runs the same plan auto-fill as before (onPayMemberInput). */
+  function _initPayMemberDropdown() {
+    const input = document.getElementById('pay-member');
+    const menu  = document.getElementById('pay-member-menu');
+    if (!input || !menu) return;
+    const members = _loadPaymentMembers();
+    let shown = [];
+    let active = -1;
+
+    const isOpen = () => menu.style.display !== 'none';
+    const close  = () => { menu.style.display = 'none'; active = -1; };
+
+    function highlight(i) {
+      active = i;
+      Array.from(menu.children).forEach((el, idx) => {
+        el.style.background = idx === i ? 'var(--navy-light)' : 'transparent';
+        if (idx === i) el.scrollIntoView({ block: 'nearest' });
+      });
+    }
+
+    function choose(m) {
+      input.value = m.email || m.display || m.name;   // the system records the email
+      input.dispatchEvent(new Event('input', { bubbles: true }));   // plan auto-fill
+      close();
+    }
+
+    function render(text) {
+      const q = (text || '').trim().toLowerCase();
+      shown = members.filter(m =>
+        !q ||
+        (m.name || '').toLowerCase().includes(q) ||
+        (m.email || '').toLowerCase().includes(q) ||
+        String(m.id) === q.replace(/^#/, ''));
+      menu.textContent = '';
+      if (!shown.length) {
+        const none = document.createElement('div');
+        none.textContent = 'No members match';
+        none.style.cssText = 'padding:10px;font-size:14px;color:var(--muted);';
+        menu.appendChild(none);
+        return;
+      }
+      shown.forEach((m, idx) => {
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:9px 12px;border-radius:6px;cursor:pointer;font-size:15px;color:var(--white);';
+        // Names only (like the mockup). Two members with the exact same name
+        // get their email added so they can still be told apart.
+        row.textContent = m.display || m.name;
+        row.addEventListener('mouseenter', () => highlight(idx));
+        row.addEventListener('mousedown', ev => { ev.preventDefault(); choose(m); });
+        menu.appendChild(row);
+      });
+    }
+
+    function open(filterByTyped) {
+      // Right after a pick the field holds that member's name — show the full
+      // list again then, instead of a list narrowed down to just that member.
+      const typed = filterByTyped && !_findPaymentMember(input.value) ? input.value : '';
+      render(typed);
+      menu.style.display = 'block';
+      active = -1;
+    }
+
+    input.addEventListener('focus', () => open(false));
+    input.addEventListener('click', () => { if (!isOpen()) open(false); });
+    input.addEventListener('input', () => open(true));
+    input.addEventListener('keydown', ev => {
+      if (ev.key === 'Escape') { close(); return; }
+      if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        if (!isOpen()) open(true);
+        if (!shown.length) return;
+        const next = ev.key === 'ArrowDown' ? active + 1 : active - 1;
+        highlight((next + shown.length) % shown.length);
+      } else if (ev.key === 'Enter' && isOpen() && active >= 0 && shown[active]) {
+        ev.preventDefault();
+        choose(shown[active]);
+      }
+    });
+    document.addEventListener('mousedown', ev => {
+      if (!ev.target.closest('.pay-mem-dd')) close();
+    });
+  }
+
   /** Select the <option> in #pay-plan whose value matches (case-insensitive).
    *  Plans use their name as the value; promos use "promo:<id>". No-op if
    *  the value isn't one of the listed options. */
@@ -262,6 +350,16 @@ const StaffModule = (() => {
    *  datalist option value is set to — picking a suggestion fills the input
    *  with it), auto-select that member's currently availed plan. */
   function onPayMemberInput(value) {
+    // The dropdown lists each member by NAME (email shown underneath), but the
+    // system records the EMAIL. When a name is picked, swap it for the email.
+    const _typed = (value || '').trim();
+    const _hit = _findPaymentMember(_typed);
+    if (_hit && _hit.email && !/^#?\d+$/.test(_typed) &&
+        _typed.toLowerCase() !== String(_hit.email).toLowerCase()) {
+      const _inputEl = document.getElementById('pay-member');
+      if (_inputEl) _inputEl.value = _hit.email;
+      value = _hit.email;
+    }
     const identifier = (value || '').trim().toLowerCase();
     const studentEl = document.getElementById('pay-is-student');
     const labelEl = document.getElementById('pay-student-manual-label');

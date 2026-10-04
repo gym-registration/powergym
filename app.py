@@ -1298,6 +1298,11 @@ class User(db.Model):
     email = db.Column(db.String(120), nullable=False, unique=True, index=True)
     phone = db.Column(db.String(20), nullable=True)
     birthday = db.Column(db.Date, nullable=True)
+    # Emergency contact collected at registration (number + who they are to the member).
+    emergency_contact_number       = db.Column(db.String(20), nullable=True)
+    emergency_contact_relationship = db.Column(db.String(40), nullable=True)
+    # Free-text note staff/admin can keep on a member (Member Details panel).
+    staff_notes = db.Column(db.Text, nullable=True)
     password = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(10), nullable=False, default='member')
     status = db.Column(db.String(15), nullable=False, default='pending')
@@ -3860,6 +3865,8 @@ def register():
     email      = (data.get('email')      or '').strip().lower()
     phone      = (data.get('phone')      or '').strip()
     birthday   = (data.get('birthday')   or '').strip()
+    emergency_number = (data.get('emergency_contact_number') or '').strip()
+    emergency_relationship = (data.get('emergency_contact_relationship') or '').strip()
     password   = data.get('password')    or ''
     profile_picture_file = request.files.get('profile_picture')
 
@@ -3897,6 +3904,16 @@ def register():
     if birthday_date > date.today():
         return jsonify(success=False, error='Birthday cannot be in the future.'), 400
 
+    # ── Emergency contact: number (same 09 + 11 digits rule as phone) and
+    # the contact's relationship to the member (e.g. Mother, Spouse). ──
+    if not emergency_number or not emergency_relationship:
+        return jsonify(success=False, error='Please enter an emergency contact number and relationship.'), 400
+    if not _valid_phone(emergency_number):
+        return jsonify(success=False, error='Emergency contact number must start with 09 and be exactly 11 digits.'), 400
+    if len(emergency_relationship) > 40 or not _valid_name(emergency_relationship, extra_chars=" '-/."):
+        return jsonify(success=False, error='Emergency contact relationship can only contain letters (max 40 characters).'), 400
+    emergency_relationship = emergency_relationship[:1].upper() + emergency_relationship[1:]
+
     if User.query.filter_by(email=email).first() is not None:
         return jsonify(success=False, error='An account with this email already exists.'), 409
 
@@ -3914,6 +3931,8 @@ def register():
         email=email,
         phone=phone or None,
         birthday=birthday_date,
+        emergency_contact_number=emergency_number,
+        emergency_contact_relationship=emergency_relationship,
         password=generate_password_hash(password),
         role='member',
         status='pending',
@@ -4858,6 +4877,54 @@ def admin_edit_member(member_id):
             'expiry_iso': expiry_iso,
         }
     )
+
+
+@app.route('/staff/member/<int:member_id>/details', methods=['GET'])
+def staff_member_details(member_id):
+    """Everything the Member Details side panel shows. Staff and admin only."""
+    if session.get('role') not in ('staff', 'admin'):
+        return jsonify(success=False, error='Unauthorized.'), 403
+    user = User.query.filter_by(id=member_id, role='member').first()
+    if user is None:
+        return jsonify(success=False, error='Member not found.'), 404
+
+    row = next((m for m in _get_members_with_plans() if m['id'] == user.id), None)
+    b = user.birthday
+    age = _calculate_age(b) if b else None
+    fp = user.fitness_profile
+    resp = jsonify(success=True, member={
+        'id':           user.id,
+        'name':         user.full_name,
+        'email':        user.email,
+        'photo_url':    url_for('static', filename=user.profile_picture) if user.profile_picture else '',
+        'status':       row['status'] if row else 'No Plan',
+        'age':          age if age is not None else '',
+        'birthday':     f"{b.strftime('%B')} {b.day}, {b.year}" if b else '',
+        'sex':          (fp.sex or '').capitalize() if fp else '',
+        'emergency_number':       user.emergency_contact_number or '',
+        'emergency_relationship': user.emergency_contact_relationship or '',
+        'plan':         (row['plan_label'] if row else '—') or '—',
+        'expiry':       (row['expiry'] if row else '—') or '—',
+        'notes':        user.staff_notes or '',
+    })
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
+
+
+@app.route('/staff/member/<int:member_id>/notes', methods=['POST'])
+def staff_member_notes(member_id):
+    """Save the free-text Additional Notes on a member. Staff and admin only."""
+    if session.get('role') not in ('staff', 'admin'):
+        return jsonify(success=False, error='Unauthorized.'), 403
+    user = User.query.filter_by(id=member_id, role='member').first()
+    if user is None:
+        return jsonify(success=False, error='Member not found.'), 404
+    notes = ((request.get_json(silent=True) or {}).get('notes') or '').strip()
+    if len(notes) > 2000:
+        return jsonify(success=False, error='Notes must be 2000 characters or fewer.'), 400
+    user.staff_notes = notes or None
+    db.session.commit()
+    return jsonify(success=True, message='Notes saved.')
 
 
 @app.route('/admin/delete-member/<int:member_id>', methods=['POST'])
@@ -11064,6 +11131,10 @@ def _run_startup_migrations():
         ('coaches', 'photo_path',     "ALTER TABLE coaches ADD COLUMN photo_path VARCHAR(255) NULL"),
         ('coaches', 'specialization', "ALTER TABLE coaches ADD COLUMN specialization VARCHAR(120) NULL"),
         ('coaches', 'bio',            "ALTER TABLE coaches ADD COLUMN bio TEXT NULL"),
+        # ── Emergency contact + staff notes on members ──
+        ('users', 'emergency_contact_number',       "ALTER TABLE users ADD COLUMN emergency_contact_number VARCHAR(20) NULL"),
+        ('users', 'emergency_contact_relationship', "ALTER TABLE users ADD COLUMN emergency_contact_relationship VARCHAR(40) NULL"),
+        ('users', 'staff_notes',                    "ALTER TABLE users ADD COLUMN staff_notes TEXT NULL"),
         # ── Walk-in guests optionally availing a coach for their visit ──
         ('walk_ins', 'wants_coach', "ALTER TABLE walk_ins ADD COLUMN wants_coach TINYINT(1) NOT NULL DEFAULT 0"),
         ('walk_ins', 'coach_name',  "ALTER TABLE walk_ins ADD COLUMN coach_name VARCHAR(60) NULL"),
