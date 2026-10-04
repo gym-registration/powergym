@@ -1552,6 +1552,11 @@ class Payment(db.Model):
     wants_coach           = db.Column(db.Boolean, nullable=False, default=False)
     coach_name             = db.Column(db.String(60), nullable=True)
     requested_start_date  = db.Column(db.Date, nullable=True)
+    # When staff approved the request (it became "approved — awaiting payment").
+    # Used so a request approved AFTER its desired date still gets the rest of
+    # the approval day to pay before the auto-cancel (see
+    # _cancel_overdue_unpaid_approvals). NULL on rows approved before this existed.
+    approved_at           = db.Column(db.DateTime, nullable=True)
     status           = db.Column(db.String(10), nullable=False, default='pending', index=True)
     recorded_by_id   = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
     notes            = db.Column(db.Text, nullable=True)
@@ -3516,6 +3521,128 @@ def _send_plan_approved_email(member, plan, amount):
               f"{member.email} — plan={plan_name}, amount={amount}")
 
 
+def _plan_cancelled_email_html(first_name, item_name, desired_date_text, is_promo, login_url):
+    """Styled HTML email sent when an APPROVED plan/promo request is cancelled
+    automatically because the member never paid by their desired start date.
+    Matches the look of the other POWER GYM emails."""
+    kind = 'promo' if is_promo else 'plan'
+    return f"""\
+<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#c6c9d1;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#c6c9d1;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="420" cellpadding="0" cellspacing="0"
+               style="max-width:420px;width:100%;background:#ffffff;border:1px solid #e2e4ea;
+                      border-radius:14px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;
+                      box-shadow:0 4px 18px rgba(0,0,0,0.06);">
+          <tr>
+            <td style="background:linear-gradient(135deg,#e61e25,#b8141c);padding:22px 24px;text-align:center;">
+              <div style="color:#ffffff;font-size:20px;font-weight:800;letter-spacing:1px;">POWER GYM</div>
+              <div style="color:rgba(255,255,255,0.85);font-size:11px;letter-spacing:2px;margin-top:2px;">{kind.upper()} REQUEST CANCELLED</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px 28px 8px 28px;text-align:center;">
+              <div style="width:64px;height:64px;margin:0 auto 18px auto;background:rgba(230,30,37,0.12);
+                          border-radius:50%;line-height:64px;font-size:28px;">⚠️</div>
+              <div style="color:#141820;font-size:19px;font-weight:800;margin-bottom:10px;">Hi {first_name}, your {kind} was cancelled</div>
+              <div style="color:#3a3f4b;font-size:14px;line-height:1.7;margin-bottom:6px;">
+                Your {kind} <strong style="color:#141820;">{item_name}</strong> has been cancelled because
+                the payment was not made by your desired start date.
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:10px 28px 4px 28px;text-align:center;">
+              <div style="background:#f2f3f6;border:1px solid #dcdfe6;border-radius:10px;padding:16px 18px;">
+                <div style="color:#6b7280;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">Desired start date</div>
+                <div style="color:#141820;font-size:22px;font-weight:800;">{desired_date_text}</div>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:22px 28px 6px 28px;text-align:center;">
+              <div style="color:#6b7280;font-size:12px;line-height:1.6;margin-bottom:18px;">
+                You were not charged anything. You can request a {kind} again anytime from your
+                dashboard and pay before your new start date.
+              </div>
+              <a href="{login_url}" style="display:inline-block;background:linear-gradient(135deg,#e61e25,#b8141c);
+                        color:#ffffff;text-decoration:none;font-size:13px;font-weight:800;letter-spacing:0.5px;
+                        padding:12px 26px;border-radius:999px;">REQUEST AGAIN</a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 28px 28px 28px;text-align:center;">
+              <div style="height:1px;background:#e2e4ea;margin-bottom:16px;"></div>
+              <div style="color:#9aa0b0;font-size:11px;line-height:1.6;">
+                Questions about your membership? Just ask our front desk staff.
+              </div>
+            </td>
+          </tr>
+        </table>
+        <div style="color:#9aa0b0;font-size:11px;margin-top:18px;font-family:Arial,Helvetica,sans-serif;">
+          © Power Gym. This is an automated message, please do not reply.
+        </div>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+"""
+
+
+def _email_base_url():
+    """Site address for links in background emails (no request available). An
+    explicit APP_BASE_URL (e.g. https://powergym.example.com) wins; otherwise the
+    address of the most recent real page request is used."""
+    return (os.environ.get('APP_BASE_URL') or app.config.get('LAST_SEEN_BASE_URL') or '').rstrip('/')
+
+
+def _login_url_for_email():
+    """Absolute sign-in link. Inside a request this is the normal url_for; from
+    the background auto-cancel job (no request) it is built from _email_base_url()."""
+    try:
+        return url_for('login', _external=True)
+    except RuntimeError:
+        base = _email_base_url() or 'http://127.0.0.1:5000'
+        with app.test_request_context(base_url=base):
+            return url_for('login', _external=True)
+
+
+def _send_plan_cancelled_unpaid_email(member, item_name, desired_date, is_promo):
+    """Best-effort email: the approved plan/promo was cancelled because the
+    member did not pay by the desired start date. Same dev-mode fallback as the
+    other emails — if SMTP isn't configured, log it and move on."""
+    if not member or not member.email:
+        return
+    kind = 'promo' if is_promo else 'plan'
+    desired_text = desired_date.strftime('%B %d, %Y') if desired_date else 'your desired date'
+    login_url = _login_url_for_email()
+    if app.config.get('MAIL_USERNAME') and app.config.get('MAIL_PASSWORD'):
+        try:
+            msg = Message(
+                subject=f'POWER GYM — Your {kind.capitalize()} Request Was Cancelled',
+                recipients=[member.email],
+                body=(
+                    f"Hi {member.first_name},\n\n"
+                    f"Your {kind} \"{item_name}\" has been cancelled because the payment was not "
+                    f"made by your desired start date ({desired_text}).\n\n"
+                    f"You were not charged anything. You can request a {kind} again anytime from "
+                    f"your dashboard and pay before your new start date.\n\n"
+                    f"Sign in at: {login_url}"
+                ),
+                html=_plan_cancelled_email_html(member.first_name, item_name, desired_text, is_promo, login_url),
+            )
+            _send_mail_background(msg, 'plan-cancelled email')
+        except Exception as e:
+            print(f"[MAIL ERROR] Could not build plan-cancelled email for {member.email}: {e}")
+    else:
+        print(f"[DEV] Email not configured. Plan-cancelled email would be sent to "
+              f"{member.email} — {kind}={item_name}, desired={desired_text}")
+
+
 def _send_membership_activated_email(member, plan, start_date):
     """Best-effort congratulations email once a membership is activated by
     an approved payment. Mirrors the OTP email's dev-mode fallback: if SMTP
@@ -5128,6 +5255,7 @@ def admin_verify_payment(payment_id):
             payment.amount     = _payment_total(payment.plan, confirmed_student, payment.coach_name)
 
         payment.status = 'approved'
+        payment.approved_at = datetime.now(timezone.utc)
         payment.method = 'Pending — choose payment method'
         payment.notified = False
         db.session.commit()
@@ -5188,6 +5316,7 @@ def admin_verify_payment(payment_id):
             coach_name=payment.coach_name,
             requested_start_date=payment.requested_start_date,
             status='approved',
+            approved_at=datetime.now(timezone.utc),
             notes=payment.notes,          # keeps promo rows displaying as the promo
             notified=True,                # no "plan approved!" popup — they already got that
             staff_viewed=True,            # the plan request itself was already reviewed
@@ -11109,6 +11238,7 @@ def _run_startup_migrations():
     installs don't need a manual ALTER TABLE."""
     migrations = [
         ('payments', 'requested_start_date', "ALTER TABLE payments ADD COLUMN requested_start_date DATE NULL"),
+        ('payments', 'approved_at', "ALTER TABLE payments ADD COLUMN approved_at DATETIME NULL"),
         ('payments', 'notified', "ALTER TABLE payments ADD COLUMN notified TINYINT(1) NOT NULL DEFAULT 0"),
         ('payments', 'staff_viewed', "ALTER TABLE payments ADD COLUMN staff_viewed TINYINT(1) NOT NULL DEFAULT 0"),
         ('membership_plans', 'description', "ALTER TABLE membership_plans ADD COLUMN description TEXT NULL"),
@@ -11545,6 +11675,144 @@ def _startup_with_retries(attempts=5, base_delay=2):
 
 
 # ---------------------------------------------------------------
+#  Auto-cancel approved plan/promo requests that were never paid
+#
+#  Staff approves a request -> the member must pay (Cash at the desk, or
+#  GCash with a receipt). If the member's DESIRED START DATE passes and they
+#  still have not paid, the approved plan/promo is cancelled automatically:
+#    - the member gets a "cancelled because you did not pay" email,
+#    - the request disappears from staff/admin (status becomes 'cancelled',
+#      which every request/record/analytics list already ignores),
+#    - the placeholder membership is cleared, so the member's dashboard goes
+#      back to "choose a plan" and they can avail again.
+#  A GCash payment whose receipt was already uploaded counts as paid (it is
+#  only waiting for admin to verify), so it is never cancelled here.
+# ---------------------------------------------------------------
+import threading as _threading
+
+_UNPAID_SWEEP_MIN_GAP_SECONDS = 60       # never sweep more often than this
+_UNPAID_SWEEP_LOOP_SECONDS    = 600      # background loop interval (10 minutes)
+_unpaid_sweep_lock = _threading.Lock()
+_unpaid_sweep_last = 0.0
+
+
+def _payment_is_unpaid(p):
+    """Approved by staff, but the member has not actually paid."""
+    method = (p.method or '')
+    if method.startswith('Pending'):      # never even chose a payment method
+        return True
+    if method == 'Cash':                  # chose cash, never settled it at the front desk
+        return True
+    return not p.proof_image_path         # GCash with no receipt uploaded
+
+
+def _unpaid_deadline(p):
+    """Last day the member can still pay: their desired start date, but never
+    earlier than the day staff approved the request (so a request approved
+    after its desired date still gets the rest of that day to pay)."""
+    if p.requested_start_date is None:
+        return None
+    approved = _to_manila(p.approved_at or p.paid_at)
+    approved_day = approved.date() if approved else None
+    return max(p.requested_start_date, approved_day) if approved_day else p.requested_start_date
+
+
+def _cancel_overdue_unpaid_approvals():
+    """Cancel every approved-but-unpaid plan/promo request whose deadline has
+    passed. Safe to run repeatedly and from several processes: each row is
+    claimed with a conditional UPDATE, and only the process that wins the claim
+    clears the membership and sends the email. Returns how many were cancelled."""
+    today = _today_manila()
+    rows = (Payment.query
+            .filter(Payment.status == 'approved',
+                    Payment.requested_start_date.isnot(None),
+                    Payment.requested_start_date < today)
+            .all())
+    cancelled = 0
+    for p in rows:
+        deadline = _unpaid_deadline(p)
+        if deadline is None or today <= deadline or not _payment_is_unpaid(p):
+            continue
+        pid, member_id, desired = p.id, p.member_id, p.requested_start_date
+        member = p.member
+        item_name = _payment_display_plan(p, 'membership')
+        is_promo = _is_promo_payment(p)
+
+        claimed = (Payment.query.filter_by(id=pid, status='approved')
+                   .update({'status': 'cancelled',
+                            'verified_at': datetime.now(timezone.utc),
+                            'notified': True},
+                           synchronize_session=False))
+        if not claimed:                   # another process got there first
+            db.session.rollback()
+            continue
+
+        # Reset the placeholder membership so the member can avail again — but
+        # only if it exists because of this request (an active plan being
+        # renewed stays untouched) and nothing else of theirs is still open.
+        if member_id is not None:
+            still_open = (Payment.query
+                          .filter(Payment.member_id == member_id, Payment.id != pid,
+                                  Payment.status.in_(('pending', 'approved')))
+                          .count())
+            membership = Membership.query.filter_by(member_id=member_id).first()
+            if membership is not None and membership.status == 'pending' and not still_open:
+                db.session.delete(membership)
+        db.session.commit()
+        cancelled += 1
+        _send_plan_cancelled_unpaid_email(member, item_name, desired, is_promo)
+    return cancelled
+
+
+def _run_unpaid_sweep_once(force=False):
+    """Throttled, single-flight wrapper used by the request hook and the loop."""
+    global _unpaid_sweep_last
+    now = time.time()
+    if not force and now - _unpaid_sweep_last < _UNPAID_SWEEP_MIN_GAP_SECONDS:
+        return 0
+    if not force and not _email_base_url():
+        return 0      # no APP_BASE_URL and no page visited yet: wait, so the email's link is correct
+    if not _unpaid_sweep_lock.acquire(blocking=False):
+        return 0
+    try:
+        _unpaid_sweep_last = now
+        with app.app_context():
+            try:
+                n = _cancel_overdue_unpaid_approvals()
+                if n:
+                    print(f"[auto-cancel] cancelled {n} unpaid approved request(s)")
+                return n
+            except Exception as e:
+                db.session.rollback()
+                print(f"[auto-cancel] sweep failed: {type(e).__name__}: {e}")
+                return 0
+            finally:
+                db.session.remove()
+    finally:
+        _unpaid_sweep_lock.release()
+
+
+def _unpaid_sweep_loop():
+    """Background loop so cancellations (and their emails) happen on time even
+    when nobody is using the site."""
+    while True:
+        time.sleep(_UNPAID_SWEEP_LOOP_SECONDS)
+        _run_unpaid_sweep_once()
+
+
+@app.before_request
+def _unpaid_sweep_on_request():
+    """Fallback for hosts that don't keep background threads alive: any page
+    request kicks off a (throttled) sweep on its own thread, so the request
+    itself is never slowed down."""
+    if request.path.startswith('/static/'):
+        return
+    app.config['LAST_SEEN_BASE_URL'] = request.host_url
+    if time.time() - _unpaid_sweep_last >= _UNPAID_SWEEP_MIN_GAP_SECONDS:
+        _threading.Thread(target=_run_unpaid_sweep_once, daemon=True).start()
+
+
+# ---------------------------------------------------------------
 #  AI Assistant (Groq) - member dashboard chat box
 #  Must be registered after the models/helpers above are defined.
 # ---------------------------------------------------------------
@@ -11555,6 +11823,11 @@ register_gym_ai(app, globals())
 if __name__ == '__main__':
     with app.app_context():
         _startup_with_retries()
+    # Background auto-cancel loop (see _cancel_overdue_unpaid_approvals). With
+    # the debug reloader, only the child process that actually serves requests
+    # should run it.
+    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+        _threading.Thread(target=_unpaid_sweep_loop, daemon=True).start()
     # threaded=True lets the dev server handle multiple requests at once
     # instead of one at a time. Without it, every asset a page needs (CSS,
     # JS, fonts, images) gets served sequentially even though the browser

@@ -603,6 +603,13 @@ function completeLogin() {
     .then(({ ok, data }) => {
       if (!ok || !data.success) {
         if (btn) { btn.disabled = false; btn.textContent = 'ACCESS SYSTEM'; }
+        if (data.needs_verification) {
+          // Right password, but the email was never verified — send them to the
+          // code screen and make sure a valid code is on its way.
+          showVerifyScreen({ email: data.email || email, masked: data.email_masked });
+          resendVerifyOtp(true);
+          return;
+        }
         _showLoginError(data.error || 'An error occurred. Please try again.');
         return;
       }
@@ -670,13 +677,26 @@ function previewProfilePicture(input) {
  *  by the live field validation below and the submit-time check in
  *  completeRegistration(), so the rules can never drift apart. Returns
  *  an error string, or null if the birthday is fine.
- *  No minimum age is enforced — this mirrors the server-side /register
- *  check, which only rejects a missing, invalid, or future date. */
+ *  Members must be at least MIN_REGISTRATION_AGE (15) — this mirrors the
+ *  server-side /register check. */
+const MIN_REGISTRATION_AGE = 15;
+
+/** Latest birthday (YYYY-MM-DD) that still makes someone 15 today. */
+function _latestAllowedBirthday() {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - MIN_REGISTRATION_AGE);
+  const pad = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+}
+
 function _birthdayErrorMessage(birthdayStr) {
   if (!birthdayStr) return 'Please enter your birthday.';
   const bday = new Date(birthdayStr + 'T00:00:00');
   if (isNaN(bday.getTime())) return 'Please enter a valid birthday.';
   if (bday > new Date()) return 'Birthday cannot be in the future.';
+  if (birthdayStr > _latestAllowedBirthday()) {
+    return 'You must be at least ' + MIN_REGISTRATION_AGE + ' years old to create an account.';
+  }
   return null;
 }
 
@@ -688,6 +708,7 @@ function validateBirthdayField() {
   const hint  = document.getElementById('reg-bday-hint');
   const submitBtn = document.getElementById('reg-submit-btn');
   if (!input) return true;
+  input.max = _latestAllowedBirthday(); // date picker won't offer under-15 dates
 
   const error = _birthdayErrorMessage(input.value);
   if (error) {
@@ -715,7 +736,7 @@ function completeRegistration() {
   const phone          = _val('reg-phone');
   const birthday       = document.getElementById('reg-bday')?.value || '';
   const emergencyNumber = _val('reg-emergency-phone');
-  const emergencyRel    = _val('reg-emergency-rel');
+  const emergencyRel    = _emergencyRelationship();
   const password       = document.getElementById('reg-pass')?.value || '';
   const confirm        = document.getElementById('reg-confirm')?.value || '';
   const termsChecked   = document.getElementById('reg-terms-check')?.checked;
@@ -743,7 +764,9 @@ function completeRegistration() {
     return;
   }
   if (!emergencyNumber || !emergencyRel) {
-    showToast('Please enter an emergency contact number and relationship.', 'error');
+    showToast(_val('reg-emergency-rel') === 'Other' && !emergencyRel
+      ? 'Please specify the emergency contact relationship.'
+      : 'Please enter an emergency contact number and relationship.', 'error');
     return;
   }
   if (!/^09\d{9}$/.test(emergencyNumber)) {
@@ -791,6 +814,14 @@ function completeRegistration() {
       if (btn) { btn.disabled = false; btn.textContent = 'SUBMIT REGISTRATION'; }
       if (!ok || !data.success) {
         showToast(data.error || 'Registration failed. Please try again.', 'error');
+        return;
+      }
+      // Account is created but NOT active yet — the member must enter the code we
+      // just emailed. (The form keeps its values so "Change email" can edit them.)
+      if (data.needs_verification) {
+        showToast('We sent a 6-digit code to ' + (data.email_masked || email) + '.', 'success');
+        showVerifyScreen({ email: data.email || email, masked: data.email_masked,
+                           expiresIn: data.expires_in, resendIn: data.resend_in });
         return;
       }
       showToast(data.message || 'Account created! Sign in to continue.', 'success');
@@ -886,6 +917,25 @@ function _bindModalBackdrops() {
 
 function _val(id) {
   return document.getElementById(id)?.value.trim() || '';
+}
+
+/** Shows the "Please specify" box only when the member picks "Other" as
+ *  their emergency-contact relationship. */
+function toggleRelationshipOther() {
+  const sel   = document.getElementById('reg-emergency-rel');
+  const other = document.getElementById('reg-emergency-rel-other');
+  if (!sel || !other) return;
+  const isOther = sel.value === 'Other';
+  other.style.display = isOther ? '' : 'none';
+  if (isOther) other.focus(); else other.value = '';
+}
+window.toggleRelationshipOther = toggleRelationshipOther;
+
+/** The relationship to send: the dropdown choice, or the typed text when
+ *  "Other" is selected. */
+function _emergencyRelationship() {
+  const sel = _val('reg-emergency-rel');
+  return sel === 'Other' ? _val('reg-emergency-rel-other') : sel;
 }
 
 
@@ -991,7 +1041,7 @@ document.addEventListener('DOMContentLoaded', () => {
 ════════════════════════════════════════════════ */
 (function () {
   const KEY    = 'tr_reg_draft_v1';
-  const FIELDS = ['reg-fname', 'reg-mi', 'reg-lname', 'reg-ext', 'reg-email', 'reg-phone', 'reg-bday', 'reg-emergency-phone', 'reg-emergency-rel'];
+  const FIELDS = ['reg-fname', 'reg-mi', 'reg-lname', 'reg-ext', 'reg-email', 'reg-phone', 'reg-bday', 'reg-emergency-phone', 'reg-emergency-rel', 'reg-emergency-rel-other'];
 
   function _read() {
     try { return JSON.parse(sessionStorage.getItem(KEY) || 'null') || {}; }
@@ -1071,6 +1121,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     const bday = document.getElementById('reg-bday');
     if (bday) bday.dispatchEvent(new Event('input', { bubbles: true })); // re-run birthday note
+    const relSel = document.getElementById('reg-emergency-rel');
+    const relOther = document.getElementById('reg-emergency-rel-other');
+    if (relSel && relOther) relOther.style.display = relSel.value === 'Other' ? '' : 'none';
     _restorePicture(d.pfp);
   }
 
@@ -1099,12 +1152,292 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // 'load' fires after every DOMContentLoaded handler and inline script on
-  // the page (incl. the landing page's "blank the birthday field" guard),
-  // so the restore below is the last word and nothing overwrites it.
+  // Refreshing the page starts registration over: nothing typed, picked or
+  // uploaded is kept, and no draft is saved or restored. 'load' fires after
+  // every DOMContentLoaded handler and inline script (and after the browser
+  // has restored any form values it remembers), so this runs last and wins.
+  const ALL_FIELDS = FIELDS.concat(['reg-pass', 'reg-confirm']);
+
+  function _resetRegistrationForm() {
+    _clear();
+    ALL_FIELDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
+    });
+    const terms = document.getElementById('reg-terms-check');
+    if (terms) terms.checked = false;
+    const relOther = document.getElementById('reg-emergency-rel-other');
+    if (relOther) relOther.style.display = 'none';
+
+    // profile picture back to the empty circle
+    _regProfilePictureBlob = null;
+    _regProfilePictureName = null;
+    const picInput = document.getElementById('reg-profile-picture');
+    if (picInput) picInput.value = '';
+    const preview  = document.getElementById('pfp-upload-preview');
+    const icon     = document.getElementById('pfp-upload-icon');
+    const circle   = document.getElementById('pfp-upload-circle');
+    const filename = document.getElementById('pfp-upload-filename');
+    if (preview) { preview.removeAttribute('src'); preview.style.display = 'none'; }
+    if (icon) icon.style.display = '';
+    if (circle) circle.classList.remove('has-image');
+    if (filename) filename.textContent = '';
+  }
+
+  window.TrRegReset = _resetRegistrationForm;   // used after email verification succeeds
+
   window.addEventListener('load', () => {
     if (!document.getElementById('screen-register')) return;
-    _restore();
-    _track();
+    _resetRegistrationForm();
   });
+  // Back/forward navigation can bring the page back from the browser's
+  // cache with the old values still in it — wipe those too.
+  window.addEventListener('pageshow', e => {
+    if (e.persisted && document.getElementById('screen-register')) _resetRegistrationForm();
+  });
+})();
+
+/* ════════════════════════════════════════════════
+   EMAIL OTP VERIFICATION ("Verify Your Email" screen)
+   Reached after registering, or when an unverified member tries to sign in.
+════════════════════════════════════════════════ */
+const _verify = { email: '', expiresAt: 0, resendAt: 0, timer: null, busy: false };
+
+function _otpBoxes() { return Array.from(document.querySelectorAll('#otp-inputs .otp-box')); }
+function _otpValue() { return _otpBoxes().map(b => b.value).join(''); }
+
+function _otpClear(focus) {
+  _otpBoxes().forEach(b => { b.value = ''; b.classList.remove('filled'); });
+  const row = document.getElementById('otp-inputs');
+  if (row) row.classList.remove('error');
+  if (focus) { const first = _otpBoxes()[0]; if (first) first.focus(); }
+}
+
+function _verifyMessage(text, ok) {
+  const el = document.getElementById('verify-msg');
+  if (!el) return;
+  el.textContent = text || '';
+  el.classList.toggle('ok', !!ok);
+}
+
+function _verifyShowError(text) {
+  _verifyMessage(text, false);
+  const row = document.getElementById('otp-inputs');
+  if (row) { row.classList.remove('error'); void row.offsetWidth; row.classList.add('error'); }
+}
+
+function _fmtClock(secs) {
+  const m = Math.floor(secs / 60), s = secs % 60;
+  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+
+/** Ticks once a second: expiry countdown + resend cooldown label. */
+function _verifyTick() {
+  const now = Date.now();
+  const expiryEl  = document.getElementById('verify-expiry');
+  const expiryRow = document.getElementById('verify-expiry-row');
+  const verifyBtn = document.getElementById('verify-btn');
+  const resendBtn = document.getElementById('verify-resend-btn');
+  if (!expiryEl || !resendBtn) return;
+
+  if (_verify.expiresAt) {
+    const left = Math.max(0, Math.ceil((_verify.expiresAt - now) / 1000));
+    expiryEl.textContent = left > 0 ? _fmtClock(left) : '00:00';
+    const expired = left === 0;
+    expiryRow.classList.toggle('expired', expired);
+    if (expired && !_verify.expiredShown) {
+      _verify.expiredShown = true;
+      _verifyShowError('Code expired. Please request a new one.');
+    }
+    if (verifyBtn && !_verify.busy) verifyBtn.disabled = expired;
+  } else {
+    expiryEl.textContent = '--:--';
+  }
+
+  const wait = Math.max(0, Math.ceil((_verify.resendAt - now) / 1000));
+  resendBtn.disabled = wait > 0 || _verify.busy;
+  resendBtn.textContent = wait > 0 ? 'Resend code (' + wait + 's)' : 'Resend code';
+}
+
+function _verifyApplyTimers(expiresIn, resendIn) {
+  const now = Date.now();
+  if (typeof expiresIn === 'number') {
+    _verify.expiresAt = expiresIn > 0 ? now + expiresIn * 1000 : 0;
+    _verify.expiredShown = false;
+  }
+  if (typeof resendIn === 'number') _verify.resendAt = now + resendIn * 1000;
+  _verifyTick();
+}
+
+/** Open the Verify Your Email screen for this address. */
+function showVerifyScreen(opts) {
+  _verify.email = opts.email;
+  _verify.expiresAt = 0;
+  _verify.resendAt = 0;
+  _verify.expiredShown = false;
+  _verify.busy = false;
+
+  const masked = document.getElementById('verify-email-masked');
+  if (masked) masked.textContent = opts.masked || opts.email;
+  _otpClear(false);
+  _verifyMessage('');
+  const vb = document.getElementById('verify-btn');
+  if (vb) { vb.disabled = false; vb.textContent = 'VERIFY'; }
+
+  if (typeof window.showAuthScreen === 'function') window.showAuthScreen('verify');
+  else if (typeof goTo === 'function') goTo('verify');
+
+  _verifyApplyTimers(opts.expiresIn, opts.resendIn);
+  clearInterval(_verify.timer);
+  _verify.timer = setInterval(_verifyTick, 1000);
+  setTimeout(() => { const f = _otpBoxes()[0]; if (f) f.focus(); }, 50);
+}
+
+function _verifyStopTimer() { clearInterval(_verify.timer); _verify.timer = null; }
+
+function submitVerifyOtp() {
+  if (_verify.busy) return;
+  const code = _otpValue();
+  if (code.length !== 6) { _verifyShowError('Please enter the 6-digit code.'); return; }
+
+  const btn = document.getElementById('verify-btn');
+  _verify.busy = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'VERIFYING...'; }
+  _verifyMessage('');
+
+  fetch('/api/register/verify-otp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: _verify.email, code })
+  })
+    .then(res => res.json().then(data => ({ ok: res.ok, data })))
+    .then(({ ok, data }) => {
+      _verify.busy = false;
+      if (btn) { btn.disabled = false; btn.textContent = 'VERIFY'; }
+      if (ok && data.success) {
+        _verifyStopTimer();
+        const email = _verify.email;
+        _verifyMessage(data.message || 'Email verified!', true);
+        showToast(data.message || 'Email verified! You can now sign in.', 'success');
+        if (typeof window.TrRegReset === 'function') window.TrRegReset();
+        setTimeout(() => {
+          const loginEmail = document.getElementById('login-email');
+          if (loginEmail) loginEmail.value = email;
+          if (typeof window.showAuthScreen === 'function') window.showAuthScreen('login');
+          else if (typeof goTo === 'function') goTo('login');
+        }, 1200);
+        return;
+      }
+      _verifyShowError(data.error || 'Invalid code.');
+      if (data.code === 'invalid') {
+        _otpClear(true);
+        _verifyMessage(data.error || 'Invalid code.', false);
+        const row = document.getElementById('otp-inputs'); if (row) row.classList.add('error');
+      } else if (data.code === 'expired' || data.code === 'locked' || data.code === 'no_code') {
+        if (btn) btn.disabled = true;     // needs a fresh code — Resend becomes the way forward
+        if (data.code !== 'expired') _verify.expiresAt = 0;
+        _verifyTick();
+      }
+    })
+    .catch(() => {
+      _verify.busy = false;
+      if (btn) { btn.disabled = false; btn.textContent = 'VERIFY'; }
+      _verifyShowError('Could not reach the server. Please try again.');
+    });
+}
+
+/** silent = true when called automatically after a blocked sign-in. */
+function resendVerifyOtp(silent) {
+  if (_verify.busy) return;
+  const resendBtn = document.getElementById('verify-resend-btn');
+  if (!silent && resendBtn && resendBtn.disabled) return;
+  _verify.busy = true;
+  if (resendBtn) resendBtn.disabled = true;
+
+  fetch('/api/register/resend-otp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: _verify.email })
+  })
+    .then(res => res.json().then(data => ({ ok: res.ok, data })))
+    .then(({ ok, data }) => {
+      _verify.busy = false;
+      const vb = document.getElementById('verify-btn');
+      if (ok && data.success) {
+        _otpClear(true);
+        _verifyApplyTimers(data.expires_in, data.resend_in);
+        if (vb) vb.disabled = false;
+        _verifyMessage('A new code was sent to your email.', true);
+        return;
+      }
+      if (data.code === 'cooldown') {
+        // A code was sent moments ago — just show the real timers.
+        _verifyApplyTimers(data.expires_in, data.resend_in);
+        if (vb) vb.disabled = !data.expires_in;
+        if (!silent) _verifyShowError(data.error);
+        else _verifyMessage('We already sent a code to your email.', true);
+        return;
+      }
+      _verifyShowError(data.error || 'Could not resend the code.');
+      _verifyTick();
+    })
+    .catch(() => {
+      _verify.busy = false;
+      _verifyShowError('Could not reach the server. Please try again.');
+      _verifyTick();
+    });
+}
+
+/** "Change email" — back to the registration form to fix the address (the
+ *  form keeps what they typed; resubmitting refreshes the pending account). */
+function changeVerifyEmail() {
+  _verifyStopTimer();
+  if (typeof window.showAuthScreen === 'function') window.showAuthScreen('register');
+  else if (typeof goTo === 'function') goTo('register');
+}
+
+/** Auto-focus / auto-advance / backspace / arrows / paste, digits only. */
+(function _initOtpBoxes() {
+  function setup() {
+    const boxes = _otpBoxes();
+    if (!boxes.length) return;
+    const sync = b => b.classList.toggle('filled', !!b.value);
+
+    function fillFrom(startIdx, digits) {
+      let i = startIdx;
+      for (const d of digits) { if (i > 5) break; boxes[i].value = d; sync(boxes[i]); i++; }
+      boxes[Math.min(i, 5)].focus();
+    }
+
+    boxes.forEach((box, idx) => {
+      box.addEventListener('input', () => {
+        const digits = box.value.replace(/\D/g, '');
+        box.value = '';
+        if (!digits) { sync(box); return; }
+        fillFrom(idx, digits);          // handles typing, autofill and multi-digit input
+        const row = document.getElementById('otp-inputs'); if (row) row.classList.remove('error');
+        _verifyMessage('');
+      });
+      box.addEventListener('keydown', e => {
+        if (e.key === 'Backspace') {
+          if (box.value) { box.value = ''; sync(box); }
+          else if (idx > 0) { boxes[idx - 1].value = ''; sync(boxes[idx - 1]); boxes[idx - 1].focus(); }
+          e.preventDefault();
+        } else if (e.key === 'ArrowLeft' && idx > 0) { boxes[idx - 1].focus(); e.preventDefault(); }
+        else if (e.key === 'ArrowRight' && idx < 5) { boxes[idx + 1].focus(); e.preventDefault(); }
+        else if (e.key === 'Enter') { submitVerifyOtp(); e.preventDefault(); }
+        else if (e.key.length === 1 && !/\d/.test(e.key) && !e.ctrlKey && !e.metaKey) { e.preventDefault(); }
+      });
+      box.addEventListener('paste', e => {
+        e.preventDefault();
+        const text = (e.clipboardData || window.clipboardData).getData('text').replace(/\D/g, '').slice(0, 6);
+        if (!text) return;
+        fillFrom(text.length === 6 ? 0 : idx, text);
+      });
+      box.addEventListener('focus', () => box.select());
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setup);
+  else setup();
 })();

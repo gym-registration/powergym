@@ -200,7 +200,16 @@
         </div>
         <div class="form-group">
           <label class="form-label">Relationship</label>
-          <input class="form-input" id="reg-emergency-rel" placeholder="e.g. Mother, Spouse" maxlength="40"
+          <select class="form-input" id="reg-emergency-rel" onchange="toggleRelationshipOther()">
+            <option value="" selected disabled>Select relationship</option>
+            <option value="Mother">Mother</option>
+            <option value="Father">Father</option>
+            <option value="Spouse">Spouse</option>
+            <option value="Guardian">Guardian</option>
+            <option value="Other">Other</option>
+          </select>
+          <input class="form-input" id="reg-emergency-rel-other" placeholder="Please specify (e.g. Sister, Friend)" maxlength="40"
+                 style="display:none;margin-top:8px;"
                  oninput="this.value=this.value.replace(/[^A-Za-z\s'./-]/g,'')">
           <div style="font-size:12px;color:var(--muted);margin-top:4px;">
             Who this person is to you.
@@ -246,6 +255,44 @@
 
   </div>
 </div><!-- /screen-register -->
+
+<!-- ═══ Verify Your Email (OTP) — shown after registration, or when an
+     unverified member tries to sign in ═══ -->
+<div id="screen-verify" class="screen screen-inline">
+  <button type="button" class="screen-close-btn" onclick="hideAuthScreen()" aria-label="Close">✕</button>
+  <div class="login-box verify-box">
+    <div class="login-header" style="margin-bottom:22px;">
+      <div class="login-logo">
+        <div class="logo-badge">
+          <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Power Gym">
+        </div>
+      </div>
+      <div class="login-role-tag">EMAIL VERIFICATION</div>
+      <div class="login-title">VERIFY YOUR EMAIL</div>
+    </div>
+
+    <p class="verify-sub">We sent a 6-digit code to <strong id="verify-email-masked"></strong></p>
+
+    <div class="otp-inputs" id="otp-inputs">
+      <input class="otp-box" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="one-time-code" aria-label="Digit 1">
+      <input class="otp-box" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 2">
+      <input class="otp-box" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 3">
+      <input class="otp-box" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 4">
+      <input class="otp-box" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 5">
+      <input class="otp-box" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 6">
+    </div>
+
+    <div id="verify-msg" class="verify-msg" role="alert"></div>
+    <div class="verify-expiry" id="verify-expiry-row">Code expires in <strong id="verify-expiry">--:--</strong></div>
+
+    <button type="button" id="verify-btn" class="btn-primary" onclick="submitVerifyOtp()">VERIFY</button>
+
+    <div class="verify-links">
+      <button type="button" id="verify-resend-btn" class="verify-link" onclick="resendVerifyOtp()" disabled>Resend code</button>
+      <button type="button" class="verify-link" onclick="changeVerifyEmail()">← Change email</button>
+    </div>
+  </div>
+</div><!-- /screen-verify -->
 
 <!-- Terms & Policy popup (opened from the Personal Information step) -->
 <div class="modal-overlay" id="terms-modal" data-read-seconds="{{ gcash_settings.terms_read_seconds if gcash_settings else 30 }}">
@@ -610,8 +657,8 @@ document.addEventListener('DOMContentLoaded', () => showAuthScreen('{{ open_scre
 {% endif %}
 </script>
 
-<!-- Birthday guard: no minimum age — just blocks future dates for new
-     member registration. Placed after tr-login.js so it takes
+<!-- Birthday guard: members must be at least 15 years old (also blocks
+     future dates) for new member registration. Placed after tr-login.js so it takes
      priority over anything defined there, and adds a hard click
      guard so an invalid birthday can never submit registration. -->
 <script>
@@ -620,8 +667,18 @@ document.addEventListener('DOMContentLoaded', () => showAuthScreen('{{ open_scre
   var errNote = document.getElementById('reg-bday-error');
   var submitBtn = document.getElementById('reg-submit-btn');
 
+  var MIN_AGE = 15;
+
   function todayStr() {
     return new Date().toISOString().split('T')[0];
+  }
+
+  // Latest birthday that still makes someone MIN_AGE today (local date).
+  function latestAllowedStr() {
+    var d = new Date();
+    d.setFullYear(d.getFullYear() - MIN_AGE);
+    var pad = function (n) { return String(n).padStart(2, '0'); };
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
   }
 
   // Stop the date picker itself from offering future dates.
@@ -631,7 +688,7 @@ document.addEventListener('DOMContentLoaded', () => showAuthScreen('{{ open_scre
   // which makes the calendar reopen on that old date instead of
   // today's. Clearing it here guarantees a fresh, real-time view.
   if (bdayInput) {
-    bdayInput.max = todayStr();
+    bdayInput.max = latestAllowedStr();
     bdayInput.value = '';
   }
 
@@ -639,7 +696,15 @@ document.addEventListener('DOMContentLoaded', () => showAuthScreen('{{ open_scre
     if (!bdayInput || !bdayInput.value) return false;
     var bd = new Date(bdayInput.value + 'T00:00:00');
     if (isNaN(bd.getTime())) return false;
-    return bdayInput.value <= todayStr();
+    return bdayInput.value <= latestAllowedStr();
+  }
+
+  function birthdayMessage() {
+    var v = bdayInput && bdayInput.value;
+    if (v && v <= todayStr() && v > latestAllowedStr()) {
+      return 'You must be at least ' + MIN_AGE + ' years old to create an account.';
+    }
+    return 'Please enter a valid birth date.';
   }
 
   // Renders the visible note under the field. This is the single
@@ -655,7 +720,7 @@ document.addEventListener('DOMContentLoaded', () => showAuthScreen('{{ open_scre
       if (!failedCheck) {
         errNote.style.display = 'none';
       } else {
-        errNote.textContent = '⚠ Please enter a valid birth date.';
+        errNote.textContent = '⚠ ' + birthdayMessage();
         errNote.style.display = 'block';
       }
     }
@@ -707,9 +772,9 @@ document.addEventListener('DOMContentLoaded', () => showAuthScreen('{{ open_scre
         if (bdayInput.reportValidity) bdayInput.reportValidity();
       }
       if (typeof showToast === 'function') {
-        showToast('Please enter a valid birth date.', 'error');
+        showToast(birthdayMessage(), 'error');
       } else {
-        alert('Please enter a valid birth date.');
+        alert(birthdayMessage());
       }
     }
   }, true);
