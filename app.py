@@ -25,7 +25,7 @@ from markupsafe import Markup, escape
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
 from sqlalchemy.orm import joinedload
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, IntegrityError
 from flask_mail import Mail, Message
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -1314,6 +1314,11 @@ class User(db.Model):
     password = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(10), nullable=False, default='member')
     status = db.Column(db.String(15), nullable=False, default='pending')
+    # Email-OTP verification gate. Defaults to TRUE (server-side too) so every
+    # account created by staff/admin/seed — and every pre-existing account —
+    # stays usable. Only self-registration (/register) sets it to False, and
+    # login is refused for such members until /api/register/verify-otp succeeds.
+    email_verified = db.Column(db.Boolean, nullable=False, default=True, server_default=text('1'))
     # Web-relative path under /static — e.g. 'uploads/profile_pictures/xxxx.jpg'.
     # Required at self-registration for members (see /register); nullable here
     # since existing/seeded accounts predate this field.
@@ -1360,6 +1365,24 @@ class User(db.Model):
 
     def __repr__(self):
         return f"<User {self.id} {self.email} [{self.role}]>"
+
+
+class EmailVerificationOtp(db.Model):
+    """One row per unverified user holding the HASHED signup code. Issuing a new
+    code overwrites the row's hash/expiry/attempts, which is what invalidates the
+    previous code. The row is deleted when the email is verified (or with the user).
+    The send_count / send_window_start pair backs the 'max resends per hour' limit
+    and deliberately survives a lock-out so burning attempts can't reset it."""
+    __tablename__ = 'email_verification_otps'
+    id                = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id           = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'),
+                                  nullable=False, unique=True)
+    otp_hash          = db.Column(db.String(255), nullable=False)
+    expires_at        = db.Column(db.DateTime, nullable=False)
+    attempts          = db.Column(db.Integer, nullable=False, default=0)
+    last_sent_at      = db.Column(db.DateTime, nullable=False)
+    send_count        = db.Column(db.Integer, nullable=False, default=1)
+    send_window_start = db.Column(db.DateTime, nullable=False)
 
 
 class MembershipPlan(db.Model):
@@ -3259,6 +3282,19 @@ def login():
         if user is None or not check_password_hash(user.password, password):
             return _fail('Invalid credentials.')
 
+        # Email-OTP gate: right password, but the address was never verified.
+        # Checked only AFTER the password so this never reveals anything to
+        # someone who doesn't know it. The front-end reacts to
+        # needs_verification by opening the "Verify Your Email" screen and
+        # asking /api/register/resend-otp for a fresh code.
+        if user.role == 'member' and not user.email_verified:
+            msg = 'Please verify your email address before signing in. We can send you a new code.'
+            if is_ajax:
+                return jsonify(success=False, needs_verification=True, error=msg,
+                               email=user.email, email_masked=_mask_email(user.email)), 403
+            flash(msg, 'error')
+            return redirect(url_for('home', screen='login'))
+
         session['user_id'] = user.id
         session['role']    = user.role
         session['email']   = user.email
@@ -4036,6 +4072,265 @@ def reset_password(token):
     return render_template('reset-password.html', token=token)
 
 
+# ── Email OTP verification (self-registration) ──────────────
+# Separate from the password-reset OTP above (User.reset_otp*): that one is
+# keyed on the User row and uses OTP_MAX_ATTEMPTS=3; this one lives in its own
+# table and has its own limits.
+EMAIL_OTP_VALID_MINUTES    = 10     # a code is good for 10 minutes
+EMAIL_OTP_MAX_ATTEMPTS     = 5      # wrong guesses per code before it is invalidated
+EMAIL_OTP_RESEND_COOLDOWN  = 60     # seconds between sends
+EMAIL_OTP_MAX_RESENDS_HOUR = 5      # resends per rolling hour (on top of the first send)
+UNVERIFIED_ACCOUNT_MAX_AGE_HOURS = 24
+
+
+def _mask_email(email):
+    """'eugene@gmail.com' -> 'e***e@gmail.com' (first + last char of the local part)."""
+    local, _, domain = (email or '').partition('@')
+    if not domain:
+        return email or ''
+    masked = (local[:1] + '***') if len(local) <= 2 else (local[0] + '***' + local[-1])
+    return f'{masked}@{domain}'
+
+
+def _verification_email_html(first_name, otp):
+    """Simple branded (dark + red #ff1f2d) HTML email carrying the 6-digit code."""
+    name = escape(first_name or 'there')
+    digits = ''.join(
+        f'<td style="padding:0 3px;"><div style="width:42px;height:54px;line-height:54px;'
+        f'text-align:center;font-size:28px;font-weight:700;color:#ffffff;background:#1c1c1c;'
+        f'border:1px solid #ff1f2d;border-radius:8px;font-family:Arial,Helvetica,sans-serif;">{d}</div></td>'
+        for d in otp
+    )
+    return f"""\
+<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#0a0a0a;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;padding:32px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="440" cellpadding="0" cellspacing="0"
+             style="max-width:440px;width:100%;background:#141414;border:1px solid #2a2a2a;border-radius:14px;
+                    overflow:hidden;font-family:Arial,Helvetica,sans-serif;">
+        <tr><td style="background:#ff1f2d;height:5px;font-size:0;line-height:0;">&nbsp;</td></tr>
+        <tr><td align="center" style="padding:28px 28px 6px;">
+          <div style="font-size:22px;font-weight:800;letter-spacing:3px;color:#ffffff;">
+            POWER <span style="color:#ff1f2d;">GYM</span>
+          </div>
+        </td></tr>
+        <tr><td align="center" style="padding:14px 28px 0;">
+          <div style="font-size:18px;font-weight:700;color:#ffffff;">Verify your email</div>
+          <div style="font-size:14px;color:#b5b5b5;line-height:1.6;margin-top:10px;">
+            Hi {name}, enter this code to finish creating your account:
+          </div>
+        </td></tr>
+        <tr><td align="center" style="padding:22px 12px 8px;">
+          <table role="presentation" cellpadding="0" cellspacing="0"><tr>{digits}</tr></table>
+        </td></tr>
+        <tr><td align="center" style="padding:14px 28px 30px;">
+          <div style="font-size:13px;color:#b5b5b5;line-height:1.6;">
+            This code expires in <strong style="color:#ffffff;">{EMAIL_OTP_VALID_MINUTES} minutes</strong>.<br>
+            If you didn&#39;t request this, ignore this email.
+          </div>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>
+"""
+
+
+def _send_verification_email(user, otp):
+    """Send the signup code via the SMTP settings in the MAIL_* environment
+    variables (see the Flask-Mail block near the top). Synchronous on purpose so
+    the caller can tell the visitor when delivery failed. Returns True/False.
+
+    If MAIL_USERNAME / MAIL_PASSWORD are not configured this falls back to
+    printing the code in the server console (same dev-mode behaviour as the
+    password-reset email), so the flow stays testable locally."""
+    if not (app.config.get('MAIL_USERNAME') and app.config.get('MAIL_PASSWORD')):
+        print(f"[DEV] Email not configured. Verification code for {user.email}: {otp}")
+        return True
+    try:
+        msg = Message(
+            subject='Your Power Gym verification code',
+            recipients=[user.email],
+            body=(
+                f"Hi {user.first_name},\n\n"
+                f"Your Power Gym verification code is: {otp}\n\n"
+                f"This code expires in {EMAIL_OTP_VALID_MINUTES} minutes. "
+                f"If you didn't request this, ignore this email."
+            ),
+            html=_verification_email_html(user.first_name, otp),
+        )
+        mail.send(msg)
+        return True
+    except Exception as e:
+        print(f"[MAIL ERROR] Could not send verification code to {user.email}: {type(e).__name__}: {e}")
+        return False
+
+
+def _email_otp_timers(row, now):
+    """Seconds left on the code and on the resend cooldown, for the countdowns in the UI."""
+    expires_in = 0
+    if row is not None and (row.attempts or 0) < EMAIL_OTP_MAX_ATTEMPTS:
+        expires_in = max(0, int((row.expires_at - now).total_seconds()))
+    resend_in = 0
+    if row is not None:
+        resend_in = max(0, int(EMAIL_OTP_RESEND_COOLDOWN - (now - row.last_sent_at).total_seconds() + 0.999))
+    return expires_in, resend_in
+
+
+def _issue_email_otp(user):
+    """Create/replace the signup code for `user` and email it. Does NOT commit —
+    the caller commits on success or rolls back, so a failed email send leaves
+    no half-updated state. Returns a dict with 'status':
+      'sent'        new code generated, hashed, stored and emailed
+      'cooldown'    a code was sent < 60s ago; nothing new was sent
+      'limit'       5 resends in the last hour already; nothing new was sent
+      'send_failed' SMTP failed (caller should roll back)
+    plus 'expires_in' / 'resend_in' seconds (and 'error' for 'limit')."""
+    now = _now()
+    row = (EmailVerificationOtp.query.filter_by(user_id=user.id).with_for_update().first()
+           if user.id is not None else None)
+
+    if row is not None:
+        if (now - row.last_sent_at).total_seconds() < EMAIL_OTP_RESEND_COOLDOWN:
+            expires_in, resend_in = _email_otp_timers(row, now)
+            return {'status': 'cooldown', 'expires_in': expires_in, 'resend_in': resend_in,
+                    'error': f'Please wait {resend_in} seconds before requesting another code.'}
+        if now - row.send_window_start >= timedelta(hours=1):
+            row.send_count = 0
+            row.send_window_start = now
+        if row.send_count >= 1 + EMAIL_OTP_MAX_RESENDS_HOUR:      # first send + 5 resends
+            wait_min = max(1, int((row.send_window_start + timedelta(hours=1) - now).total_seconds() // 60) + 1)
+            expires_in, resend_in = _email_otp_timers(row, now)
+            return {'status': 'limit', 'expires_in': expires_in, 'resend_in': resend_in,
+                    'error': f'Too many codes requested. Please try again in about {wait_min} minute(s).'}
+
+    otp = _generate_otp()                                        # secrets.choice — CSPRNG
+    otp_hash = generate_password_hash(otp)                       # salted hash; plain code is never stored
+    expires_at = now + timedelta(minutes=EMAIL_OTP_VALID_MINUTES)
+    if row is None:
+        row = EmailVerificationOtp(user_id=user.id, otp_hash=otp_hash, expires_at=expires_at,
+                                   attempts=0, last_sent_at=now, send_count=1, send_window_start=now)
+        db.session.add(row)
+    else:
+        # Overwriting the row is what invalidates the previous code.
+        row.otp_hash     = otp_hash
+        row.expires_at   = expires_at
+        row.attempts     = 0
+        row.last_sent_at = now
+        row.send_count   = (row.send_count or 0) + 1
+
+    if not _send_verification_email(user, otp):
+        return {'status': 'send_failed', 'expires_in': 0, 'resend_in': 0}
+    expires_in, resend_in = _email_otp_timers(row, now)
+    return {'status': 'sent', 'expires_in': expires_in, 'resend_in': resend_in}
+
+
+@app.route('/api/register/verify-otp', methods=['POST'])
+def api_register_verify_otp():
+    data  = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
+    code  = str(data.get('code') or '').strip()
+
+    user = User.query.filter_by(email=email, role='member').first() if email else None
+    if user is None:
+        return jsonify(success=False, code='no_code',
+                       error='No active code for this email. Please request a new one.'), 400
+    if user.email_verified:
+        return jsonify(success=True, message='Your email is already verified. You can sign in.')
+
+    # Row lock so two parallel guesses can't both read the same attempt counter.
+    row = EmailVerificationOtp.query.filter_by(user_id=user.id).with_for_update().first()
+    if row is None:
+        return jsonify(success=False, code='no_code',
+                       error='No active code. Please request a new one.'), 400
+
+    now = _now()
+    if (row.attempts or 0) >= EMAIL_OTP_MAX_ATTEMPTS:
+        db.session.rollback()
+        return jsonify(success=False, code='locked',
+                       error='Too many incorrect attempts. Please request a new code.'), 400
+    if row.expires_at <= now:
+        db.session.rollback()
+        return jsonify(success=False, code='expired',
+                       error='Code expired. Please request a new one.'), 400
+
+    if not (len(code) == 6 and code.isdigit() and check_password_hash(row.otp_hash, code)):
+        row.attempts = (row.attempts or 0) + 1
+        left = EMAIL_OTP_MAX_ATTEMPTS - row.attempts
+        db.session.commit()
+        if left <= 0:
+            # Invalidated: the row stays (attempts == max) so the resend counters
+            # survive, but no guess can match it any more — a resend is required.
+            return jsonify(success=False, code='locked',
+                           error='Too many incorrect attempts. Please request a new code.'), 400
+        return jsonify(success=False, code='invalid', attempts_left=left,
+                       error=f"Invalid code. {left} attempt{'s' if left != 1 else ''} left."), 400
+
+    # ── Correct and not expired: activate the account, delete the OTP record ──
+    user.email_verified = True
+    user.status = 'active'
+    db.session.delete(row)
+    db.session.commit()
+    return jsonify(success=True, message='Email verified! You can now sign in.')
+
+
+@app.route('/api/register/resend-otp', methods=['POST'])
+def api_register_resend_otp():
+    data  = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
+
+    user = User.query.filter_by(email=email, role='member').first() if email else None
+    if user is None:
+        return jsonify(success=False, error='We could not find a pending registration for this email.'), 404
+    if user.email_verified:
+        return jsonify(success=False, code='verified',
+                       error='This email is already verified. Please sign in.'), 400
+
+    result = _issue_email_otp(user)
+    if result['status'] == 'sent':
+        db.session.commit()
+        return jsonify(success=True, expires_in=result['expires_in'], resend_in=result['resend_in'])
+
+    db.session.rollback()
+    if result['status'] == 'send_failed':
+        return jsonify(success=False,
+                       error='We could not send the email right now. Please try again shortly.'), 502
+    return jsonify(success=False, code=result['status'], error=result['error'],
+                   expires_in=result['expires_in'], resend_in=result['resend_in']), 429
+
+
+def _cleanup_unverified_accounts():
+    """Delete self-registered members who never verified within 24 hours (and their
+    OTP rows + uploaded photo). Safe to run any time; returns how many were removed.
+    Runs hourly from a background thread (see __main__), as a throttled fallback on
+    page requests, and standalone via cleanup_unverified.py for cron."""
+    cutoff = _now() - timedelta(hours=UNVERIFIED_ACCOUNT_MAX_AGE_HOURS)
+    stale = User.query.filter(
+        User.role == 'member',
+        User.email_verified.is_(False),
+        User.created_at < cutoff,
+    ).all()
+    removed = 0
+    for u in stale:
+        picture = u.profile_picture
+        EmailVerificationOtp.query.filter_by(user_id=u.id).delete(synchronize_session=False)
+        db.session.delete(u)
+        removed += 1
+        try:
+            db.session.commit()
+            _delete_content_image(picture)
+        except Exception as e:
+            db.session.rollback()
+            removed -= 1
+            print(f"[CLEANUP] Could not remove unverified account {u.id}: {e}")
+    if removed:
+        print(f"[CLEANUP] Removed {removed} unverified account(s) older than {UNVERIFIED_ACCOUNT_MAX_AGE_HOURS}h")
+    return removed
+
+
 @app.route('/register', methods=['POST'])
 def register():
     # Switched from JSON to multipart/form-data since registration now
@@ -4098,7 +4393,12 @@ def register():
         return jsonify(success=False, error='Emergency contact relationship can only contain letters (max 40 characters).'), 400
     emergency_relationship = emergency_relationship[:1].upper() + emergency_relationship[1:]
 
-    if User.query.filter_by(email=email).first() is not None:
+    # An email that already belongs to a VERIFIED account (or to staff/admin)
+    # can never be registered again. An email that is only PENDING (a member who
+    # registered but never entered the code) may register again: that refreshes
+    # the pending account with the newly submitted details and sends a code.
+    existing = User.query.filter_by(email=email).first()
+    if existing is not None and not (existing.role == 'member' and not existing.email_verified):
         return jsonify(success=False, error='An account with this email already exists.'), 409
 
     try:
@@ -4106,28 +4406,83 @@ def register():
     except ValueError as e:
         return jsonify(success=False, error=str(e)), 400
 
-    # ── Create the user ──
-    new_user = User(
-        first_name=first_name,
-        middle_initial=middle_initial or None,
-        last_name=last_name,
-        extension_name=extension_name or None,
-        email=email,
-        phone=phone or None,
-        birthday=birthday_date,
-        emergency_contact_number=emergency_number,
-        emergency_contact_relationship=emergency_relationship,
-        password=generate_password_hash(password),
-        role='member',
-        status='pending',
-        profile_picture=profile_picture_path,
-        # Starts the change-cooldown from day one (see PROFILE_PICTURE_COOLDOWN_DAYS).
-        profile_picture_updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
-    )
-    db.session.add(new_user)
-    db.session.commit()
+    now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+    old_picture_path = None
+    if existing is not None:
+        # ── Re-registering a pending (unverified) email: update that row ──
+        new_user = existing
+        old_picture_path = existing.profile_picture
+        new_user.first_name = first_name
+        new_user.middle_initial = middle_initial or None
+        new_user.last_name = last_name
+        new_user.extension_name = extension_name or None
+        new_user.phone = phone or None
+        new_user.birthday = birthday_date
+        new_user.emergency_contact_number = emergency_number
+        new_user.emergency_contact_relationship = emergency_relationship
+        new_user.password = generate_password_hash(password)
+        new_user.profile_picture = profile_picture_path
+        new_user.profile_picture_updated_at = now_naive
+        new_user.created_at = now_naive          # restarts the 24h clean-up window
+    else:
+        # ── Create the user: NOT verified, NOT usable until the code is entered ──
+        new_user = User(
+            first_name=first_name,
+            middle_initial=middle_initial or None,
+            last_name=last_name,
+            extension_name=extension_name or None,
+            email=email,
+            phone=phone or None,
+            birthday=birthday_date,
+            emergency_contact_number=emergency_number,
+            emergency_contact_relationship=emergency_relationship,
+            password=generate_password_hash(password),
+            role='member',
+            status='pending',
+            email_verified=False,
+            profile_picture=profile_picture_path,
+            # Starts the change-cooldown from day one (see PROFILE_PICTURE_COOLDOWN_DAYS).
+            profile_picture_updated_at=now_naive,
+        )
+        db.session.add(new_user)
 
-    return jsonify(success=True, message='Account created! Sign in and pick a plan from your dashboard.')
+    def _abort(resp):
+        db.session.rollback()
+        _delete_content_image(profile_picture_path)     # discard the just-saved upload
+        return resp
+
+    try:
+        db.session.flush()                              # assigns new_user.id (and trips the UNIQUE email guard)
+    except IntegrityError:
+        return _abort((jsonify(success=False, error='An account with this email already exists.'), 409))
+
+    # ── Generate + hash + email the 6-digit code (see _issue_email_otp) ──
+    result = _issue_email_otp(new_user)
+    if result['status'] == 'send_failed':
+        return _abort((jsonify(success=False,
+                               error='We could not send the verification email right now. Please try again shortly.'), 502))
+    if result['status'] == 'limit':
+        return _abort((jsonify(success=False, code='limit', error=result['error']), 429))
+    # 'sent' -> fresh code mailed; 'cooldown' -> a code was mailed seconds ago and is
+    # still valid, so we don't mail another (the details above are still refreshed).
+
+    try:
+        db.session.commit()
+    except IntegrityError:
+        return _abort((jsonify(success=False, error='An account with this email already exists.'), 409))
+
+    if old_picture_path and old_picture_path != profile_picture_path:
+        _delete_content_image(old_picture_path)
+
+    return jsonify(
+        success=True,
+        needs_verification=True,
+        message='We sent a 6-digit code to your email. Enter it to activate your account.',
+        email=new_user.email,
+        email_masked=_mask_email(new_user.email),
+        expires_in=result['expires_in'],
+        resend_in=result['resend_in'],
+    )
 
 
 def _generate_temp_password(length=10):
@@ -10163,7 +10518,7 @@ def _membership_report():
 
     today = _today_manila()
     month_start = datetime.combine(date(today.year, today.month, 1), datetime.min.time())
-    new_this_month = User.query.filter(User.role == 'member', User.created_at >= month_start).count()
+    new_this_month = User.query.filter(User.role == 'member', User.email_verified.is_(True), User.created_at >= month_start).count()
 
     return {
         'total_members': len(members),
@@ -10559,7 +10914,7 @@ def _get_members_with_plans():
         db.session.query(User, Membership, MembershipPlan)
         .outerjoin(Membership, Membership.member_id == User.id)
         .outerjoin(MembershipPlan, MembershipPlan.id == Membership.plan_id)
-        .filter(User.role == 'member')
+        .filter(User.role == 'member', User.email_verified.is_(True))
         .order_by(User.id.desc())
         .all()
     )
@@ -11643,6 +11998,9 @@ def _run_startup_migrations():
         ('users', 'emergency_contact_number',       "ALTER TABLE users ADD COLUMN emergency_contact_number VARCHAR(20) NULL"),
         ('users', 'emergency_contact_relationship', "ALTER TABLE users ADD COLUMN emergency_contact_relationship VARCHAR(40) NULL"),
         ('users', 'staff_notes',                    "ALTER TABLE users ADD COLUMN staff_notes TEXT NULL"),
+        # ── Email OTP verification. DEFAULT 1 marks every EXISTING account as
+        #    verified so nobody (members, staff, admin) is locked out. ──
+        ('users', 'email_verified',                 "ALTER TABLE users ADD COLUMN email_verified TINYINT(1) NOT NULL DEFAULT 1"),
         # ── Walk-in guests optionally availing a coach for their visit ──
         ('walk_ins', 'wants_coach', "ALTER TABLE walk_ins ADD COLUMN wants_coach TINYINT(1) NOT NULL DEFAULT 0"),
         ('walk_ins', 'coach_name',  "ALTER TABLE walk_ins ADD COLUMN coach_name VARCHAR(60) NULL"),
@@ -12189,6 +12547,40 @@ def _unpaid_sweep_loop():
         _run_unpaid_sweep_once()
 
 
+_UNVERIFIED_CLEANUP_LOOP_SECONDS = 3600
+_unverified_cleanup_last = 0.0
+
+
+def _run_unverified_cleanup_once():
+    """Throttled, never raises — used by the hourly thread and the request fallback."""
+    global _unverified_cleanup_last
+    _unverified_cleanup_last = time.time()
+    try:
+        with app.app_context():
+            _cleanup_unverified_accounts()
+    except Exception as e:
+        print(f"[CLEANUP] unverified-account sweep failed: {type(e).__name__}: {e}")
+
+
+def _unverified_cleanup_loop():
+    while True:
+        _run_unverified_cleanup_once()
+        time.sleep(_UNVERIFIED_CLEANUP_LOOP_SECONDS)
+
+
+@app.before_request
+def _unverified_cleanup_on_request():
+    """Fallback for hosts that don't keep background threads alive (gunicorn
+    workers etc.): at most once an hour, a page request kicks off the sweep on
+    its own thread. Real deployments can also run cleanup_unverified.py from cron."""
+    global _unverified_cleanup_last
+    if request.path.startswith('/static/'):
+        return
+    if time.time() - _unverified_cleanup_last >= _UNVERIFIED_CLEANUP_LOOP_SECONDS:
+        _unverified_cleanup_last = time.time()
+        _threading.Thread(target=_run_unverified_cleanup_once, daemon=True).start()
+
+
 @app.before_request
 def _unpaid_sweep_on_request():
     """Fallback for hosts that don't keep background threads alive: any page
@@ -12217,6 +12609,7 @@ if __name__ == '__main__':
     # should run it.
     if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
         _threading.Thread(target=_unpaid_sweep_loop, daemon=True).start()
+        _threading.Thread(target=_unverified_cleanup_loop, daemon=True).start()
     # threaded=True lets the dev server handle multiple requests at once
     # instead of one at a time. Without it, every asset a page needs (CSS,
     # JS, fonts, images) gets served sequentially even though the browser
