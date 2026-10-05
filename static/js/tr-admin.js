@@ -118,7 +118,6 @@ const AdminModule = (() => {
     const extensionName = _val('add-member-ext');
     const email     = _val('add-member-email');
     const phone     = _val('add-member-phone');
-    const ecName    = _val('add-member-ec-name');
     const ecRel     = _ecRelationship('add-member');
     const ecNumber  = _val('add-member-ec-phone');
     const planText  = document.getElementById('add-member-plan')?.value || 'Monthly';
@@ -152,7 +151,6 @@ const AdminModule = (() => {
         extension_name: extensionName,
         email:          email,
         phone:          phone,
-        emergency_contact_name:         ecName,
         emergency_contact_relationship: ecRel,
         emergency_contact_number:       ecNumber,
         plan:           planName
@@ -178,7 +176,6 @@ const AdminModule = (() => {
           row.dataset.middleInitial = m.middle_initial || '';
           row.dataset.lastName      = m.last_name || '';
           row.dataset.extensionName = m.extension_name || '';
-          row.dataset.emergencyName         = m.emergency_name || '';
           row.dataset.emergencyRelationship = m.emergency_relationship || '';
           row.dataset.emergencyPhone        = m.emergency_number || '';
           row.innerHTML = `
@@ -196,7 +193,7 @@ const AdminModule = (() => {
         }
 
         closeModal('add-member-modal');
-        ['add-member-fname', 'add-member-mi', 'add-member-lname', 'add-member-ext', 'add-member-email', 'add-member-phone', 'add-member-ec-name', 'add-member-ec-phone'].forEach(id => {
+        ['add-member-fname', 'add-member-mi', 'add-member-lname', 'add-member-ext', 'add-member-email', 'add-member-phone', 'add-member-ec-phone'].forEach(id => {
           const el = document.getElementById(id);
           if (el) el.value = '';
         });
@@ -228,7 +225,6 @@ const AdminModule = (() => {
     document.getElementById('edit-member-ext').value    = row.dataset.extensionName || '';
     document.getElementById('edit-member-email').value  = cells[2].textContent.trim();
     document.getElementById('edit-member-phone').value  = row.dataset.phone || '';
-    document.getElementById('edit-member-ec-name').value  = row.dataset.emergencyName || '';
     document.getElementById('edit-member-ec-phone').value = row.dataset.emergencyPhone || '';
     _setEcRelationship('edit-member', row.dataset.emergencyRelationship || '');
     document.getElementById('edit-member-expiry').value = row.dataset.expiryIso || '';
@@ -251,7 +247,6 @@ const AdminModule = (() => {
     const extensionName = _val('edit-member-ext');
     const email     = _val('edit-member-email');
     const phone     = _val('edit-member-phone');
-    const ecName    = _val('edit-member-ec-name');
     const ecRel     = _ecRelationship('edit-member');
     const ecNumber  = _val('edit-member-ec-phone');
     const planText  = document.getElementById('edit-member-plan')?.value || '';
@@ -286,7 +281,6 @@ const AdminModule = (() => {
         extension_name: extensionName,
         email:          email,
         phone:          phone,
-        emergency_contact_name:         ecName,
         emergency_contact_relationship: ecRel,
         emergency_contact_number:       ecNumber,
         plan:           planName,
@@ -316,7 +310,6 @@ const AdminModule = (() => {
           row.dataset.middleInitial = m.middle_initial || '';
           row.dataset.lastName      = m.last_name || '';
           row.dataset.extensionName = m.extension_name || '';
-          row.dataset.emergencyName         = m.emergency_name || '';
           row.dataset.emergencyRelationship = m.emergency_relationship || '';
           row.dataset.emergencyPhone        = m.emergency_number || '';
         }

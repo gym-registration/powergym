@@ -1605,9 +1605,6 @@
       g1.appendChild(card('Sex', [m.sex]));
       var ec = [m.emergency_number];
       if (m.emergency_number && m.emergency_relationship) ec.push('(' + m.emergency_relationship + ')');
-      if (m.emergency_name) {
-        ec = [m.emergency_name, [m.emergency_number, m.emergency_relationship ? '(' + m.emergency_relationship + ')' : ''].filter(Boolean).join(' ')];
-      }
       g1.appendChild(card('Emergency Contact', ec));
       body.appendChild(g1);
 
@@ -1616,25 +1613,6 @@
       g2.appendChild(card('Plan', [m.plan]));
       g2.appendChild(card('Expiry Date', [m.expiry]));
       body.appendChild(g2);
-
-      body.appendChild(section('Additional Notes'));
-      var ta = el('textarea', 'width:100%;box-sizing:border-box;min-height:90px;resize:vertical;background:rgba(255,255,255,0.03);border:1px solid rgba(61,125,212,0.25);border-radius:10px;padding:12px;color:var(--white);font-family:inherit;font-size:15px;');
-      ta.id = 'member-detail-notes'; ta.maxLength = 2000; ta.placeholder = 'No additional notes.'; ta.value = m.notes || '';
-      body.appendChild(ta);
-      var row = el('div', 'display:flex;align-items:center;gap:12px;margin-top:10px;');
-      var btn = el('button', '', 'SAVE NOTES'); btn.type = 'button'; btn.className = 'btn btn-outline btn-sm';
-      var msg = el('span', 'font-size:13px;color:var(--muted);');
-      btn.onclick = function () {
-        btn.disabled = true; msg.textContent = 'Saving…';
-        fetch('/staff/member/' + m.id + '/notes', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ notes: ta.value })
-        }).then(function (r) { return r.json(); }).then(function (d) {
-          btn.disabled = false; msg.textContent = d.success ? 'Saved.' : (d.error || 'Could not save.');
-        }).catch(function () { btn.disabled = false; msg.textContent = 'Could not save.'; });
-      };
-      row.appendChild(btn); row.appendChild(msg);
-      body.appendChild(row);
     }
 
     window.openMemberDetail = function (id, tr) {
