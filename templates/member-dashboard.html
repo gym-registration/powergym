@@ -961,9 +961,10 @@
                 <label class="form-label" for="fw-activity">Activity Level</label>
                 <select class="form-input" id="fw-activity" onchange="updateActivityHelperText()" {{ 'disabled' if not plan_active }}>
                   <option value="" hidden disabled {{ 'selected' if not (fitness_profile and fitness_profile.activity_level) }}>Select</option>
-                  <option value="low_activity"      {{ 'selected' if fitness_profile and fitness_profile.activity_level == 'low_activity' }}>Low Activity</option>
-                  <option value="moderate_activity" {{ 'selected' if fitness_profile and fitness_profile.activity_level == 'moderate_activity' }}>Moderate Activity</option>
-                  <option value="high_activity"     {{ 'selected' if fitness_profile and fitness_profile.activity_level == 'high_activity' }}>High Activity</option>
+                  <option value="low_activity"      {{ 'selected' if fitness_profile and (fitness_profile.activity_level == 'low_activity' or (member_age is not none and (member_age < 18 or member_age >= 50))) }}>Low Activity</option>
+                  {% set light_only = member_age is not none and (member_age < 18 or member_age >= 50) %}
+                  <option value="moderate_activity" {{ 'selected' if fitness_profile and fitness_profile.activity_level == 'moderate_activity' and not light_only }} {{ 'disabled' if light_only }}>Moderate Activity{{ ' (not available for your age)' if light_only }}</option>
+                  <option value="high_activity"     {{ 'selected' if fitness_profile and fitness_profile.activity_level == 'high_activity' and not light_only }} {{ 'disabled' if light_only }}>High Activity{{ ' (not available for your age)' if light_only }}</option>
                 </select>
                 <div id="fw-activity-helper" class="fw-field-helper" style="font-size:12px;color:var(--goals-muted, var(--muted));margin-top:6px;line-height:1.4;">Select your typical weekly activity level.</div>
               </div>
@@ -1055,6 +1056,8 @@
             <div style="font-size:13px;color:var(--goals-muted, var(--muted));margin-bottom:14px;">
               Select the muscle group or training split to personalize your workout routine and exercise catalog.
             </div>
+
+            <div id="fw-plan-tier-note" style="display:none;font-size:13px;line-height:1.5;margin-bottom:14px;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,193,7,.35);background:rgba(255,193,7,.08);color:var(--white);"></div>
 
             <div class="workout-goal-list" id="fw-goal-grid" role="radiogroup" aria-label="Workout focus options">
               <!-- Full Body -->

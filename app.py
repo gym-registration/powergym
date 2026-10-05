@@ -4256,6 +4256,37 @@ def _calculate_age(birthday):
 app.jinja_env.filters['age'] = _calculate_age
 
 
+# ── Age-based activity restriction ──
+# Members UNDER 18 and members aged 50 AND ABOVE are limited to the Low
+# Activity tier and a light workout plan: no Moderate / High activity levels,
+# fewer training days, fewer sets, and no heavy / advanced lifts. Members with
+# no birthday on file yet are not restricted here (Step 1 requires a birthday
+# before the profile can be saved).
+FITNESS_LIGHT_ONLY_BELOW_AGE = 18
+FITNESS_LIGHT_ONLY_FROM_AGE  = 50
+FITNESS_LIGHT_ACTIVITY_LEVEL = 'low_activity'
+FITNESS_LIGHT_ACTIVITY_NOTICE = (
+    'For your age group, we recommend light workouts only, so Low Activity is '
+    'the available activity level.'
+)
+
+
+def _is_light_only_age(age):
+    """True when the member's age requires light workouts only (< 18 or >= 50)."""
+    if age is None:
+        return False
+    return age < FITNESS_LIGHT_ONLY_BELOW_AGE or age >= FITNESS_LIGHT_ONLY_FROM_AGE
+
+
+def _effective_activity_level(age, activity_level):
+    """The activity level actually used for calculations and recommendations.
+    Light-only ages are always forced to Low Activity, even if an older saved
+    profile still holds Moderate / High."""
+    if _is_light_only_age(age):
+        return FITNESS_LIGHT_ACTIVITY_LEVEL
+    return activity_level
+
+
 # ── Stage 3 — deterministic fitness calculations ──
 # Pure arithmetic, no AI. These constants and this function are the ONLY
 # place BMI/BMR/TDEE/calorie/protein targets are computed for this feature.
@@ -4567,11 +4598,21 @@ def _goal_tagged_exercises(goal):
     ]
 
 
-def _select_exercises_for_goal(goal):
+def _select_exercises_for_goal(goal, excluded_names=None):
     """Filters the Exercise catalog specifically for the chosen workout focus
     (e.g. Chest, Back, Arms, Legs, Core, Shoulders, or Full Body). Used by
-    _recommend_workouts() and the AI coach summary."""
+    _recommend_workouts() and the AI coach summary. excluded_names removes
+    exercises that are not suitable for the member's age / activity tier
+    BEFORE the list is trimmed, so the member still gets a full list."""
+    excluded = set(excluded_names or ())
     goal = FITNESS_LEGACY_GOAL_ALIASES.get(goal, goal)
+
+    def _active():
+        q = Exercise.query.filter_by(is_active=True)
+        if excluded:
+            q = q.filter(~Exercise.name.in_(list(excluded)))
+        return q
+
     if goal in FITNESS_TARGET_AREA_MAP:
         target_areas = FITNESS_TARGET_AREA_MAP[goal]
         if goal == 'FULL_BODY':
@@ -4580,35 +4621,31 @@ def _select_exercises_for_goal(goal):
                 'Lat Pulldown', 'Overhead Shoulder Press', 'Dumbbell Bicep Curl',
                 'Tricep Rope Pushdown', 'Plank'
             ]
-            compounds = Exercise.query.filter_by(is_active=True).filter(Exercise.name.in_(compound_names)).all()
+            compounds = _active().filter(Exercise.name.in_(compound_names)).all()
             if len(compounds) >= 5:
                 return compounds[:8]
-            return Exercise.query.filter_by(is_active=True).order_by(Exercise.id).limit(8).all()
-        return Exercise.query.filter_by(is_active=True).filter(Exercise.target_area.in_(target_areas)).order_by(Exercise.id).limit(8).all()
+            return _active().order_by(Exercise.id).limit(8).all()
+        return _active().filter(Exercise.target_area.in_(target_areas)).order_by(Exercise.id).limit(8).all()
 
     # Legacy fallback
-    return _goal_tagged_exercises(goal)[:8]
+    return [e for e in _goal_tagged_exercises(goal) if e.name not in excluded][:8]
 
 
-# ── Weekly workout SCHEDULE is now fixed for every member, regardless of
-# activity level — a consistent 6-training-day / 1-rest-day week, with Day
-# 4 always the rest day and the same Chest&Legs/Back&Arms/Shoulders&Core
-# rotation repeating twice. Activity Level no longer affects which days
-# train vs rest — see FITNESS_ACTIVITY_SET_TIER below for what it DOES
-# still control (set count only).
-FITNESS_WEEKLY_SCHEDULE = [
-    ('train', 'Chest & Legs',      ['Chest', 'Legs']),
-    ('train', 'Back & Arms',       ['Back', 'Arms']),
-    ('train', 'Shoulders & Core',  ['Shoulders', 'Core']),
-    ('rest',  'Rest / Recovery',   None),
-    ('train', 'Chest & Legs',      ['Chest', 'Legs']),
-    ('train', 'Back & Arms',       ['Back', 'Arms']),
-    ('train', 'Shoulders & Core',  ['Shoulders', 'Core']),
-]
+# ── Weekly workout PLAN TIERS. The plan a member receives depends on BOTH
+# their age and the activity level they selected:
+#   light  (under 18 / 50+)  → 3 gentle days, 3 exercises/day, 2 sets, no heavy lifts
+#   low_activity     (adult) → 3 days,        4 exercises/day, 2 sets, no advanced lifts
+#   moderate_activity(adult) → 4 days,        4 exercises/day, 3 sets
+#   high_activity    (adult) → 6 days,        5 exercises/day, 4 sets
+# Reps are never touched; Exercise.default_reps is always used as stored.
+_CL = ('train', 'Chest & Legs',      ['Chest', 'Legs'])
+_BA = ('train', 'Back & Arms',       ['Back', 'Arms'])
+_SC = ('train', 'Shoulders & Core',  ['Shoulders', 'Core'])
+_RS = ('rest',  'Rest / Recovery',   None)
 
-# Activity Level now ONLY affects workout INTENSITY (how many sets per
-# exercise) — never the schedule above. Reps are never touched here or
-# anywhere else; Exercise.default_reps is always used exactly as stored.
+# Kept for backward compatibility: the full 6-day schedule used by High Activity.
+FITNESS_WEEKLY_SCHEDULE = [_CL, _BA, _SC, _RS, _CL, _BA, _SC]
+
 FITNESS_ACTIVITY_SET_TIER = {
     'low_activity':      2,  # Tier 1 — Beginner / Light
     'moderate_activity': 3,  # Tier 2 — Moderate
@@ -4620,10 +4657,111 @@ FITNESS_MAX_EXERCISES_PER_DAY = 5
 
 FITNESS_REST_DAY_NOTE = 'Allow your muscles to recover and avoid unnecessary training on this day.'
 
+# Light schedule: 3 training days with a rest day between sessions.
+FITNESS_LIGHT_WEEKLY_SCHEDULE = [_CL, _RS, _BA, _RS, _SC, _RS, _RS]
+FITNESS_LIGHT_MAX_EXERCISES_PER_DAY = 3
+# Heavy / advanced lifts removed for under-18 and 50+ members.
+FITNESS_LIGHT_EXCLUDED_EXERCISES = {
+    'Squats', 'Bench Press', 'Incline Bench Press', 'Decline Bench Press',
+    'Shoulder Press', 'Leg Press', 'Pull-Up', 'Chest Dip', 'Decline Push-Up',
+    'T-Bar Row', 'Treadmill Jogging',
+}
+# Advanced lifts removed for adults on Low Activity (beginners).
+FITNESS_ADVANCED_EXERCISES = {'Pull-Up', 'Chest Dip', 'Decline Push-Up', 'T-Bar Row'}
+
+FITNESS_LIGHT_FREQUENCY_NOTE = (
+    'Light plan: 3 gentle sessions per week with rest days in between. '
+    'Focus on good form and stop if anything hurts.'
+)
+FITNESS_LIGHT_REST_DAY_NOTE = (
+    'Rest and recover. A relaxed 20\u201330 minute walk is fine if you feel like moving.'
+)
+
+FITNESS_PLAN_TIERS = {
+    'light': {
+        'label': 'Light plan', 'schedule': FITNESS_LIGHT_WEEKLY_SCHEDULE,
+        'max_per_day': FITNESS_LIGHT_MAX_EXERCISES_PER_DAY, 'sets': 2,
+        'excluded': FITNESS_LIGHT_EXCLUDED_EXERCISES, 'balance_areas': True,
+        'rest_note': FITNESS_LIGHT_REST_DAY_NOTE, 'frequency_note': FITNESS_LIGHT_FREQUENCY_NOTE,
+    },
+    'low_activity': {
+        'label': 'Low activity plan', 'schedule': [_CL, _RS, _BA, _RS, _SC, _RS, _RS],
+        'max_per_day': 4, 'sets': 2,
+        'excluded': FITNESS_ADVANCED_EXERCISES, 'balance_areas': True,
+        'rest_note': FITNESS_REST_DAY_NOTE,
+        'frequency_note': 'Low activity plan: 3 sessions per week to build consistency.',
+    },
+    'moderate_activity': {
+        'label': 'Moderate activity plan', 'schedule': [_CL, _BA, _RS, _SC, _RS, _CL, _RS],
+        'max_per_day': 4, 'sets': 3,
+        'excluded': set(), 'balance_areas': False,
+        'rest_note': FITNESS_REST_DAY_NOTE,
+        'frequency_note': 'Moderate activity plan: 4 sessions per week.',
+    },
+    'high_activity': {
+        'label': 'High activity plan', 'schedule': FITNESS_WEEKLY_SCHEDULE,
+        'max_per_day': FITNESS_MAX_EXERCISES_PER_DAY, 'sets': 4,
+        'excluded': set(), 'balance_areas': False,
+        'rest_note': FITNESS_REST_DAY_NOTE,
+        'frequency_note': 'High activity plan: 6 sessions per week, with 1 rest day.',
+    },
+}
+
+
+# Sex-based tuning for ADULT plans (the light plan for under-18 / 50+ is the
+# same for everyone — safety comes first there). These are general defaults,
+# not hard limits: individual strength varies a lot within each sex.
+#   male:   +1 exercise per training day on Moderate / High activity (higher volume)
+#   female: the hardest bodyweight upper-body lifts (Pull-Up, Chest Dip, Decline
+#           Push-Up) are held back on Low / Moderate and unlocked on High, and each
+#           day leads with lower-body / core work alternated with the upper-body group.
+FITNESS_MALE_EXTRA_EXERCISES = 1
+FITNESS_FEMALE_HELD_BACK_EXERCISES = {'Pull-Up', 'Chest Dip', 'Decline Push-Up'}
+FITNESS_FEMALE_PREFERRED_AREAS = ['Legs', 'Core']
+
+
+def _fitness_plan_tier(age, activity_level, sex=None):
+    """Resolves the plan tier from age + selected activity level + sex. Under 18
+    and 50+ always resolve to the light tier, whatever is stored on the profile
+    (sex does not change the light tier)."""
+    if _is_light_only_age(age):
+        key = 'light'
+    else:
+        key = activity_level if activity_level in FITNESS_PLAN_TIERS else 'moderate_activity'
+    tier = dict(FITNESS_PLAN_TIERS[key])
+    tier['key'] = key
+    tier['excluded'] = set(tier['excluded'])
+    tier['prefer_areas'] = []
+    tier['sex_note'] = ''
+
+    if key != 'light':
+        if sex == 'male' and key in ('moderate_activity', 'high_activity'):
+            tier['max_per_day'] += FITNESS_MALE_EXTRA_EXERCISES
+            tier['sex_note'] = 'Male plan: one extra exercise per training day.'
+        elif sex == 'female':
+            tier['prefer_areas'] = list(FITNESS_FEMALE_PREFERRED_AREAS)
+            tier['balance_areas'] = True
+            if key in ('low_activity', 'moderate_activity'):
+                tier['excluded'] |= FITNESS_FEMALE_HELD_BACK_EXERCISES
+                tier['sex_note'] = 'Female plan: lower-body and core lead each day; pull-ups and dips unlock on High activity.'
+            else:
+                tier['sex_note'] = 'Female plan: lower-body and core lead each day.'
+
+    tier['sex'] = sex
+    tier['training_days'] = sum(1 for d in tier['schedule'] if d[0] == 'train')
+    tier['rest_days'] = sum(1 for d in tier['schedule'] if d[0] == 'rest')
+    return tier
+
+
+def _filter_light_exercises(exercises):
+    """Drops heavy / advanced lifts from an exercise list (light plan only)."""
+    return [e for e in exercises if e.name not in FITNESS_LIGHT_EXCLUDED_EXERCISES]
+
 
 def _pick_day_exercises(goal_exercises, primary_areas, goal=None,
                          min_count=FITNESS_MIN_EXERCISES_PER_DAY,
-                         max_count=FITNESS_MAX_EXERCISES_PER_DAY):
+                         max_count=FITNESS_MAX_EXERCISES_PER_DAY,
+                         balance_areas=False, prefer_areas=None):
     """Selects exercises for one training day, sourced ONLY from the day's
     own primary_areas (e.g. Shoulders & Core -> Shoulders or Core only) —
     never from another Main Area. Prioritizes the member's target focus on
@@ -4635,10 +4773,28 @@ def _pick_day_exercises(goal_exercises, primary_areas, goal=None,
     selected = [e for e in goal_exercises if e.target_area in primary_areas]
     if target_focus_area and target_focus_area in primary_areas:
         selected.sort(key=lambda e: 0 if e.target_area == target_focus_area else 1)
+
+    if balance_areas and len(primary_areas) > 1:
+        # Light plan: with only a few exercises per day, alternate between the
+        # day's muscle groups (e.g. one Chest, one Legs, ...) instead of
+        # filling the day with whichever group comes first in the catalog.
+        order = list(primary_areas)
+        if prefer_areas:
+            order.sort(key=lambda a: 0 if a in prefer_areas else 1)  # stable
+        if target_focus_area in order:
+            order.remove(target_focus_area)
+            order.insert(0, target_focus_area)
+        buckets = {a: [e for e in selected if e.target_area == a] for a in order}
+        balanced = []
+        while len(balanced) < max_count and any(buckets.values()):
+            for a in order:
+                if buckets[a] and len(balanced) < max_count:
+                    balanced.append(buckets[a].pop(0))
+        return balanced
     return selected[:max_count]
 
 
-def _recommend_weekly_routine(goal, activity_level):
+def _recommend_weekly_routine(goal, activity_level, age=None, sex=None):
     """Builds the 7-day training/rest schedule from the existing Exercise
     catalog only — no new table, no AI. The SCHEDULE itself (which days
     train, which day rests, and each day's muscle-group focus) is now
@@ -4656,24 +4812,30 @@ def _recommend_weekly_routine(goal, activity_level):
     (routine_dict_for_json, all_exercise_objs_actually_used) — the second
     value lets the caller compute equipment from exactly what's in the
     routine, not a separate/stale list."""
-    sets_count = FITNESS_ACTIVITY_SET_TIER.get(activity_level, 3)
-    goal_exercises = _goal_tagged_exercises(goal)
+    tier = _fitness_plan_tier(age, activity_level, sex)
+    light_plan = tier['key'] == 'light'
+    schedule = tier['schedule']
+    sets_count = tier['sets']
+    max_per_day = tier['max_per_day']
+    rest_note = tier['rest_note']
+    goal_exercises = [e for e in _goal_tagged_exercises(goal) if e.name not in tier['excluded']]
 
     days = []
     used_exercises = []
 
-    for day_number, (day_type, focus_name, focus_areas) in enumerate(FITNESS_WEEKLY_SCHEDULE, start=1):
+    for day_number, (day_type, focus_name, focus_areas) in enumerate(schedule, start=1):
         if day_type == 'rest':
             days.append({
                 'day_number': day_number,
                 'type':       'rest',
                 'focus':      focus_name,
-                'note':       FITNESS_REST_DAY_NOTE,
+                'note':       rest_note,
                 'exercises':  [],
             })
             continue
 
-        day_exercises = _pick_day_exercises(goal_exercises, focus_areas, goal=goal)
+        day_exercises = _pick_day_exercises(goal_exercises, focus_areas, goal=goal, max_count=max_per_day, balance_areas=tier['balance_areas'],
+                                          prefer_areas=tier['prefer_areas'])
         used_exercises.extend(day_exercises)
 
         # Derive display focus from the target areas actually present in this day's exercises
@@ -4707,23 +4869,29 @@ def _recommend_weekly_routine(goal, activity_level):
             ],
         })
 
-    training_days = sum(1 for day_type, _, _ in FITNESS_WEEKLY_SCHEDULE if day_type == 'train')
-    rest_days = sum(1 for day_type, _, _ in FITNESS_WEEKLY_SCHEDULE if day_type == 'rest')
+    training_days = sum(1 for day_type, _, _ in schedule if day_type == 'train')
+    rest_days = sum(1 for day_type, _, _ in schedule if day_type == 'rest')
 
     return {
         'training_days': training_days,
         'rest_days':      rest_days,
+        'light_plan':     light_plan,
+        'plan_tier':      tier['key'],
+        'plan_label':     tier['label'],
         'days':           days,
     }, used_exercises
 
 
-def _recommend_workouts(goal, activity_level):
-    """Selects goal-appropriate exercises and formats them for display.
-    activity_level only affects the suggested weekly frequency text — it
-    does not change which exercises are selected."""
-    exercises = _select_exercises_for_goal(goal)
+def _recommend_workouts(goal, activity_level, age=None, sex=None):
+    """Selects goal-appropriate exercises and formats them for display,
+    matched to the member's age and selected activity level (same tier as the
+    weekly routine: heavy/advanced lifts removed where they don't fit, and the
+    set count and frequency note follow the tier)."""
+    tier = _fitness_plan_tier(age, activity_level, sex)
+    exercises = _select_exercises_for_goal(goal, excluded_names=tier['excluded'])
     return {
-        'frequency_note': FITNESS_ACTIVITY_FREQUENCY_NOTES.get(activity_level, ''),
+        'frequency_note': tier['frequency_note'],
+        'plan_label':     tier['label'],
         'exercises': [
             {
                 'id':           e.id,
@@ -4731,7 +4899,7 @@ def _recommend_workouts(goal, activity_level):
                 'target_area':  e.target_area,
                 'sub_target':   e.sub_target,
                 'type':         e.exercise_type,
-                'sets':         e.default_sets,
+                'sets':         str(tier['sets']) if e.exercise_type == 'resistance' else e.default_sets,
                 'reps':         e.default_reps,
                 'purpose':      e.purpose,
                 'instructions': e.instructions,
@@ -4740,6 +4908,22 @@ def _recommend_workouts(goal, activity_level):
             for e in exercises
         ],
     }, exercises
+
+
+def _workout_focus_counts(age, activity_level, sex=None):
+    """Number of exercises each Step 2 workout-focus card can offer THIS member,
+    given their age and selected activity level."""
+    tier = _fitness_plan_tier(age, activity_level, sex)
+    counts = {}
+    for goal, areas in FITNESS_TARGET_AREA_MAP.items():
+        if goal == 'FULL_BODY':
+            counts[goal] = len(_select_exercises_for_goal(goal, excluded_names=tier['excluded']))
+        else:
+            q = Exercise.query.filter_by(is_active=True).filter(Exercise.target_area.in_(areas))
+            if tier['excluded']:
+                q = q.filter(~Exercise.name.in_(list(tier['excluded'])))
+            counts[goal] = q.count()
+    return counts, tier
 
 
 def _recommend_equipment(exercises):
@@ -7520,6 +7704,14 @@ def member_fitness_save_profile():
             return jsonify(success=False, error='Birthday cannot be in the future.'), 400
         user.birthday = bday_date
 
+    # Age rule: members under 18 or 50 and above are limited to Low Activity
+    # (light workouts only). The UI already disables the other options, but
+    # this is enforced here too so it can't be bypassed from the client.
+    activity_adjusted = False
+    if _is_light_only_age(_calculate_age(user.birthday)) and profile.activity_level != FITNESS_LIGHT_ACTIVITY_LEVEL:
+        profile.activity_level = FITNESS_LIGHT_ACTIVITY_LEVEL
+        activity_adjusted = True
+
     # Keep the member's most recent progress row's current_weight in sync
     # with Step 1 — updates the SAME row on every resubmission, never
     # inserts a new one. Full historical progress logging (multiple rows
@@ -7553,7 +7745,9 @@ def member_fitness_save_profile():
     db.session.commit()
     return jsonify(
         success=True,
-        message='Information saved.',
+        message=(FITNESS_LIGHT_ACTIVITY_NOTICE if activity_adjusted else 'Information saved.'),
+        activity_adjusted=activity_adjusted,
+        light_only=_is_light_only_age(derived_age),
         has_birthday=user.birthday is not None,
         age=derived_age,
         is_minor=is_minor_flag,
@@ -7676,7 +7870,7 @@ def member_fitness_calculate():
         weight_kg=float(body_goal.current_weight),
         sex=profile.sex,
         age=age,
-        activity_level=profile.activity_level,
+        activity_level=_effective_activity_level(age, profile.activity_level),
         goal=profile.fitness_goal,
         primary_objective=profile.primary_objective,
     )
@@ -7695,6 +7889,40 @@ def member_fitness_calculate():
         calculations=results,
         goal=profile.fitness_goal,
         primary_objective=profile.primary_objective or 'MAINTAIN'
+    )
+
+
+@app.route('/member/fitness/goal-options', methods=['GET'])
+def member_fitness_goal_options():
+    """Step 2 helper — exercise counts per workout-focus card plus a short plan
+    summary, tailored to the member's age and the activity level saved in
+    Step 1. Read-only."""
+    if 'user_id' not in session or session.get('role') != 'member':
+        return jsonify(success=False, error='Not logged in.'), 401
+    user = User.query.get(session['user_id'])
+    if user is None:
+        session.clear()
+        return jsonify(success=False, error='User not found.'), 404
+    if not _member_plan_active(user):
+        return jsonify(success=False, error='Membership not active.'), 403
+
+    profile = FitnessProfile.query.filter_by(member_id=user.id).first()
+    if profile is None or not profile.activity_level:
+        return jsonify(success=False, error='Please complete Step 1 first.'), 400
+
+    age = _calculate_age(user.birthday)
+    counts, tier = _workout_focus_counts(age, profile.activity_level, profile.sex)
+    return jsonify(
+        success=True,
+        counts=counts,
+        plan_tier=tier['key'],
+        plan_label=tier['label'],
+        light_plan=tier['key'] == 'light',
+        training_days=tier['training_days'],
+        rest_days=tier['rest_days'],
+        sets=tier['sets'],
+        summary=tier['frequency_note'],
+        sex_note=tier['sex_note'],
     )
 
 
@@ -7737,8 +7965,9 @@ def member_fitness_recommendations():
         calorie_target=body_goal.calorie_target,
         protein_target_g=body_goal.protein_target_g,
     )
-    workouts, _flat_exercise_objs = _recommend_workouts(profile.fitness_goal, profile.activity_level)
-    weekly_routine, routine_exercise_objs = _recommend_weekly_routine(profile.fitness_goal, profile.activity_level)
+    member_age = _calculate_age(user.birthday)
+    workouts, _flat_exercise_objs = _recommend_workouts(profile.fitness_goal, profile.activity_level, age=member_age, sex=profile.sex)
+    weekly_routine, routine_exercise_objs = _recommend_weekly_routine(profile.fitness_goal, profile.activity_level, age=member_age, sex=profile.sex)
     # Equipment reflects exactly what's in the weekly routine the member
     # actually sees now, not the older flat top-N list.
     equipment = _recommend_equipment(routine_exercise_objs)
@@ -7757,6 +7986,8 @@ def member_fitness_recommendations():
         weekly_routine=weekly_routine,
         equipment=equipment,
         tips=tips,
+        light_plan=_is_light_only_age(member_age),
+        light_notice=(FITNESS_LIGHT_ACTIVITY_NOTICE if _is_light_only_age(member_age) else None),
     )
 
 
@@ -7801,14 +8032,19 @@ def member_fitness_ai_coach():
     obj = profile.primary_objective or 'MAINTAIN'
     obj_label = FITNESS_OBJECTIVE_LABELS.get(obj, obj)
 
+    age = _calculate_age(user.birthday)
+    is_minor = (age is not None and age < 18)
+    light_only = _is_light_only_age(age)
+    effective_activity = _effective_activity_level(age, profile.activity_level)
+
     activity_label = {
         'low_activity':      'Beginner / Low Activity',
         'moderate_activity': 'Moderate Activity',
         'high_activity':     'High Activity',
-    }.get(profile.activity_level, profile.activity_level)
+    }.get(effective_activity, effective_activity)
 
     weekly_routine, _routine_exercises = _recommend_weekly_routine(
-        profile.fitness_goal, profile.activity_level
+        profile.fitness_goal, profile.activity_level, age=age, sex=profile.sex
     )
 
     training_days = [d for d in weekly_routine.get('days', []) if d.get('type') == 'train']
@@ -7827,9 +8063,6 @@ def member_fitness_ai_coach():
 
     allowed_numbers = [n_train, n_rest]
     known_exercises = [e.name for e in Exercise.query.filter_by(is_active=True).all()]
-
-    age = _calculate_age(user.birthday)
-    is_minor = (age is not None and age < 18)
 
     system_instruction = (
         "You write the short coach note at the top of a gym member's dashboard. "
@@ -7853,6 +8086,13 @@ def member_fitness_ai_coach():
             "Do not comment on their body, weight, or appearance. "
             "Keep cues focused on technique, safety, consistency, and rest. "
             "Encourage them to train with a coach or supervised."
+        )
+
+    if light_only:
+        system_instruction += (
+            "\n\nSpecial rule for this member: their plan is a light workout plan. "
+            "Keep the tone gentle, encourage steady easy sessions and proper rest, "
+            "and never suggest heavy lifting or pushing to exhaustion."
         )
 
     user_content = (
@@ -8498,6 +8738,15 @@ def member():
     # never having started, and Step 1 shows again. ──
     if not _member_plan_active(user) and _reset_expired_fitness_plan(user):
         fitness_profile = None
+
+    # ── Age rule (under 18 / 50 and above → Low Activity only). Corrects
+    # profiles saved before this rule existed so the dashboard, calorie
+    # targets and workout plan all agree. ──
+    if (fitness_profile is not None and _is_light_only_age(member_age)
+            and fitness_profile.activity_level != FITNESS_LIGHT_ACTIVITY_LEVEL):
+        fitness_profile.activity_level = FITNESS_LIGHT_ACTIVITY_LEVEL
+        fitness_profile.ai_recommendation = None
+        db.session.commit()
 
     # ── Payment history (this member's own submissions) ──
     # A declined request never resulted in an actual payment — whether it

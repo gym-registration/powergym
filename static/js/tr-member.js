@@ -2106,10 +2106,52 @@ const MemberModule = (() => {
   let _step2Completed = false;
   let _isMinor = false;
 
+  /* Age rule: under 18 or 50 and above → Low Activity only (light workouts).
+     Keep these in sync with FITNESS_LIGHT_ONLY_* in app.py. */
+  const LIGHT_ONLY_BELOW_AGE = 18;
+  const LIGHT_ONLY_FROM_AGE = 50;
+  const LIGHT_ONLY_NOTICE = 'For your age group, we recommend light workouts only, so Low Activity is the available activity level.';
+  let _lightOnly = false;
+
+  function _ageFromBirthdayString(str) {
+    if (!str) return null;
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    if (!m) return null;
+    const y = +m[1], mo = +m[2], d = +m[3];
+    const now = new Date();
+    let age = now.getFullYear() - y;
+    if ((now.getMonth() + 1) < mo || ((now.getMonth() + 1) === mo && now.getDate() < d)) age--;
+    return age;
+  }
+
+  function _isLightOnlyAge(age) {
+    return age !== null && age !== undefined && !isNaN(age) &&
+      (age < LIGHT_ONLY_BELOW_AGE || age >= LIGHT_ONLY_FROM_AGE);
+  }
+
+  /* Disables Moderate / High for light-only ages and forces Low Activity. */
+  function _applyActivityRestriction(age) {
+    _lightOnly = _isLightOnlyAge(age);
+    const sel = document.getElementById('fw-activity');
+    if (!sel) return;
+    ['moderate_activity', 'high_activity'].forEach(val => {
+      const opt = sel.querySelector(`option[value="${val}"]`);
+      if (!opt) return;
+      opt.disabled = _lightOnly;
+      opt.textContent = ACTIVITY_LABELS[val] + (_lightOnly ? ' (not available for your age)' : '');
+    });
+    if (_lightOnly) sel.value = 'low_activity';
+    updateActivityHelperText();
+  }
+
   function updateActivityHelperText() {
     const sel = document.getElementById('fw-activity');
     const helper = document.getElementById('fw-activity-helper');
     if (!helper) return;
+    if (_lightOnly) {
+      helper.textContent = LIGHT_ONLY_NOTICE;
+      return;
+    }
     const val = sel ? sel.value : '';
     const descMap = {
       low_activity: 'Little to no exercise, or light activity 1–3 days/week.',
@@ -2117,6 +2159,32 @@ const MemberModule = (() => {
       high_activity: 'Frequent, intense exercise or physically demanding work 6–7 days/week.',
     };
     helper.textContent = descMap[val] || 'Select your typical weekly activity level.';
+  }
+
+  /* Step 2: update each workout-focus card's exercise count (and show the plan
+     summary) for this member's age + saved activity level. Counts come from
+     the server so they always match the exercises the plan can actually use. */
+  function _loadGoalOptions() {
+    return fetch('/member/fitness/goal-options', { headers: { 'Accept': 'application/json' } })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok || !data.success) return;
+        Object.keys(data.counts || {}).forEach(goal => {
+          const badge = document.querySelector(`#fw-goal-grid [data-goal="${goal}"] .workout-count-badge`);
+          if (!badge) return;
+          const n = data.counts[goal];
+          badge.textContent = `${n} exercise${n === 1 ? '' : 's'}`;
+        });
+        const note = document.getElementById('fw-plan-tier-note');
+        if (note) {
+          const days = `${data.training_days} training day${data.training_days === 1 ? '' : 's'} and ${data.rest_days} rest day${data.rest_days === 1 ? '' : 's'} per week, ${data.sets} sets per exercise`;
+          note.innerHTML = `<strong>${_esc(data.plan_label)}:</strong> ${_esc(days)}.` +
+            (data.light_plan ? ' Heavy lifts are left out for your age group.' : '') +
+            (data.sex_note ? ` ${_esc(data.sex_note)}` : '');
+          note.style.display = '';
+        }
+      })
+      .catch(() => {});
   }
 
   function _setWizardStep(step) {
@@ -2162,6 +2230,7 @@ const MemberModule = (() => {
       if (line1) {
         line1.classList.add('active');
       }
+      _loadGoalOptions();
       const helperLine = document.querySelector('.fw-goal-helper-line');
       if (helperLine) {
         if (_isMinor) {
@@ -2222,7 +2291,15 @@ const MemberModule = (() => {
       if (dot2) dot2.disabled = false;
     }
 
-    updateActivityHelperText();
+    _applyActivityRestriction(data.age);
+    const bdayEl = document.getElementById('fw-birthday');
+    if (bdayEl) {
+      // Members with no birthday on file enter it in Step 1, so re-apply the
+      // age rule as soon as a birthday is picked.
+      const onBday = () => _applyActivityRestriction(_ageFromBirthdayString(bdayEl.value));
+      bdayEl.addEventListener('change', onBday);
+      bdayEl.addEventListener('input', onBday);
+    }
 
     // Bind tab bar arrow key navigation for accessible tabs
     _bindTabListKeyboard(document.querySelector('.fp-tabs'), '.fp-tab-btn');
@@ -2257,6 +2334,11 @@ const MemberModule = (() => {
     if (!height || !weight) { showToast('Please enter your height and weight.', 'error'); return; }
     if (!sex) { showToast('Please select your sex.', 'error'); return; }
     if (!activity) { showToast('Please select your activity level.', 'error'); return; }
+    if (_lightOnly && activity !== 'low_activity') {
+      _applyActivityRestriction(_ageFromBirthdayString(birthday) ?? (_parseJSON('member-fitness-data') || {}).age);
+      showToast(LIGHT_ONLY_NOTICE, 'error');
+      return;
+    }
     if (bdayInput && !birthday) {
       showToast('Please enter your birthday.', 'error');
       bdayInput.focus();
@@ -2286,6 +2368,11 @@ const MemberModule = (() => {
         return;
       }
       _step1Completed = true;
+      if (data.activity_adjusted) {
+        showToast(data.message || LIGHT_ONLY_NOTICE, 'success');
+        const actSel = document.getElementById('fw-activity');
+        if (actSel) actSel.value = 'low_activity';
+      }
       if (data.fitness_profile && data.fitness_profile.is_minor !== undefined) {
         _isMinor = Boolean(data.fitness_profile.is_minor);
       }
