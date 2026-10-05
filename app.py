@@ -6412,6 +6412,14 @@ def staff_record_payment():
         .order_by(Payment.paid_at.desc())
         .first()
     )
+    # Only members who actually have an open request can be recorded here —
+    # that is exactly who the Payment Record dropdown lists. Members who
+    # already paid have no open request, and GCash requests belong to Admin.
+    if existing_request is None:
+        return jsonify(success=False, error=f'{member.first_name} has no pending request to record a payment for.'), 409
+    if _payment_stage(existing_request) == 'verify_gcash':
+        return jsonify(success=False, error=f'{member.first_name} chose GCash. That payment is verified by Admin, not recorded as Cash.'), 409
+
     if existing_request is not None:
         existing_request.plan_id = plan.id
         if promo is not None:
@@ -9419,7 +9427,8 @@ def staff():
     # "No Plan" and "Declined" members aren't relevant to staff's day-to-day
     # (check-in, payment verification, coaching) — the Member Directory only
     # needs to show members who actually have a plan in effect.
-    members = [m for m in _get_members_with_plans() if m['status'] not in ('No Plan', 'Declined')]
+    _all_members_with_plans = _get_members_with_plans()
+    members = [m for m in _all_members_with_plans if m['status'] not in ('No Plan', 'Declined')]
     active_members       = [m for m in members if m['status'] == 'Active']
     expiring_soon    = [
         m for m in members
@@ -9570,24 +9579,42 @@ def staff():
     for p in pending_requests_rows:
         _open_request_by_member.setdefault(p.member_id, p)
 
-    def _payment_member_entry(m):
-        req = _open_request_by_member.get(m['id'])
-        promo_row = _payment_promo(req) if req is not None else None
+    _member_info_by_id = {m['id']: m for m in _all_members_with_plans}
+
+    def _payment_member_entry(req):
+        # `req` is the member's newest open request (the same row that
+        # /staff/record-payment settles). Name/email come straight from the
+        # User row in the database.
+        u = req.member
+        info = _member_info_by_id.get(u.id, {})
+        promo_row = _payment_promo(req)
         return {
-            'id': m['id'],
-            'name': m['name'],
-            'email': m['email'],
-            'plan': m['plan'],
-            'status': m['status'],
-            'is_student': bool(req.is_student) if req is not None else False,
+            'id': u.id,
+            'name': u.full_name,
+            'email': u.email,
+            'plan': info.get('plan', '—'),
+            'status': info.get('status', 'No Plan'),
+            'is_student': bool(req.is_student),
             'pending_promo_id': promo_row.id if promo_row is not None else None,
             'pending_promo_title': promo_row.title if promo_row is not None else None,
             # Regular (non-promo) request: the plan the member actually asked for.
-            'pending_plan': (req.plan.name if (req is not None and promo_row is None
+            'pending_plan': (req.plan.name if (promo_row is None
                                                and not _is_promo_payment(req) and req.plan) else None),
         }
 
-    payment_members = [_payment_member_entry(m) for m in members]
+    # Payment Record → Member Name dropdown: ONLY members who still have an
+    # open request that front-desk staff can settle in cash —
+    #   'approval'         plan request not yet signed off
+    #   'awaiting_payment' approved, member hasn't picked Cash/GCash yet
+    #   'verify_cash'      member chose Cash
+    # GCash requests (stage 'verify_gcash') are verified by Admin, and members
+    # who already paid have no open request, so neither appears here.
+    payment_members = [
+        _payment_member_entry(_req)
+        for _req in _open_request_by_member.values()
+        if _req.member is not None and _payment_stage(_req) != 'verify_gcash'
+    ]
+    payment_members.sort(key=lambda e: (e['name'] or '').lower())
     # What the Member dropdown shows/fills in: the member's name. If two
     # members share the exact same name, the email is added so each
     # suggestion stays unique and unambiguous.

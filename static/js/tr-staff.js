@@ -245,7 +245,9 @@ const StaffModule = (() => {
       menu.textContent = '';
       if (!shown.length) {
         const none = document.createElement('div');
-        none.textContent = 'No members match';
+        // The list only holds members with an open (unpaid) request, so an
+        // empty list normally means there is nothing to collect right now.
+        none.textContent = members.length ? 'No pending member matches' : 'No members with a pending request';
         none.style.cssText = 'padding:10px;font-size:14px;color:var(--muted);';
         menu.appendChild(none);
         return;
@@ -491,13 +493,15 @@ const StaffModule = (() => {
       return;
     }
 
-    // Send the member's email when the field matches a known member, so two
-    // members with the same name can never be mixed up. Typed ids / emails /
-    // unknown names are sent exactly as entered (the server resolves them).
+    // Only members from the list (open, unpaid requests) can be recorded.
     const resolved = _findPaymentMember(memberIdentifier);
+    if (!resolved) {
+      showToast('Please pick a member from the list — only members with a pending request can be recorded', 'error');
+      return;
+    }
     _pendingRecordPayment = {
-      memberIdentifier: resolved ? resolved.email : memberIdentifier,
-      memberLabel: resolved ? resolved.name : memberIdentifier,
+      memberIdentifier: resolved.email,
+      memberLabel: resolved.name,
       planName, method, isStudent: promoId ? false : isStudent, promoId
     };
 
