@@ -3023,7 +3023,8 @@ def api_save_schedule():
     (Schedule section). Same staff-or-admin gate as the rest of Manage
     Content, and stored on the singleton GymSettings row alongside the
     GCash/Terms settings."""
-    if not _content_role_ok():
+    if not _content_role_ok() or session.get('role') != 'admin':
+        # Gym Schedule is admin-only; staff can no longer edit it.
         return jsonify(success=False, error='Unauthorized.'), 403
 
     weekday_label = (request.form.get('weekday_label') or '').strip()
@@ -7265,12 +7266,31 @@ def update_profile():
     phone          = (data.get('phone') or '').strip()
     birthday_str   = (data.get('birthday') or '').strip()
 
+    # Emergency contact — only sent by the member Settings form. When the keys
+    # are absent (admin/staff forms) nothing about it is touched.
+    update_emergency = ('emergency_contact_number' in data or 'emergency_contact_relationship' in data)
+    emergency_number = (data.get('emergency_contact_number') or '').strip()
+    emergency_relationship = (data.get('emergency_contact_relationship') or '').strip()
+
     if not first_name or not last_name or not email:
         return jsonify(success=False, error='First name, last name, and email are required.'), 400
     if not _valid_name(first_name, require_capital=True, lowercase_rest=True) or not _valid_name(last_name, require_capital=True, lowercase_rest=True):
         return jsonify(success=False, error='Names must start with a capital letter, with the rest in lowercase.'), 400
     if not _valid_middle_initial(middle_initial):
         return jsonify(success=False, error=MIDDLE_INITIAL_ERROR), 400
+    if update_emergency:
+        if not emergency_number and not emergency_relationship:
+            if user.emergency_contact_number or user.emergency_contact_relationship:
+                return jsonify(success=False, error='Emergency contact cannot be left blank.'), 400
+            update_emergency = False   # nothing on file and nothing entered
+        else:
+            if not emergency_number or not emergency_relationship:
+                return jsonify(success=False, error='Please enter both the emergency contact number and relationship.'), 400
+            if not _valid_phone(emergency_number):
+                return jsonify(success=False, error='Emergency contact number must start with 09 and be exactly 11 digits.'), 400
+            if len(emergency_relationship) > 40 or not _valid_name(emergency_relationship, extra_chars=" '-/."):
+                return jsonify(success=False, error='Emergency contact relationship can only contain letters (max 40 characters).'), 400
+            emergency_relationship = emergency_relationship[:1].upper() + emergency_relationship[1:]
     if extension_name and not _valid_name(extension_name, extra_chars='. '):
         return jsonify(success=False, error='Extension name can only contain letters.'), 400
     if phone and not _valid_phone(phone):
@@ -7294,6 +7314,9 @@ def update_profile():
     user.email          = email
     user.phone          = phone or None
     user.birthday       = birthday
+    if update_emergency:
+        user.emergency_contact_number       = emergency_number
+        user.emergency_contact_relationship = emergency_relationship
     db.session.commit()
 
     # Keep the session in sync so the sidebar/header reflect the change
@@ -7309,6 +7332,8 @@ def update_profile():
         'initials': initials,
         'phone':    user.phone or '',
         'birthday': user.birthday.isoformat() if user.birthday else '',
+        'emergency_contact_number':       user.emergency_contact_number or '',
+        'emergency_contact_relationship': user.emergency_contact_relationship or '',
     })
 
 
@@ -9282,6 +9307,7 @@ def _get_attendance_today():
         check_in_manila  = _to_manila(a.check_in)
         check_out_manila = _to_manila(a.check_out)
         attendance_today.append({
+            'member_id': a.member_id,
             'member_name': a.member.full_name,
             'check_in': check_in_manila.strftime('%I:%M %p').lstrip('0'),
             'check_out': check_out_manila.strftime('%I:%M %p').lstrip('0') if check_out_manila else '—',
@@ -9290,6 +9316,17 @@ def _get_attendance_today():
             'coach_guided': bool(a.coach_guided),
         })
     return attendance_today
+
+
+def _latest_attendance_per_member(rows):
+    """One row per member (their most recent visit). Expects newest-first rows."""
+    seen, out = set(), []
+    for r in rows:
+        if r['member_id'] in seen:
+            continue
+        seen.add(r['member_id'])
+        out.append(r)
+    return out
 
 
 def _count_checkins_today():
@@ -9696,8 +9733,9 @@ def staff():
 
     return render_template(
         'staff-dashboard.html',
-        attendance_today=attendance_today,
+        attendance_today=_latest_attendance_per_member(attendance_today),
         members=members,
+        directory_members=_all_members_with_plans,
         members_checkin=_get_members_checkin_status(),
         expiring_soon=expiring_soon,
         stats=stats,

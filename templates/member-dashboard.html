@@ -1632,6 +1632,8 @@
             <div class="info-item"><div class="info-label">Member ID</div><div class="info-value">MBR-{{ '%04d'|format(member.id) }}</div></div>
             <div class="info-item"><div class="info-label">Member Since</div><div class="info-value">{{ member.created_at.strftime('%B %d, %Y') if member.created_at else '—' }}</div></div>
             <div class="info-item"><div class="info-label">Membership Plan</div><div class="info-value">{{ plan.name if plan else '—' }}</div></div>
+            <div class="info-item"><div class="info-label">Emergency Contact</div><div class="info-value" id="profile-ec-number">{{ member.emergency_contact_number if member.emergency_contact_number else '—' }}</div></div>
+            <div class="info-item"><div class="info-label">Emergency Contact Relationship</div><div class="info-value" id="profile-ec-rel">{{ member.emergency_contact_relationship if member.emergency_contact_relationship else '—' }}</div></div>
           </div>
         </div>
       </div>
@@ -1705,6 +1707,31 @@
               <div class="form-group">
                 <label class="form-label">Birthday</label>
                 <input class="form-input" type="date" id="pi-bday" value="{{ member.birthday.isoformat() if member.birthday else '' }}">
+              </div>
+            </div>
+            {% set _ec_rel = member.emergency_contact_relationship or '' %}
+            {% set _ec_presets = ['Mother', 'Father', 'Spouse', 'Guardian'] %}
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Emergency Contact Number</label>
+                <input class="form-input" id="pi-ec-phone" placeholder="09171234567" maxlength="11" inputmode="numeric" pattern="09\d{9}"
+                       value="{{ member.emergency_contact_number or '' }}"
+                       oninput="this.value=this.value.replace(/\D/g,'').slice(0,11)">
+                <div style="font-size:12px;color:var(--muted);margin-top:4px;">Must start with 09 and be 11 digits.</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Emergency Contact Relationship</label>
+                <select class="form-input" id="pi-ec-rel" onchange="togglePiEcRelOther()">
+                  <option value="" {% if not _ec_rel %}selected{% endif %}>Select relationship</option>
+                  {% for r in _ec_presets %}
+                  <option value="{{ r }}" {% if _ec_rel == r %}selected{% endif %}>{{ r }}</option>
+                  {% endfor %}
+                  <option value="Other" {% if _ec_rel and _ec_rel not in _ec_presets %}selected{% endif %}>Other</option>
+                </select>
+                <input class="form-input" id="pi-ec-rel-other" placeholder="Please specify (e.g. Sister, Friend)" maxlength="40"
+                       style="{% if not _ec_rel or _ec_rel in _ec_presets %}display:none;{% endif %}margin-top:8px;"
+                       value="{{ _ec_rel if (_ec_rel and _ec_rel not in _ec_presets) else '' }}"
+                       oninput="this.value=this.value.replace(/[^A-Za-z\s'./-]/g,'')">
               </div>
             </div>
             <button class="btn btn-red" id="pi-save-btn" style="width:100%;margin-top:8px;display:none;" onclick="submitProfileUpdate()">SAVE CHANGES</button>
@@ -2246,7 +2273,7 @@
 </div>
 
 <script id="member-dashboard-data" type="application/json">{{ {'present_days': present_days, 'no_plan_days': no_plan_days, 'days_in_month': days_in_month, 'today_day': today_day, 'year': attendance_year, 'month': attendance_month, 'plan_approved_notice': plan_approved_notice, 'payment_verified_notice': payment_verified_notice, 'plan_declined_notice': plan_declined_notice, 'feedback_prompt': feedback_prompt, 'new_announcements': new_announcements, 'bot_reminders': bot_reminders, 'notification_center': notification_center, 'notification_unread_count': notification_unread_count}|tojson }}</script>
-<script src="{{ url_for('static', filename='js/tr-common.js') }}?v=20261002"></script>
+<script src="{{ url_for('static', filename='js/tr-common.js') }}?v=20261006"></script>
 <script src="{{ url_for('static', filename='js/tr-member.js') }}?v=20261002"></script>
 <script src="{{ url_for('static', filename='js/tr-coach-scheduling.js') }}?v=2"></script>
 <script src="{{ url_for('static', filename='js/tr-chat.js') }}"></script>

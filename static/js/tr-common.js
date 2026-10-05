@@ -543,6 +543,28 @@ function submitProfileUpdate() {
   const phone          = _val('pi-phone');
   const birthday       = document.getElementById('pi-bday')?.value || '';
 
+  // Emergency contact (member Settings only — the fields don't exist on the
+  // admin/staff forms, so nothing extra is sent there).
+  let emergency = {};
+  if (document.getElementById('pi-ec-phone')) {
+    const ecNum = _val('pi-ec-phone');
+    const ecSel = _val('pi-ec-rel');
+    const ecRel = ecSel === 'Other' ? _val('pi-ec-rel-other') : ecSel;
+    if (ecSel === 'Other' && !ecRel) {
+      showToast('Please specify the emergency contact relationship.', 'error');
+      return;
+    }
+    if (ecNum && !/^09\d{9}$/.test(ecNum)) {
+      showToast('Emergency contact number must start with 09 and be exactly 11 digits.', 'error');
+      return;
+    }
+    if ((ecNum && !ecRel) || (!ecNum && ecRel)) {
+      showToast('Please enter both the emergency contact number and relationship.', 'error');
+      return;
+    }
+    emergency = { emergency_contact_number: ecNum, emergency_contact_relationship: ecRel };
+  }
+
   if (!first_name || !last_name || !email) {
     showToast('First name, last name, and email are required.', 'error');
     return;
@@ -563,7 +585,7 @@ function submitProfileUpdate() {
   fetch('/update-profile', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ first_name, middle_initial, last_name, extension_name, email, phone, birthday })
+    body: JSON.stringify(Object.assign({ first_name, middle_initial, last_name, extension_name, email, phone, birthday }, emergency))
   })
     .then(res => res.json().then(data => ({ ok: res.ok, data })))
     .then(({ ok, data }) => {
@@ -572,6 +594,12 @@ function submitProfileUpdate() {
         showToast(data.error || 'Failed to update profile.', 'error');
         return;
       }
+
+      // Keep the Profile tab's Emergency Contact display in sync (member only).
+      const ecNumEl = document.getElementById('profile-ec-number');
+      const ecRelEl = document.getElementById('profile-ec-rel');
+      if (ecNumEl && data.user) ecNumEl.textContent = data.user.emergency_contact_number || '—';
+      if (ecRelEl && data.user) ecRelEl.textContent = data.user.emergency_contact_relationship || '—';
 
       const nameEl   = document.getElementById('sidebar-user-name');
       const emailEl  = document.getElementById('sidebar-user-email');
@@ -590,6 +618,19 @@ function submitProfileUpdate() {
       if (btn) { btn.disabled = false; btn.textContent = 'SAVE CHANGES'; }
       showToast('Could not reach the server. Please try again.', 'error');
     });
+}
+
+/** Member Settings: show the "please specify" box only while Relationship = Other */
+function togglePiEcRelOther() {
+  const sel   = document.getElementById('pi-ec-rel');
+  const other = document.getElementById('pi-ec-rel-other');
+  if (!sel || !other) return;
+  const show = sel.value === 'Other';
+  other.style.display = show ? '' : 'none';
+  if (!show) {
+    other.value = '';
+    other.dispatchEvent(new Event('input', { bubbles: true }));
+  }
 }
 
 /** Save the two-row "GYM SCHEDULE" card shown on the public home page.
@@ -637,7 +678,7 @@ function submitScheduleSettings() {
 ════════════════════════════════════════════════ */
 const FormChangeTracker = (() => {
 
-  const PROFILE_FIELD_IDS  = ['pi-fname', 'pi-mi', 'pi-lname', 'pi-ext', 'pi-email', 'pi-phone', 'pi-bday'];
+  const PROFILE_FIELD_IDS  = ['pi-fname', 'pi-mi', 'pi-lname', 'pi-ext', 'pi-email', 'pi-phone', 'pi-bday', 'pi-ec-phone', 'pi-ec-rel', 'pi-ec-rel-other'];
   const PASSWORD_FIELD_IDS = ['cp-current', 'cp-new', 'cp-confirm'];
 
   let profileBaseline = {};
@@ -746,10 +787,24 @@ const FormChangeTracker = (() => {
       profileBaseline = {};
       PROFILE_FIELD_IDS.forEach(id => {
         const el = document.getElementById(id);
-        profileBaseline[id] = el ? el.defaultValue : '';
+        if (!el) { profileBaseline[id] = ''; return; }
+        if (el.tagName === 'SELECT') {
+          const def = Array.from(el.options).find(o => o.defaultSelected);
+          profileBaseline[id] = def ? def.value : (el.options[0] ? el.options[0].value : '');
+        } else {
+          profileBaseline[id] = el.defaultValue;
+        }
       });
 
       const restored = _restoreDraft();
+      if (restored && typeof window.togglePiEcRelOther === 'function') {
+        // a restored draft may have "Other" selected — show/hide its text box
+        const _o = document.getElementById('pi-ec-rel-other'), _v = _o ? _o.value : '';
+        window.togglePiEcRelOther();
+        if (_o) _o.value = _v;
+        const _s = document.getElementById('pi-ec-rel');
+        if (_o && _s && _s.value === 'Other') _o.style.display = '';
+      }
       _updateProfileButton();
       PROFILE_FIELD_IDS.forEach(id => {
         const el = document.getElementById(id);
@@ -2186,6 +2241,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.cancelVerifyPayment = cancelVerifyPayment;
   window.submitChangePassword = submitChangePassword;
   window.submitProfileUpdate  = submitProfileUpdate;
+  window.togglePiEcRelOther   = togglePiEcRelOther;
   window.submitScheduleSettings = submitScheduleSettings;
   window.completeRegistration = completeRegistration;
   window.filterTable   = filterTable;

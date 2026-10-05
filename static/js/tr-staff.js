@@ -967,9 +967,11 @@ const StaffModule = (() => {
    *  flatline animation, then automatically checks the member out. */
   function _ecgIndicatorHTML(email) {
     return `<button type="button" class="btn btn-ecg btn-sm ecg-enter" onclick="flatlineAndCheckOut(this, '${email}')" title="Tap to check out">` +
-      `<svg class="ecg-svg" viewBox="0 0 120 24" preserveAspectRatio="none">` +
-      `<path class="ecg-path" d="M0,12 L8,12 L10,15 L13,2 L16,20 L19,12 L26,12 L29,8 L32,12 L60,12 L68,12 L70,15 L73,2 L76,20 L79,12 L86,12 L89,8 L92,12 L120,12" />` +
-      `</svg></button>`;
+      `<span class="in-dot"></span>` +
+      `<span class="in-pill">` +
+      `<svg class="in-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4.2" fill="currentColor"/><path d="M3.5 21c0-4.7 3.8-7.6 8.5-7.6s8.5 2.9 8.5 7.6z" fill="currentColor"/></svg>` +
+      `<span class="in-text">IN</span>` +
+      `</span></button>`;
   }
 
   /** The flatline markup that plays when staff taps the ECG waveform —

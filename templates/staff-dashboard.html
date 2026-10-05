@@ -570,7 +570,7 @@
     <!-- ── View Members ─────────────────── -->
     <div id="staff-members" class="sub-panel">
       <div class="page-header">
-        <div><div class="page-title">MEMBER DIRECTORY</div><div class="page-subtitle">View-only access</div></div>
+        <div><div class="page-title">MEMBER MANAGEMENT</div><div class="page-subtitle">All registered members</div></div>
         <input class="search-input" id="members-search" placeholder="Search members..." oninput="filterMembersTable()">
       </div>
 
@@ -580,17 +580,19 @@
         <button type="button" class="status-pill" data-status="active" id="members-filter-active" onclick="filterMembersByStatus('active', this)">Active</button>
         <button type="button" class="status-pill" data-status="pending" id="members-filter-pending" onclick="filterMembersByStatus('pending', this)">Pending</button>
         <button type="button" class="status-pill" data-status="expired" id="members-filter-expired" onclick="filterMembersByStatus('expired', this)">Expired</button>
+        <button type="button" class="status-pill" data-status="declined" id="members-filter-declined" onclick="filterMembersByStatus('declined', this)">Declined</button>
+        <button type="button" class="status-pill" data-status="no-plan" id="members-filter-no-plan" onclick="filterMembersByStatus('no-plan', this)">No Plan</button>
         <button type="button" class="btn btn-outline btn-sm" id="toggle-id-btn" style="margin-left:auto;" onclick="toggleMemberIdColumn()">👁 HIDE ID</button>
       </div>
 
       <div class="panel">
         <table class="data-table" id="members-table">
-          <thead><tr><th class="col-member-id">ID</th><th>Name</th><th>Plan</th><th>Expiry</th><th>Status</th></tr></thead>
+          <thead><tr><th class="col-member-id">ID</th><th>Name</th><th>Email</th><th>Plan</th><th>Expiry</th><th>Status</th></tr></thead>
           <tbody>
             {% for m in directory_members %}
             <tr data-id="{{ m.id }}" data-name="{{ m.name|lower }}"
-                data-status="{{ 'active' if m.status == 'Active' else 'pending' if m.status in ('Pending', 'Scheduled') else 'expired' if m.status == 'Expired' else 'other' }}">
-              <td class="col-member-id">#{{ m.id }}</td><td>{{ m.name }}</td><td>{{ m.plan_label }}</td><td>{{ m.expiry }}</td>
+                data-status="{{ 'active' if m.status == 'Active' else 'pending' if m.status in ('Pending', 'Scheduled') else 'expired' if m.status == 'Expired' else 'declined' if m.status == 'Declined' else 'no-plan' }}">
+              <td class="col-member-id">#{{ m.id }}</td><td>{{ m.name }}</td><td>{{ m.email }}</td><td>{{ m.plan_label }}</td><td>{{ m.expiry }}</td>
               <td>
                 {% if m.status == 'Active' %}
                 <span class="badge badge-green">Active</span>
@@ -599,7 +601,7 @@
                 {% elif m.status == 'Scheduled' %}
                 <span class="badge badge-gold">Scheduled</span>
                 {% elif m.status == 'Declined' %}
-                <span class="badge badge-muted">Declined</span>
+                <span class="badge badge-red">Declined</span>
                 {% elif m.status == 'No Plan' %}
                 <span class="badge badge-muted">No Plan</span>
                 {% else %}
@@ -608,7 +610,7 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="5" style="text-align:center;color:var(--muted);">No members yet.</td></tr>
+            <tr><td colspan="6" style="text-align:center;color:var(--muted);">No members yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -915,40 +917,6 @@
             </div>
             <button class="btn btn-red" id="cp-submit-btn" style="width:100%;margin-top:8px;display:none;" onclick="submitChangePassword()">SAVE PASSWORD</button>
           </div>
-        </div>
-      </div>
-
-      <!-- Gym Schedule (shown on the public home page, Schedule section) -->
-      <div class="panel" style="margin-top:24px;">
-        <div class="panel-header">
-          <div><div class="panel-title">Gym Schedule</div><div style="font-size:13px;color:var(--muted);margin-top:2px;">Shown on the public home page under Schedule.</div></div>
-        </div>
-        <div class="panel-body">
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">Row 1 — Days</label>
-              <input class="form-input" id="sched-weekday-label" maxlength="60" placeholder="Monday – Saturday"
-                     value="{{ gcash_settings.schedule_weekday_label if gcash_settings else '' }}">
-            </div>
-            <div class="form-group">
-              <label class="form-label">Row 1 — Hours</label>
-              <input class="form-input" id="sched-weekday-hours" maxlength="60" placeholder="6:00 AM – 10:00 PM"
-                     value="{{ gcash_settings.schedule_weekday_hours if gcash_settings else '' }}">
-            </div>
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">Row 2 — Days</label>
-              <input class="form-input" id="sched-weekend-label" maxlength="60" placeholder="Sunday"
-                     value="{{ gcash_settings.schedule_weekend_label if gcash_settings else '' }}">
-            </div>
-            <div class="form-group">
-              <label class="form-label">Row 2 — Hours</label>
-              <input class="form-input" id="sched-weekend-hours" maxlength="60" placeholder="7:00 AM – 8:00 PM"
-                     value="{{ gcash_settings.schedule_weekend_hours if gcash_settings else '' }}">
-            </div>
-          </div>
-          <button class="btn btn-red" id="schedule-settings-submit-btn" style="width:100%;margin-top:8px;" onclick="submitScheduleSettings()">SAVE GYM SCHEDULE</button>
         </div>
       </div>
 
