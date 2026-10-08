@@ -12374,6 +12374,7 @@ coach_scheduling.register(
     CoachAvailability=CoachAvailability, CoachBooking=CoachBooking,
     now_manila=_now_manila, today_manila=_today_manila,
     sessions_info=_membership_sessions_info, sync_session_expiry=_sync_session_expiry,
+    Payment=Payment,
 )
 
 

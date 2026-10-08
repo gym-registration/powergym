@@ -1376,27 +1376,6 @@ const MemberModule = (() => {
     }
   }
 
-  /** "I'll pay later" — clears out the GCash sub-fields and drops the
-   *  method selector back to its default so the member isn't left mid-form.
-   *  The Submit Payment panel itself stays put; they can come back to it
-   *  any time from the Payment tab. */
-  function deferPaymentMethod() {
-    const select = document.getElementById('payment-method-select');
-    removeGcashProof(1);
-    removeGcashProof(2);
-    removeGcashProof(3);
-    ['payment-gcash-sender', 'payment-gcash-date', 'payment-gcash-time', 'payment-gcash-reference'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.value = '';
-    });
-    _recomputeGcashTotalAmount(); // clears the computed total and resets the red/green styling too
-    if (select) {
-      select.value = 'cash';
-      togglePaymentProofField(select);
-    }
-    showToast("No problem — come back to the Payment tab whenever you're ready.", 'success');
-  }
-
   /** slot is 1, 2, or 3 — 1 is the required/primary screenshot (ids have
    *  no suffix for the file/preview elements), 2 and 3 are the optional
    *  extra ones (ids end in "-2"/"-3"). Every attached screenshot gets
@@ -3702,7 +3681,7 @@ const MemberModule = (() => {
     feedbackWizardNext, feedbackWizardBack, selectFeedbackRecommend, dismissFeedbackModal, submitMemberFeedback,
     openFeedbackOnDemand,
     togglePaymentProofField, previewGcashProof, removeGcashProof, openGcashProofPreview, submitPaymentMethod,
-    copyGcashNumber, deferPaymentMethod,
+    copyGcashNumber,
     cancelSubmitPayment, confirmSubmitPayment, closePaymentSubmitSuccessModal,
     changeProfilePicture,
     changeAttendanceMonth, openServiceModal, openEquipmentModal, openExerciseInstructionsModal,
@@ -3769,7 +3748,6 @@ document.addEventListener('DOMContentLoaded', () => {
   window.openGcashProofPreview   = (slot) => MemberModule.openGcashProofPreview(slot);
   window.submitPaymentMethod     = () => MemberModule.submitPaymentMethod();
   window.copyGcashNumber         = (btn) => MemberModule.copyGcashNumber(btn);
-  window.deferPaymentMethod      = () => MemberModule.deferPaymentMethod();
   window.cancelSubmitPayment     = () => MemberModule.cancelSubmitPayment();
   window.confirmSubmitPayment    = () => MemberModule.confirmSubmitPayment();
   window.closePaymentSubmitSuccessModal = () => MemberModule.closePaymentSubmitSuccessModal();

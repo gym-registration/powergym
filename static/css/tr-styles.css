@@ -2117,7 +2117,6 @@ select.form-input option:focus {
 
 .gcash-pay-actions { display: flex; gap: 12px; margin-top: 20px; flex-wrap: wrap; }
 .gcash-pay-actions .btn { flex: 1 1 160px; justify-content: center; }
-#payment-later-btn { flex-grow: 0.6; }
 
 .gcash-reminder-list { padding-left: 20px; margin: 0 0 4px; color: var(--muted); font-size: 14px; line-height: 1.8; }
 .gcash-reminder-list li::marker { color: var(--red); }

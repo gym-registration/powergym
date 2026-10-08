@@ -40,7 +40,7 @@ DEFAULT_SLOT_MINUTES = 60
 
 
 def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBooking,
-             now_manila, today_manila, sessions_info, sync_session_expiry):
+             now_manila, today_manila, sessions_info, sync_session_expiry, Payment):
 
     # ── helpers ────────────────────────────────────────────────────────
     def _now():
@@ -106,6 +106,18 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
             return m, {'enabled': False, 'total': 0, 'used': 0, 'left': 0, 'reserved': reserved}
         return m, {'enabled': True, 'total': info['total'], 'used': info['used'],
                    'left': info['left'], 'reserved': reserved}
+
+    def _assigned_coach(member_id):
+        """The coach this member chose when they availed their plan/promo — taken from
+        their most recent payment record (same source the My Membership page uses).
+        None when they never picked a coach."""
+        p = (Payment.query
+             .filter(Payment.member_id == member_id,
+                     Payment.status.notin_(('rejected', 'cancelled')))
+             .order_by(Payment.paid_at.desc()).first())
+        if p is None or not p.wants_coach or not p.coach_name:
+            return None
+        return Coach.query.filter_by(name=p.coach_name, is_active=True).first()
 
     def _coach_photo(c):
         return url_for('static', filename=c.photo_path) if c.photo_path else ''
@@ -228,7 +240,9 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
                 mine.append(b)
 
         coaches_out = []
-        for c in Coach.query.filter_by(is_active=True).order_by(Coach.name).all():
+        # Members only see the coach they chose when availing their promo.
+        mine_coach = _assigned_coach(user.id)
+        for c in ([mine_coach] if mine_coach else []):
             slots = []
             for st, dur in _coach_slot_defs(c, day.weekday()):
                 start = datetime.combine(day, st)
@@ -254,7 +268,8 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
                 'slots': slots,
             })
         _, credits = _credits(user.id)
-        return jsonify(success=True, date=day.strftime('%Y-%m-%d'), coaches=coaches_out, credits=credits)
+        return jsonify(success=True, date=day.strftime('%Y-%m-%d'), coaches=coaches_out, credits=credits,
+                       no_coach=mine_coach is None)
 
     @app.route('/member/coach-scheduling/overview', methods=['GET'])
     def cs_overview():
@@ -290,6 +305,13 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
             coach_id = int(data.get('coach_id'))
         except (TypeError, ValueError):
             coach_id = None
+
+        assigned = _assigned_coach(user.id)
+        if assigned is None:
+            return jsonify(success=False, code='no_coach',
+                           error='You need to avail a coach from the promo first before you can book a session.'), 403
+        if coach_id != assigned.id:
+            return jsonify(success=False, error='You can only book your chosen coach.'), 403
 
         try:
             # Lock the membership row so two quick requests can't both pass the credit check.
@@ -367,6 +389,9 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
             coach_id = int(data.get('coach_id'))
         except (TypeError, ValueError):
             coach_id = None
+        assigned = _assigned_coach(user.id)
+        if assigned is None or coach_id != assigned.id:
+            return jsonify(success=False, error='You can only book your chosen coach.'), 403
         try:
             b, problem = _own_active_booking(user, data.get('booking_id'))
             if problem:

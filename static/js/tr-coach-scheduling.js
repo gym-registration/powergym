@@ -254,6 +254,14 @@
       return;
     }
     const block = creditBlock();
+    if (block === 'none_plan') {
+      // Regular (non-session) membership: coach scheduling doesn't apply, so show only this notice.
+      view.innerHTML = '<div class="cs-panel"><div class="cs-empty">' +
+        '<b>Coach Scheduling is not applicable to your current membership.</b><br>' +
+        'It is only available with a coach promo (e.g. 16 Sessions). Avail one from My Membership to start booking coach sessions.' +
+        '</div></div>';
+      return;
+    }
     const blockMsg = {
       none_plan: 'Coach sessions are included with a session-based plan, and you don’t have one active right now. Check My Membership to get one.',
       zero: 'You have no coach sessions left, so booking is turned off. Renew from My Membership to book again.',
@@ -271,14 +279,16 @@
     html += '<div class="cs-panel" style="margin-bottom:20px;">' +
       '<div class="cs-step">' + ICON_CAL + '<span>1. Select Date</span></div>' +
       '<div class="cs-date-row"><label class="cs-date-input"><input type="date" id="cs-date" value="' + esc(state.date) + '" min="' + esc(min) + '" max="' + esc(max) + '" aria-label="Select date"></label>' + stripHtml() + '</div>' +
-      '<div class="cs-step">' + ICON_USER + '<span>2. Choose a Coach</span></div>';
+      '<div class="cs-step">' + ICON_USER + '<span>2. Your Coach</span></div>';
 
     if (state.error && !state.slots) {
       html += '<div class="cs-alert warn">' + esc(state.error) + '</div>';
     } else if (!state.slots) {
       html += '<div class="cs-loading">Loading coaches…</div>';
+    } else if (state.slots.no_coach) {
+      html += '<div class="cs-empty">You don’t have a coach yet. Please avail a coach from the promo first (see My Membership) to book coach sessions.</div>';
     } else if (!state.slots.coaches.length) {
-      html += '<div class="cs-empty">No coaches are available right now. Please check back soon.</div>';
+      html += '<div class="cs-empty">Your coach is not available right now. Please check back soon.</div>';
     } else {
       html += '<div class="cs-coaches">' + state.slots.coaches.map((c) => coachCardHtml(c, !!block)).join('') + '</div>';
     }
