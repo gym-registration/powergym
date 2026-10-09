@@ -52,7 +52,11 @@
   const label12 = (hhmm) => { const m = toMin(hhmm); if (m == null) return ''; const h = Math.floor(m / 60); return ((h % 12) || 12) + ':' + String(m % 60).padStart(2, '0') + ' ' + (h < 12 ? 'AM' : 'PM'); };
 
   function toast(msg, type) {
-    if (typeof window.showToast === 'function') window.showToast(esc(msg), type || 'success');
+    // showToast() writes HTML, but long errors open showErrorModal(), which writes plain text:
+    // pre-escaping there would print "&#39;" instead of an apostrophe. Send raw text to the modal.
+    const t = type || 'success', safe = esc(msg);
+    if (t === 'error' && safe.length > 70 && typeof window.showErrorModal === 'function') window.showErrorModal(String(msg));
+    else if (typeof window.showToast === 'function') window.showToast(safe, t);
     else window.alert(msg);
   }
 

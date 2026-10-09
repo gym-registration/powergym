@@ -16,6 +16,9 @@ Business rules (all enforced SERVER-SIDE, the UI only mirrors them):
     day until staff press "Mark available" (the coach tells staff they are free).
     The release is per coach per day (CoachDayRelease).
   * Staff are notified of every new booking (pending requests badge + alert).
+  * When staff cancel/decline a booking the MEMBER is told right away: a CoachBookingNotice is
+    saved in the same transaction, the member's dashboard polls /member/coach-scheduling/notices
+    every few seconds and pops it up, and it stays in the notification bell.
   * Members get a reminder when their booked session is within an hour (REMINDER_MINUTES).
   * Double-booking is impossible: checked in code AND backed by UNIQUE keys on
     CoachBooking (coach_key / member_key) so a race between two requests fails
@@ -53,7 +56,7 @@ DEFAULT_SLOT_MINUTES = 60
 
 
 def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBooking, CoachDayRelease,
-             now_manila, today_manila, sessions_info, sync_session_expiry, Payment):
+             CoachBookingNotice, now_manila, today_manila, sessions_info, sync_session_expiry, Payment):
 
     # ── helpers ────────────────────────────────────────────────────────
     def _now():
@@ -249,18 +252,22 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
             return None, None, 'That coach is not available.'
         if start is None or end is None:
             return coach, None, 'Please choose a start time and an end time.'
+        # Working hours come FIRST so a time outside them says so (not "end must be after start").
+        window = _coach_window(coach, start.date())
+        if window is None:
+            return coach, end, f'{coach.name} does not work on that day.'
+        if start < window[0] or start >= window[1] or end <= window[0] or end > window[1]:
+            return coach, end, (f'{coach.name} is not available at that time. They work '
+                                f'{_fmt_time(window[0])} – {_fmt_time(window[1])} that day. '
+                                'Please choose a time inside those hours.')
         if end.date() != start.date():
             return coach, end, 'A session has to start and end on the same day.'
+        if end <= start:
+            return coach, end, 'The end time must be after the start time.'
         if (end - start) < timedelta(minutes=MIN_SESSION_MINUTES):
             return coach, end, f'A session must be at least {MIN_SESSION_MINUTES} minutes long.'
         if start <= _now():
             return coach, end, 'That time has already passed.'
-        window = _coach_window(coach, start.date())
-        if window is None:
-            return coach, end, f'{coach.name} does not work on that day.'
-        if start < window[0] or end > window[1]:
-            return coach, end, (f'{coach.name} works {_fmt_time(window[0])} – {_fmt_time(window[1])} that day. '
-                                'Please choose a time inside those hours.')
 
         # 0a) One coach session per member per day.
         if member_id:
@@ -408,6 +415,34 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
                        upcoming=upcoming, history=history, reminder=_reminder_for(user.id, now),
                        today=today.strftime('%Y-%m-%d'),
                        last_date=None)       # no limit on how far ahead a member may book
+
+    @app.route('/member/coach-scheduling/notices', methods=['GET'])
+    def cs_notices():
+        """Undelivered staff messages about this member's bookings (cancelled / declined).
+        Polled every few seconds by the dashboard so the member is told immediately."""
+        user, err = _member_or_error()
+        if err:
+            return err
+        rows = (CoachBookingNotice.query
+                .filter_by(member_id=user.id, delivered_at=None)
+                .order_by(CoachBookingNotice.created_at).limit(10).all())
+        return jsonify(success=True, notices=[
+            {'id': n.id, 'booking_id': n.booking_id, 'title': n.title, 'message': n.message} for n in rows])
+
+    @app.route('/member/coach-scheduling/notices/seen', methods=['POST'])
+    def cs_notices_seen():
+        user, err = _member_or_error()
+        if err:
+            return err
+        data = request.get_json(silent=True) or {}
+        ids = [i for i in (data.get('ids') or []) if isinstance(i, int)][:50]
+        if ids:
+            (CoachBookingNotice.query
+             .filter(CoachBookingNotice.member_id == user.id, CoachBookingNotice.id.in_(ids),
+                     CoachBookingNotice.delivered_at.is_(None))
+             .update({'delivered_at': _utcnow()}, synchronize_session=False))
+            db.session.commit()
+        return jsonify(success=True)
 
     # ── member: write endpoints ────────────────────────────────────────
     @app.route('/member/coach-scheduling/book', methods=['POST'])
@@ -609,6 +644,7 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
             db.session.rollback()
             return jsonify(success=False, error='This session hasn\'t started yet.'), 409
 
+        was_confirmed = (b.status == 'confirmed')
         credits_left = None
         if new_status == 'completed':
             membership, credits = _credits(b.member_id, lock=True)
@@ -628,6 +664,20 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
                 b.coach_key = b.member_key = None
                 if new_status == 'cancelled':
                     b.cancelled_at = _utcnow()
+                    # Tell the member right away (same transaction as the cancellation itself).
+                    when = (f'{b.slot_start.strftime("%A, %b")} {b.slot_start.day} · '
+                            f'{_fmt_time(b.slot_start)} – {_fmt_time(b.slot_end)}')
+                    who = b.coach.name if b.coach else (b.coach_name or 'your coach')
+                    if was_confirmed:
+                        title = 'Coach session cancelled'
+                        msg = (f'Your confirmed session with {who} on {when} was cancelled by the gym staff. '
+                               'No session was deducted. Please book another time from Coach Scheduling.')
+                    else:
+                        title = 'Coach session declined'
+                        msg = (f'Your session request with {who} on {when} was declined by the gym staff. '
+                               'No session was deducted. You can book another time from Coach Scheduling.')
+                    db.session.add(CoachBookingNotice(member_id=b.member_id, booking_id=b.id,
+                                                      title=title, message=msg))
         db.session.commit()
         return jsonify(success=True, message=f'Booking marked {STATUS_LABELS[new_status].lower()}.',
                        booking=_booking_json(b), credits_left=credits_left)

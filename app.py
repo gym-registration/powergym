@@ -1610,6 +1610,21 @@ class CoachDayRelease(db.Model):
     __table_args__ = (db.UniqueConstraint('coach_id', 'day', name='uq_coach_day_release'),)
 
 
+class CoachBookingNotice(db.Model):
+    """A message for a MEMBER about their coach booking — currently: staff cancelled or
+    declined it. Shown as a pop-up within seconds (the dashboard polls for undelivered
+    rows) and kept in the notification bell. created_at / delivered_at are naive UTC.
+    A brand-new table like this is created automatically by db.create_all()."""
+    __tablename__ = 'coach_booking_notices'
+    id           = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    member_id    = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    booking_id   = db.Column(db.Integer, nullable=True)
+    title        = db.Column(db.String(80), nullable=False, default='Coach session update')
+    message      = db.Column(db.Text, nullable=False)
+    created_at   = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    delivered_at = db.Column(db.DateTime, nullable=True, index=True)
+
+
 class Payment(db.Model):
     __tablename__    = 'payments'
     id               = db.Column(db.Integer, primary_key=True, autoincrement=True)
@@ -9393,6 +9408,18 @@ def member():
                 'date_sort': r.created_at,
                 'date': _to_manila(r.created_at).strftime('%b %d, %Y · %I:%M %p') if r.created_at else '',
             } for r in reminder_history
+        ] + [
+            {
+                'type': 'coach_booking',
+                'icon': '📅',
+                'title': 'Coach Schedule',
+                'subject': n.title,
+                'body': n.message,
+                'sender': 'Gym Staff',
+                'date_sort': n.created_at,
+                'date': _to_manila(n.created_at).strftime('%b %d, %Y · %I:%M %p') if n.created_at else '',
+            } for n in CoachBookingNotice.query.filter_by(member_id=user.id)
+                                         .order_by(CoachBookingNotice.created_at.desc()).limit(20).all()
         ],
         key=lambda item: item['date_sort'] or datetime.min,
         reverse=True,
@@ -12388,6 +12415,7 @@ coach_scheduling.register(
     User=User, Membership=Membership, Coach=Coach,
     CoachAvailability=CoachAvailability, CoachBooking=CoachBooking,
     CoachDayRelease=CoachDayRelease,
+    CoachBookingNotice=CoachBookingNotice,
     now_manila=_now_manila, today_manila=_today_manila,
     sessions_info=_membership_sessions_info, sync_session_expiry=_sync_session_expiry,
     Payment=Payment,

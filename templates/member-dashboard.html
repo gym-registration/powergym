@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@300;400;500;600;700&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tr-styles.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tr-chat.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/tr-coach-scheduling.css') }}?v=2">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tr-coach-scheduling.css') }}?v=3">
 </head>
 <body>
 
@@ -2334,7 +2334,7 @@
 <script id="member-dashboard-data" type="application/json">{{ {'present_days': present_days, 'no_plan_days': no_plan_days, 'days_in_month': days_in_month, 'today_day': today_day, 'year': attendance_year, 'month': attendance_month, 'plan_approved_notice': plan_approved_notice, 'payment_verified_notice': payment_verified_notice, 'plan_declined_notice': plan_declined_notice, 'feedback_prompt': feedback_prompt, 'new_announcements': new_announcements, 'bot_reminders': bot_reminders, 'notification_center': notification_center, 'notification_unread_count': notification_unread_count}|tojson }}</script>
 <script src="{{ url_for('static', filename='js/tr-common.js') }}?v=20261006"></script>
 <script src="{{ url_for('static', filename='js/tr-member.js') }}?v=20261002"></script>
-<script src="{{ url_for('static', filename='js/tr-coach-scheduling.js') }}?v=2"></script>
+<script src="{{ url_for('static', filename='js/tr-coach-scheduling.js') }}?v=4"></script>
 <script src="{{ url_for('static', filename='js/tr-chat.js') }}"></script>
 </body>
 </html>

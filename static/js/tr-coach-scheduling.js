@@ -42,7 +42,11 @@
   const initials = (name) => (String(name || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('') || '?').toUpperCase();
 
   function toast(msg, type) {
-    if (typeof window.showToast === 'function') window.showToast(esc(msg), type || 'success');
+    // showToast() writes HTML, but long errors open showErrorModal(), which writes plain text:
+    // pre-escaping there would print "&#39;" instead of an apostrophe. Send raw text to the modal.
+    const t = type || 'success', safe = esc(msg);
+    if (t === 'error' && safe.length > 70 && typeof window.showErrorModal === 'function') window.showErrorModal(String(msg));
+    else if (typeof window.showToast === 'function') window.showToast(safe, t);
     else window.alert(msg);
   }
 
@@ -224,10 +228,21 @@
   const lenText = (min) => { const h = Math.floor(min / 60), m = min % 60; return (h ? h + ' hr' + (h > 1 ? 's' : '') : '') + (h && m ? ' ' : '') + (m ? m + ' min' : ''); };
   const QUICK = [30, 60, 90, 120];
 
-  /** '' when the chosen times are fine, otherwise the reason (mirrors the server's checks). */
+  /** '' when the chosen times are fine, otherwise the reason (mirrors the server's checks).
+   *  Order matters: the coach's WORKING HOURS are checked first, so a time outside them says so
+   *  instead of a confusing "end must be after start" / "at least 15 minutes" (e.g. 11 PM → 12 AM). */
   function pickProblem(c) {
     const a = toMin(state.pick.from), b = toMin(state.pick.to);
     if (a == null || b == null) return 'Choose a start time and an end time.';
+    const w = c.window;
+    if (w) {
+      const lo = toMin(w.start), hi = toMin(w.end);
+      // An end of 12:00 AM is midnight (00:00), which is before any same-day working hours.
+      if (a < lo || a >= hi || b <= lo || b > hi) {
+        return 'Your coach isn’t available then. Working hours: ' + w.start_label + ' – ' + w.end_label + '.';
+      }
+    }
+    if (b <= a) return 'The end time must be after the start time.';
     if (b - a < (c.min_minutes || 15)) return 'A session must be at least ' + (c.min_minutes || 15) + ' minutes long.';
     const fits = (c.free || []).some((f) => a >= toMin(f.start) && b <= toMin(f.end));
     if (!fits) return 'That time isn’t free. Pick a time inside one of the open stretches above.';
@@ -237,9 +252,9 @@
   function pickSummaryHtml(c) {
     const a = toMin(state.pick.from), b = toMin(state.pick.to);
     if (a == null || b == null) return 'Choose when you want to start and how long you want to train.';
-    if (b <= a) return 'The end time must be after the start time.';
     const bad = pickProblem(c);
-    return (bad ? '⚠ ' + esc(bad) + ' ' : '✓ ') + '<b>' + esc(label12(state.pick.from)) + ' – ' + esc(label12(state.pick.to)) + '</b> · ' + esc(lenText(b - a));
+    const range = b > a ? '<b>' + esc(label12(state.pick.from)) + ' – ' + esc(label12(state.pick.to)) + '</b> · ' + esc(lenText(b - a)) : '';
+    return bad ? '⚠ ' + esc(bad) + (range ? ' ' + range : '') : '✓ ' + range;
   }
 
   function coachCardHtml(c, blocked) {
@@ -587,8 +602,34 @@
   checkReminder();
   setInterval(() => { if (!document.hidden) checkReminder(); }, 60000);
 
+  /* ── staff cancelled / declined my booking: tell me right away ──
+     Polled every few seconds (cheap indexed query) while the dashboard is open, on any tab. */
+  const shownNotice = {};
+  let noticeBusy = false;
+  async function checkNotices() {
+    if (noticeBusy) return;
+    noticeBusy = true;
+    try {
+      const r = await api('/member/coach-scheduling/notices');
+      const fresh = r && r.success ? (r.notices || []).filter((n) => !shownNotice[n.id]) : [];
+      if (!fresh.length) return;
+      fresh.forEach((n) => { shownNotice[n.id] = true; });
+      await api('/member/coach-scheduling/notices/seen', { ids: fresh.map((n) => n.id) });
+      // Update anything the member is looking at: bookings/credits, open times and the 1-hour reminder.
+      if (state.overview) refreshAfterChange();
+      checkReminder();
+      const last = fresh[fresh.length - 1];
+      const text = fresh.length > 1 ? fresh.map((n) => n.message).join(' ') : last.message;
+      if (typeof window.showErrorModal === 'function') window.showErrorModal(text, String(last.title || 'Coach session update').toUpperCase());
+      else window.alert(text);
+    } finally { noticeBusy = false; }
+  }
+  checkNotices();
+  setInterval(() => { if (!document.hidden) checkNotices(); }, 10000);
+
   // Slots change as other members book: re-check when the page regains focus.
   document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') checkNotices();
     if (document.visibilityState === 'visible') checkReminder();
     if (document.visibilityState === 'visible' && isActive() && state.overview) refreshAfterChange();
   });

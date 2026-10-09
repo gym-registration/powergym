@@ -67,14 +67,14 @@
 /* coach cards */
 .cs-coaches { display: flex; flex-direction: column; gap: 14px; }
 .cs-coach {
-  /* Coach on top (profile left, Book button right), time slots underneath in their own row. */
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "info book" "slots slots";
-  gap: 18px 20px; align-items: center;
+  /* Stacked: coach profile, then the time picker (chips / start-end inputs / busy list), then the Book button.
+     (Was a fixed "info | book / slots" grid; the picker's extra rows had no grid area and crushed the name column.) */
+  display: flex; flex-direction: column; align-items: stretch; gap: 16px; min-width: 0;
   background: var(--cs-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px 22px;
   transition: border-color .2s, box-shadow .2s;
 }
 .cs-coach.selected { border: 2px solid var(--green); box-shadow: 0 0 18px rgba(0,230,118,.22); padding: 19px 21px; }
-.cs-coach-info { grid-area: info; display: flex; gap: 16px; align-items: center; min-width: 0; }
+.cs-coach-info { display: flex; gap: 16px; align-items: center; min-width: 0; }
 .cs-avatar {
   position: relative; overflow: hidden;
   flex: 0 0 82px; width: 82px; height: 82px; border-radius: 50%; border: 2px solid var(--border);
@@ -94,7 +94,7 @@
   grid-area: slots; display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 10px;
   padding-top: 18px; border-top: 1px solid var(--border);
 }
-.cs-book-btn { grid-area: book; min-width: 160px; }
+.cs-book-btn { min-width: 160px; }
 .cs-slot {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 10px 6px; min-height: 58px;
   background: transparent; border: 1px solid var(--green); border-radius: 6px; color: #fff;
@@ -210,8 +210,6 @@
   .cs-credits { grid-column: 1 / -1; }
 }
 @media (max-width: 1100px) {
-  .cs-coach { grid-template-columns: minmax(0,1fr); grid-template-areas: "info" "slots" "book"; }
-  .cs-book-btn { max-width: 260px; }
 }
 @media (max-width: 760px) {
   .cs-title { font-size: 34px; }
@@ -232,6 +230,7 @@
 
 /* Member-chosen session time (start + length) */
 .cs-pick-label { color: var(--muted); font-size: 14px; margin: 12px 0 6px; }
+.cs-coach > * { min-width: 0; }
 .cs-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .cs-chip { background: transparent; color: var(--white); border: 1px solid var(--border); border-radius: 999px; padding: 7px 14px; font: 600 14px 'Barlow', sans-serif; cursor: pointer; }
 .cs-chip:not(:disabled):hover { background: rgba(0,230,118,.10); border-color: var(--green); }
