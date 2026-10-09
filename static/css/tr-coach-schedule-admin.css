@@ -151,3 +151,29 @@
 .csa-hours-label { font: 700 12px 'Barlow', sans-serif; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
 .csa-hours .csa-input, .csa-hours .csa-select { min-height: 34px; padding: 5px 10px; font-size: 14px; }
 .csa-hours .csa-btn { padding: 6px 12px; }
+
+/* Coach availability — one clean row per day */
+.csa-av-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.csa-av-note { margin: 0 0 16px; font-size: 14px; line-height: 1.5; }
+.csa-wk { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.csa-wk-row { display: grid; grid-template-columns: 140px 150px minmax(0, 1fr) 150px; align-items: center; gap: 14px; padding: 14px 18px; border-top: 1px solid var(--border); }
+.csa-wk-row:first-child { border-top: 0; }
+.csa-wk-row.bad { background: rgba(230,30,37,.08); }
+.csa-wk-row.bad .csa-input { border-color: var(--red); }
+.csa-wk-day { font-size: 18px; font-weight: 700; color: var(--white); }
+.csa-wk-state { display: flex; align-items: center; gap: 10px; }
+.csa-wk-state-text { font-size: 14px; color: var(--muted); }
+.csa-wk-row:not(.off) .csa-wk-state-text { color: var(--green); }
+.csa-wk-times { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.csa-wk-none { color: var(--muted); font-size: 14px; }
+.csa-wk-len { text-align: right; font-size: 14px; color: var(--muted); }
+.csa-switch { position: relative; width: 46px; height: 26px; border-radius: 999px; border: 1px solid var(--border); background: rgba(255,255,255,.08); cursor: pointer; padding: 0; transition: background .2s; flex: none; }
+.csa-switch span { position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: #c7c7cf; transition: transform .2s, background .2s; }
+.csa-switch.on { background: rgba(0,230,118,.25); border-color: var(--green); }
+.csa-switch.on span { transform: translateX(20px); background: var(--green); }
+.csa-switch:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+@media (max-width: 760px) {
+  .csa-wk-row { grid-template-columns: 1fr auto; row-gap: 10px; }
+  .csa-wk-times { grid-column: 1 / -1; }
+  .csa-wk-len { grid-column: 1 / -1; text-align: left; }
+}

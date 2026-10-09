@@ -17,12 +17,12 @@
   const state = {
     tab: 'book',
     pastFilter: 'upcoming',        // My Bookings segment: upcoming | past | all
-    today: null, lastDate: null,   // 'YYYY-MM-DD' from the server (gym-local time)
+    today: null, lastDate: null,   // today 'YYYY-MM-DD' from the server (gym-local time); lastDate null = no booking limit
     date: null,                    // selected booking date
     stripStart: null,              // first day shown in the day strip
     overview: null,                // credits, bookings, upcoming, history
     slots: null,                   // coaches + slot states for state.date
-    picked: null,                  // { coachId, coachName, start, label }
+    pick: { from: '', to: '' },    // the member's own start/end ('HH:MM') for the chosen day
     rescheduling: null,            // booking object being moved, if any
     cal: null,                     // { y, m } month shown in Schedule
     calSel: null,                  // selected 'YYYY-MM-DD' in Schedule
@@ -91,7 +91,8 @@
 
   async function loadSlots() {
     if (!state.date) return;
-    const data = await api('/member/coach-scheduling/slots?date=' + encodeURIComponent(state.date));
+    const data = await api('/member/coach-scheduling/slots?date=' + encodeURIComponent(state.date) +
+      (state.rescheduling ? '&ignore_booking=' + encodeURIComponent(state.rescheduling.id) : ''));
     if (!data.success) {
       state.slots = null;
       state.error = data.error || 'Could not load coach availability.';
@@ -100,12 +101,6 @@
     state.slots = data;
     state.error = '';
     if (state.overview) state.overview.credits = data.credits;
-    // A pick the server no longer reports as available is dropped.
-    if (state.picked) {
-      const coach = data.coaches.find((c) => c.id === state.picked.coachId);
-      const slot = coach && coach.slots.find((s) => s.start === state.picked.start);
-      if (!slot || slot.state !== 'available') state.picked = null;
-    }
   }
 
   async function refresh() {
@@ -209,39 +204,78 @@
     for (let i = 0; i < 7; i++) {
       const s = addDays(state.stripStart, i);
       const d = parseYmd(s);
-      const out = s > state.lastDate;
+      const out = !!state.lastDate && s > state.lastDate;
       days.push(
         '<button type="button" class="cs-daybtn' + (s === state.date ? ' active' : '') + '" data-day="' + s + '"' + (out ? ' disabled' : '') + ' aria-pressed="' + (s === state.date) + '">' +
         '<span>' + DOW[d.getDay()] + '</span><span>' + MONTHS[d.getMonth()] + ' ' + d.getDate() + '</span></button>');
     }
     const prevOff = state.stripStart <= state.today;
-    const nextOff = addDays(state.stripStart, 7) > state.lastDate;
+    const nextOff = !!state.lastDate && addDays(state.stripStart, 7) > state.lastDate;
     return '<div class="cs-strip">' +
       '<button type="button" class="cs-strip-arrow" data-strip="-1"' + (prevOff ? ' disabled' : '') + ' aria-label="Previous days">‹</button>' +
       '<div class="cs-days">' + days.join('') + '</div>' +
       '<button type="button" class="cs-strip-arrow" data-strip="1"' + (nextOff ? ' disabled' : '') + ' aria-label="Next days">›</button></div>';
   }
 
+  /* The MEMBER decides when the session starts and how long it lasts (no fixed slot lengths). */
+  const toMin = (hhmm) => { const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || ''); return m ? (+m[1]) * 60 + (+m[2]) : null; };
+  const toHHMM = (min) => pad(Math.floor(min / 60)) + ':' + pad(min % 60);
+  const label12 = (hhmm) => { const m = toMin(hhmm); if (m == null) return ''; const h = Math.floor(m / 60); return ((h % 12) || 12) + ':' + pad(m % 60) + ' ' + (h < 12 ? 'AM' : 'PM'); };
+  const lenText = (min) => { const h = Math.floor(min / 60), m = min % 60; return (h ? h + ' hr' + (h > 1 ? 's' : '') : '') + (h && m ? ' ' : '') + (m ? m + ' min' : ''); };
+  const QUICK = [30, 60, 90, 120];
+
+  /** '' when the chosen times are fine, otherwise the reason (mirrors the server's checks). */
+  function pickProblem(c) {
+    const a = toMin(state.pick.from), b = toMin(state.pick.to);
+    if (a == null || b == null) return 'Choose a start time and an end time.';
+    if (b - a < (c.min_minutes || 15)) return 'A session must be at least ' + (c.min_minutes || 15) + ' minutes long.';
+    const fits = (c.free || []).some((f) => a >= toMin(f.start) && b <= toMin(f.end));
+    if (!fits) return 'That time isn’t free. Pick a time inside one of the open stretches above.';
+    return '';
+  }
+
+  function pickSummaryHtml(c) {
+    const a = toMin(state.pick.from), b = toMin(state.pick.to);
+    if (a == null || b == null) return 'Choose when you want to start and how long you want to train.';
+    if (b <= a) return 'The end time must be after the start time.';
+    const bad = pickProblem(c);
+    return (bad ? '⚠ ' + esc(bad) + ' ' : '✓ ') + '<b>' + esc(label12(state.pick.from)) + ' – ' + esc(label12(state.pick.to)) + '</b> · ' + esc(lenText(b - a));
+  }
+
   function coachCardHtml(c, blocked) {
-    const picked = state.picked && state.picked.coachId === c.id;
-    const slots = c.slots.length
-      ? c.slots.map((s) => {
-        const can = s.state === 'available' && !blocked;
-        const label = s.state === 'available' ? 'Available' : s.state === 'booked' ? 'Booked' : s.state === 'past' ? 'Passed' : 'Unavailable';
-        const chosen = picked && state.picked.start === s.start;
-        return '<button type="button" class="cs-slot' + (chosen ? ' chosen' : '') + '" data-slot="' + esc(s.start) + '" data-coach="' + c.id + '"' + (can ? '' : ' disabled') + ' aria-pressed="' + !!chosen + '">' +
-          '<span>' + esc(s.label) + '</span><small>' + label + '</small></button>';
-      }).join('')
-      : '<div class="cs-noslots">No time slots for this day.</div>';
-    const availText = c.has_available ? 'Available' : (c.slots.length ? 'Fully booked' : 'Not available');
-    return '<div class="cs-coach' + (picked ? ' selected' : '') + '" data-coach-card="' + c.id + '">' +
+    const free = c.free || [];
+    const busy = (c.busy || []).map((x) => esc(x.start_label) + ' – ' + esc(x.end_label) + (x.mine ? ' (you)' : '')).join(', ');
+    let body;
+    if (!c.window) {
+      body = '<div class="cs-noslots">Your coach doesn’t work on this day. Please pick another date.</div>';
+    } else if (c.member_has_day_booking && !state.rescheduling) {
+      body = '<div class="cs-alert info" style="margin:0;">You already have a session with your coach on this day. Only one session per day is allowed — pick another date.</div>';
+    } else if (c.day_held) {
+      body = '<div class="cs-alert info" style="margin:0;">Your coach just finished a session. The rest of today opens up again once the gym staff confirm your coach is free.</div>';
+    } else if (!free.length) {
+      body = '<div class="cs-noslots">Your coach is fully booked for the rest of this day.</div>';
+    } else {
+      const chips = free.map((f) => '<button type="button" class="cs-chip" data-fillrange="' + esc(f.start) + '|' + esc(f.end) + '"' + (blocked ? ' disabled' : '') + '>' + esc(f.start_label) + ' – ' + esc(f.end_label) + '</button>').join('');
+      const quick = QUICK.map((m) => '<button type="button" class="cs-chip" data-dur="' + m + '"' + (blocked ? ' disabled' : '') + '>' + esc(lenText(m)) + '</button>').join('');
+      body = '<div class="cs-pick-label">Open times (tap one to use all of it, or set your own below)</div>' +
+        '<div class="cs-chips">' + chips + '</div>' +
+        '<div class="cs-time-row">' +
+        '<label>Start<input type="time" step="900" data-pick="from" value="' + esc(state.pick.from) + '"' + (blocked ? ' disabled' : '') + '></label>' +
+        '<label>End<input type="time" step="900" data-pick="to" value="' + esc(state.pick.to) + '"' + (blocked ? ' disabled' : '') + '></label></div>' +
+        '<div class="cs-pick-label">Quick length</div><div class="cs-chips">' + quick + '</div>' +
+        '<div class="cs-pick-summary" data-pick-summary="' + c.id + '">' + pickSummaryHtml(c) + '</div>';
+    }
+    const canBook = !blocked && free.length > 0 && !(c.member_has_day_booking && !state.rescheduling) && !c.day_held;
+    return '<div class="cs-coach" data-coach-card="' + c.id + '">' +
       '<div class="cs-coach-info">' + avatar(c.photo, c.name) +
       '<div class="cs-coach-text"><div class="cs-coach-name">' + esc(c.name) + '</div>' +
-      '<div class="cs-avail' + (c.has_available ? '' : ' none') + '">' + availText + '</div>' +
+      '<div class="cs-avail' + (c.has_available ? '' : ' none') + '">' + (c.has_available ? 'Available' : (c.window ? 'Not available' : 'Day off')) + '</div>' +
+      (c.window ? '<div class="cs-spec">Working hours: ' + esc(c.window.start_label) + ' – ' + esc(c.window.end_label) + '</div>' : '') +
       (c.specialization ? '<div class="cs-spec">' + esc(c.specialization) + '</div>' : '') +
       (c.bio ? '<div class="cs-bio">' + esc(c.bio) + '</div>' : '') + '</div></div>' +
-      '<div class="cs-slots">' + slots + '</div>' +
-      '<button type="button" class="cs-btn cs-book-btn' + (picked ? ' red' : '') + '" data-book="' + c.id + '"' + (blocked ? ' disabled' : '') + '>' +
+      body +
+      (busy ? '<div class="cs-busy">Already booked: ' + busy + '</div>' : '') +
+      '<button type="button" class="cs-btn cs-book-btn red" data-book="' + c.id + '"' + (canBook ? '' : ' disabled') + '>' +
       (state.rescheduling ? 'Move Session' : 'Book Session') + '</button></div>';
   }
 
@@ -268,6 +302,8 @@
       reserved: 'All of your remaining sessions are already reserved by upcoming bookings. Cancel one to book a different time.',
     }[block] || '';
     let html = '';
+    const rem = state.overview.reminder;
+    if (rem) html += '<div class="cs-alert info"><span>⏰ <b>' + esc(rem.message) + '</b>' + (rem.status === 'pending' ? ' It is still waiting for staff confirmation.' : '') + '</span></div>';
     if (state.rescheduling) {
       const r = state.rescheduling;
       html += '<div class="cs-alert info"><span>Moving your session with <b>' + esc(r.coach_name) + '</b> on ' + esc(fmtShort(r.date)) + ' at ' + esc(r.start_label) +
@@ -278,7 +314,7 @@
     const min = state.today, max = state.lastDate;
     html += '<div class="cs-panel" style="margin-bottom:20px;">' +
       '<div class="cs-step">' + ICON_CAL + '<span>1. Select Date</span></div>' +
-      '<div class="cs-date-row"><label class="cs-date-input"><input type="date" id="cs-date" value="' + esc(state.date) + '" min="' + esc(min) + '" max="' + esc(max) + '" aria-label="Select date"></label>' + stripHtml() + '</div>' +
+      '<div class="cs-date-row"><label class="cs-date-input"><input type="date" id="cs-date" value="' + esc(state.date) + '" min="' + esc(min) + '"' + (max ? ' max="' + esc(max) + '"' : '') + ' aria-label="Select date"></label>' + stripHtml() + '</div>' +
       '<div class="cs-step">' + ICON_USER + '<span>2. Your Coach</span></div>';
 
     if (state.error && !state.slots) {
@@ -377,9 +413,9 @@
   function setTab(t) { state.tab = t; render(); }
 
   async function selectDate(s) {
-    if (!s || s < state.today || s > state.lastDate) { toast('Please choose a date within the next 30 days.', 'error'); render(); return; }
+    if (!s || s < state.today || (state.lastDate && s > state.lastDate)) { toast('Please choose today or a later date.', 'error'); render(); return; }
     state.date = s;
-    state.picked = null;
+    state.pick = { from: '', to: '' };
     if (s < state.stripStart || s > addDays(state.stripStart, 6)) state.stripStart = s;
     state.slots = null;
     render();
@@ -388,32 +424,34 @@
   }
 
   async function doBook(coachId) {
-    const p = state.picked;
-    if (!p || p.coachId !== coachId) { toast('Pick an available time slot first.', 'info'); return; }
-    const coach = state.slots.coaches.find((c) => c.id === coachId);
+    const coach = state.slots && state.slots.coaches.find((c) => c.id === coachId);
+    if (!coach) return;
+    const problem = pickProblem(coach);
+    if (problem) { toast(problem, 'error'); return; }
+    const p = state.pick, mins = toMin(p.to) - toMin(p.from);
     const resched = state.rescheduling;
     const ok = await confirmDialog({
       title: resched ? 'Move Session' : 'Confirm Booking',
-      rows: [['Coach', coach.name], ['Date', fmtLong(state.date)], ['Time', p.label]],
+      rows: [['Coach', coach.name], ['Date', fmtLong(state.date)], ['Time', label12(p.from) + ' – ' + label12(p.to)], ['Length', lenText(mins)]],
       note: resched
         ? 'Your session will be moved to this time and will need to be confirmed again. No session is used until it is completed.'
-        : 'Your request will be sent for confirmation. 1 session is deducted only after the session is completed.',
+        : 'Your request will be sent to the gym staff for confirmation, and this time is held for you. 1 session is deducted only after the session is completed.',
       confirmText: resched ? 'Move Session' : 'Book Session',
     });
     if (!ok) return;
+    const body = { coach_id: coachId, slot_start: state.date + 'T' + p.from, slot_end: state.date + 'T' + p.to };
     const res = resched
-      ? await api('/member/coach-scheduling/reschedule', { booking_id: resched.id, coach_id: coachId, slot_start: p.start })
-      : await api('/member/coach-scheduling/book', { coach_id: coachId, slot_start: p.start });
+      ? await api('/member/coach-scheduling/reschedule', Object.assign({ booking_id: resched.id }, body))
+      : await api('/member/coach-scheduling/book', body);
     if (res.success) {
       toast(res.message || 'Done.', 'success');
-      state.picked = null;
+      state.pick = { from: '', to: '' };
       state.rescheduling = null;
       await refreshAfterChange();
       setTab('bookings');
     } else {
       toast(res.error || 'Could not complete that.', 'error');
-      state.picked = null;
-      await refreshAfterChange();      // the slot list may have changed under us
+      await refreshAfterChange();      // the open times may have changed under us
     }
   }
 
@@ -436,7 +474,7 @@
     const b = state.overview.bookings.find((x) => x.id === id);
     if (!b) return;
     state.rescheduling = b;
-    state.picked = null;
+    state.pick = { from: '', to: '' };
     state.tab = 'book';
     selectDate(b.date >= state.today ? b.date : state.today);
   }
@@ -459,16 +497,21 @@
       state.stripStart = s;
       return render();
     }
-    if (d.slot) {
-      const coach = state.slots && state.slots.coaches.find((c) => c.id === Number(d.coach));
-      const slot = coach && coach.slots.find((x) => x.start === d.slot);
-      if (!slot || slot.state !== 'available') return;
-      const same = state.picked && state.picked.coachId === coach.id && state.picked.start === slot.start;
-      state.picked = same ? null : { coachId: coach.id, coachName: coach.name, start: slot.start, label: slot.label };
+    if (d.fillrange) {
+      const [f, t2] = d.fillrange.split('|');
+      state.pick = { from: f, to: t2 };
+      return render();
+    }
+    if (d.dur) {
+      const coach = state.slots && state.slots.coaches[0];
+      let from = toMin(state.pick.from);
+      if (from == null && coach && coach.free && coach.free.length) from = toMin(coach.free[0].start);
+      if (from == null) return;
+      state.pick = { from: toHHMM(from), to: toHHMM(Math.min(from + Number(d.dur), 24 * 60 - 1)) };
       return render();
     }
     if (d.book) return doBook(Number(d.book));
-    if (d.reschedCancel !== undefined) { state.rescheduling = null; state.picked = null; return render(); }
+    if (d.reschedCancel !== undefined) { state.rescheduling = null; state.pick = { from: '', to: '' }; return refreshAfterChange(); }
     if (d.resched) return startReschedule(Number(d.resched));
     if (d.cancel) return doCancel(Number(d.cancel));
     if (d.seg) { state.pastFilter = d.seg; return render(); }
@@ -483,6 +526,16 @@
 
   root.addEventListener('change', (e) => {
     if (e.target && e.target.id === 'cs-date') selectDate(e.target.value);
+  });
+
+  // Typing a start/end time: update the live summary only (no re-render, so the field keeps focus).
+  root.addEventListener('input', (e) => {
+    const t = e.target;
+    if (!t || !t.matches || !t.matches('[data-pick]')) return;
+    state.pick[t.getAttribute('data-pick')] = t.value;
+    const coach = state.slots && state.slots.coaches[0];
+    const box = coach && root.querySelector('[data-pick-summary="' + coach.id + '"]');
+    if (box) box.innerHTML = pickSummaryHtml(coach);
   });
 
   /* ── hooks: load fresh data whenever the tab is opened ── */
@@ -501,8 +554,42 @@
     };
   }
 
+  /* ── 1-hour reminder (shown on any dashboard tab) ─────── */
+  const REMIND_KEY = 'cs-reminder-dismissed';
+  let dismissed = {};
+  try { dismissed = JSON.parse(sessionStorage.getItem(REMIND_KEY) || '{}'); } catch (e) { dismissed = {}; }
+  const toasted = {};
+
+  function showReminder(rem) {
+    let bar = document.getElementById('cs-reminder-bar');
+    if (!rem || dismissed[rem.booking_id]) { if (bar) bar.remove(); return; }
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'cs-reminder-bar'; bar.setAttribute('role', 'status'); bar.setAttribute('aria-live', 'polite');
+      document.body.appendChild(bar);
+    }
+    bar.innerHTML = '<div class="cs-reminder-icon">⏰</div><div class="cs-reminder-body"><b>Session in ' + esc(rem.minutes) + ' min</b>' +
+      '<span>' + esc(rem.coach_name) + ' · ' + esc(rem.start_label) + ' – ' + esc(rem.end_label) + '</span>' +
+      (rem.status === 'pending' ? '<small>Waiting for staff confirmation</small>' : '') + '</div>' +
+      '<button type="button" class="cs-reminder-x" aria-label="Dismiss reminder">✕</button>';
+    bar.querySelector('.cs-reminder-x').onclick = () => {
+      dismissed[rem.booking_id] = true;
+      try { sessionStorage.setItem(REMIND_KEY, JSON.stringify(dismissed)); } catch (e) { /* ignore */ }
+      bar.remove();
+    };
+    if (!toasted[rem.booking_id]) { toasted[rem.booking_id] = true; toast(rem.message, 'info'); }
+  }
+
+  async function checkReminder() {
+    const r = await api('/member/coach-scheduling/reminder');
+    if (r && r.success) showReminder(r.reminder);
+  }
+  checkReminder();
+  setInterval(() => { if (!document.hidden) checkReminder(); }, 60000);
+
   // Slots change as other members book: re-check when the page regains focus.
   document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') checkReminder();
     if (document.visibilityState === 'visible' && isActive() && state.overview) refreshAfterChange();
   });
 })();

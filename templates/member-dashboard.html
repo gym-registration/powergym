@@ -884,7 +884,8 @@
             </div>
             <ul class="cs-how-list">
               <li>Book a coach based on your preferred date and time.</li>
-              <li>Only available time slots can be selected.</li>
+              <li>You'll get a reminder 1 hour before your session starts.</li>
+              <li>Pick your own start time and session length within your coach's open times.</li>
               <li>You can cancel or reschedule your session before it starts.</li>
               <li>Each completed session deducts 1 from your remaining coach sessions.</li>
             </ul>
@@ -1831,7 +1832,55 @@
     <div id="coach-profile-body" style="font-size:15px;color:var(--muted);">Loading…</div>
   </div>
 </div>
+
+<!-- Full-size coach photo (opens when the photo in the profile pop-up is clicked) -->
+<style>
+  .coach-photo-zoomable { cursor: zoom-in; transition: transform .2s, box-shadow .2s; }
+  .coach-photo-zoomable:hover { transform: scale(1.05); box-shadow: 0 0 0 4px rgba(230,57,70,.25); }
+  .coach-photo-hint { font-size: 12px; color: var(--muted); margin: -6px 0 10px; }
+  #coach-photo-lightbox {
+    position: fixed; inset: 0; z-index: 10000; display: none;
+    align-items: center; justify-content: center; flex-direction: column;
+    background: rgba(0,0,0,.88); padding: 24px; cursor: zoom-out;
+  }
+  #coach-photo-lightbox.open { display: flex; animation: fadeIn .2s ease; }
+  #coach-photo-lightbox img {
+    max-width: min(92vw, 720px); max-height: 80vh; object-fit: contain;
+    border-radius: 12px; border: 3px solid var(--red); box-shadow: 0 10px 40px rgba(0,0,0,.6);
+  }
+  #coach-photo-lightbox .cpl-name {
+    margin-top: 14px; font-family: 'Bebas Neue', sans-serif; font-size: 28px;
+    letter-spacing: 2px; color: var(--white);
+  }
+  #coach-photo-lightbox .cpl-close {
+    position: absolute; top: 18px; right: 22px; background: none; border: none;
+    color: #fff; font-size: 30px; cursor: pointer; line-height: 1;
+  }
+</style>
+<div id="coach-photo-lightbox" onclick="closeCoachPhoto()" role="dialog" aria-modal="true" aria-label="Coach photo">
+  <button type="button" class="cpl-close" onclick="closeCoachPhoto()" aria-label="Close photo">✕</button>
+  <img id="coach-photo-lightbox-img" src="" alt="" onclick="event.stopPropagation()">
+  <div class="cpl-name" id="coach-photo-lightbox-name"></div>
+</div>
 <script>
+  function openCoachPhoto(url, name) {
+    var box = document.getElementById('coach-photo-lightbox');
+    var img = document.getElementById('coach-photo-lightbox-img');
+    img.src = url; img.alt = name || 'Coach photo';
+    document.getElementById('coach-photo-lightbox-name').textContent = name || '';
+    box.classList.add('open');
+  }
+  function closeCoachPhoto() {
+    document.getElementById('coach-photo-lightbox').classList.remove('open');
+  }
+  document.addEventListener('keydown', function (e) {
+    var box = document.getElementById('coach-photo-lightbox');
+    if (e.key === 'Escape' && box && box.classList.contains('open')) {
+      closeCoachPhoto();
+      e.stopImmediatePropagation();
+    }
+  }, true);
+
   function openCoachProfile(coachId) {
     var body = document.getElementById('coach-profile-body');
     body.textContent = 'Loading…';
@@ -1858,8 +1907,19 @@
 
         if (c.photo_url) {
           var img = el('img', 'width:120px;height:120px;border-radius:50%;object-fit:cover;border:3px solid var(--red);margin-bottom:12px;');
+          img.className = 'coach-photo-zoomable';
           img.src = c.photo_url; img.alt = c.name;
+          img.title = 'Click to enlarge';
+          img.tabIndex = 0;
+          img.setAttribute('role', 'button');
+          img.addEventListener('click', function () { openCoachPhoto(c.photo_url, c.name); });
+          img.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCoachPhoto(c.photo_url, c.name); }
+          });
           body.appendChild(img);
+          var hint = el('div', '', 'Click the photo to enlarge');
+          hint.className = 'coach-photo-hint';
+          body.appendChild(hint);
         } else {
           body.appendChild(el('div', "width:120px;height:120px;border-radius:50%;background:var(--card2,#1d1d24);border:3px solid var(--border,#333);display:inline-flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:52px;color:var(--muted);margin-bottom:12px;", (c.name || '?').charAt(0).toUpperCase()));
         }

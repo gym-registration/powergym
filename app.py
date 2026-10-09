@@ -1595,6 +1595,21 @@ class CoachBooking(db.Model):
     coach  = db.relationship('Coach')
 
 
+class CoachDayRelease(db.Model):
+    """Staff re-opening a coach for the rest of a day (Coach Scheduling).
+    After a coach finishes a session the coach is held back (not bookable) for the
+    rest of that day until the coach tells staff they are free again and staff press
+    "Mark available". One row per coach per day; released_at is naive gym-local time.
+    A brand-new table like this is created automatically by db.create_all()."""
+    __tablename__ = 'coach_day_releases'
+    id          = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    coach_id    = db.Column(db.Integer, db.ForeignKey('coaches.id', ondelete='CASCADE'), nullable=False, index=True)
+    day         = db.Column(db.Date, nullable=False)
+    released_at = db.Column(db.DateTime, nullable=False)
+    released_by = db.Column(db.Integer, nullable=True)
+    __table_args__ = (db.UniqueConstraint('coach_id', 'day', name='uq_coach_day_release'),)
+
+
 class Payment(db.Model):
     __tablename__    = 'payments'
     id               = db.Column(db.Integer, primary_key=True, autoincrement=True)
@@ -12372,6 +12387,7 @@ coach_scheduling.register(
     app, db,
     User=User, Membership=Membership, Coach=Coach,
     CoachAvailability=CoachAvailability, CoachBooking=CoachBooking,
+    CoachDayRelease=CoachDayRelease,
     now_manila=_now_manila, today_manila=_today_manila,
     sessions_info=_membership_sessions_info, sync_session_expiry=_sync_session_expiry,
     Payment=Payment,

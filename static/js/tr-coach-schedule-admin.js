@@ -5,8 +5,9 @@
         confirm (save) or decline.
      2. All Schedules          — every booking, filterable, with the full
         confirm / complete / no-show / cancel workflow.
-     3. Coach Availability     — set each coach's hours for every day of the week
-        (From / To / slot length per day) and fine-tune individual slots.
+     3. Coach Availability     — set each coach's working hours: one row per day of
+        the week (working or day off, From / To). Members pick their own start time
+        and session length inside these hours.
      4. Coach Assignments      — which members requested which coach.
    Talks to the endpoints in coach_scheduling.py. The server enforces every
    rule (status transitions, credit deduction on Completed, slot validity);
@@ -25,7 +26,6 @@
   const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   const DAYS_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const DURATIONS = [30, 45, 60, 90, 120];
   const STATUS_BADGE = {
     pending: 'badge-gold', confirmed: 'badge-green', completed: 'badge-blue',
     cancelled: 'badge-red', no_show: 'badge-muted',
@@ -33,7 +33,7 @@
 
   const state = {
     tab: 'requests',
-    bookings: [], pending: 0, coaches: [], assignments: [], assignError: '',
+    bookings: [], pending: 0, holds: [], seenPending: null, coaches: [], assignments: [], assignError: '',
     assignCoach: '',
     loaded: false, loading: false, error: '',
     filters: { status: '', coach: '', date: '' },
@@ -98,9 +98,10 @@
   }
 
   /* ── data loading ────────────────────────────────────── */
-  async function loadAll() {
-    state.loading = true; state.error = '';
-    const [b, c, asg] = await Promise.all([api('/staff/coach-bookings'), api('/staff/coach-scheduling/coaches'), api('/staff/coach-assignments')]);
+  async function loadAll(silent) {
+    if (!silent) { state.loading = true; state.error = ''; }
+    const [b, c, asg, h] = await Promise.all([api('/staff/coach-bookings'), api('/staff/coach-scheduling/coaches'), api('/staff/coach-assignments'), api('/staff/coach-day-holds')]);
+    state.holds = h.success ? (h.holds || []) : [];
     state.assignments = asg.success ? (asg.assignments || []) : [];
     state.assignError = asg.success ? '' : (asg.error || 'Could not load coach assignments.');
     state.loading = false;
@@ -109,20 +110,36 @@
     } else {
       state.bookings = b.bookings || [];
       state.pending = b.pending_count || 0;
+      notifyNewRequests();
       state.coaches = c.coaches || [];
       state.loaded = true;
       if (state.av.coachId == null && state.coaches.length) state.av.coachId = state.coaches[0].id;
     }
     updateNavBadge();
-    render();
-    if (state.loaded && state.tab === 'availability' && !state.av.draft.length && state.av.coachId != null && !state.av.loading) loadAvailability(state.av.coachId);
+    if (silent && isEditingAvailability()) renderRequests();   // don't disturb the availability editor while staff type
+    else render();
+    if (!silent && state.loaded && state.tab === 'availability' && !state.av.draft.length && state.av.coachId != null && !state.av.loading) loadAvailability(state.av.coachId);
   }
+
+  /** Tell staff straight away when a member books a coach (first load just records what is already pending). */
+  function notifyNewRequests() {
+    const pend = state.bookings.filter((b) => b.status === 'pending' && b.can_cancel);
+    const ids = new Set(pend.map((b) => b.id));
+    if (state.seenPending) {
+      pend.filter((b) => !state.seenPending.has(b.id)).forEach((b) => {
+        toast('New coach booking: ' + (b.member_name || 'A member') + ' booked ' + b.coach_name + ' on ' + fmtDate(b.date) + ' at ' + b.start_label + '. That time is now taken.', 'info');
+      });
+    }
+    state.seenPending = ids;
+  }
+  function isEditingAvailability() { return state.tab === 'availability'; }
 
   function updateNavBadge() {
     const el = document.getElementById('csa-nav-badge');
     if (!el) return;
-    el.textContent = state.pending;
-    el.hidden = !state.pending;
+    const n = state.pending + state.holds.length;      // new requests + coaches waiting to be re-opened
+    el.textContent = n;
+    el.hidden = !n;
   }
 
   async function loadAvailability(coachId) {
@@ -132,7 +149,15 @@
     state.av.loading = false;
     if (!r.success) { state.av.error = r.error || 'Could not load this coach\'s schedule.'; state.av.draft = []; state.av.snapshot = '[]'; }
     else {
-      state.av.draft = (r.slots || []).map((s) => ({ weekday: s.weekday, start: s.start, duration_min: s.duration_min }));
+      // One row per day: earliest start → latest end of whatever is saved for that day.
+      state.av.draft = [];
+      for (let wd = 0; wd < 7; wd++) {
+        const day = (r.slots || []).filter((x) => x.weekday === wd && toMin(x.start) != null);
+        if (!day.length) continue;
+        const from = Math.min(...day.map((x) => toMin(x.start)));
+        const to = Math.min(Math.max(...day.map((x) => toMin(x.start) + x.duration_min)), 24 * 60 - 1);
+        state.av.draft.push({ weekday: wd, start: toHHMM(from), duration_min: to - from });
+      }
       sortDraft();
       state.av.snapshot = norm(state.av.draft);
     }
@@ -214,10 +239,45 @@
       '<td><div class="csa-actions">' + actionButtons(b) + '</div></td></tr>').join('');
   }
 
+  /** Coaches who finished a session today and are held back until the coach tells staff they are free. */
+  function holdsPanel() {
+    if (!state.holds.length) return '';
+    const rows = state.holds.map((h) => {
+      const photo = h.photo ? ' style="background-image:url(\'' + esc(h.photo) + '\')"' : '';
+      return '<tr><td><div class="csa-person"><span class="csa-avatar"' + photo + '>' + (h.photo ? '' : esc(initials(h.coach_name))) + '</span>' +
+        '<div class="csa-name">' + esc(h.coach_name) + '</div></div></td>' +
+        '<td><div class="csa-name">' + esc(fmtDate(h.date)) + '</div><div class="csa-sub">' + esc(dowOf(h.date)) + ' · session ended ' + esc(h.finished_label) + '</div></td>' +
+        '<td><span class="badge badge-gold">Not bookable</span></td>' +
+        '<td><div class="csa-actions">' + (CAN_ACT
+          ? '<button type="button" class="csa-btn ok" data-release="' + esc(h.coach_id) + '" data-date="' + esc(h.date) + '">Mark available</button>'
+          : '<span class="csa-sub">View only</span>') + '</div></td></tr>';
+    }).join('');
+    return '<div class="csa-panel" style="margin-bottom:18px;border-color:rgba(255,193,7,.45);">' +
+      '<div class="csa-toolbar"><div class="csa-panel-title">Coaches waiting to be re-opened <span class="csa-count">' + state.holds.length + '</span></div></div>' +
+      '<div class="csa-sub" style="margin:-4px 0 12px;font-size:14px;">After a session the coach is hidden from members for the rest of the day. Once the coach tells you they are free, press <b>Mark available</b> to open their remaining times again (this is done per day).</div>' +
+      '<div class="csa-table-wrap"><table class="csa-table"><thead><tr><th>Coach</th><th>Day</th><th>Members see</th><th>Actions</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+  }
+
+  async function releaseCoach(coachId, date) {
+    if (state.busy || !CAN_ACT) return;
+    const h = state.holds.find((x) => String(x.coach_id) === String(coachId));
+    const ok = await confirmDialog({
+      title: 'MARK COACH AVAILABLE',
+      message: 'Has <strong>' + esc(h ? h.coach_name : 'the coach') + '</strong> told you they are free? Their remaining times on <strong>' + esc(h ? fmtDate(h.date) : date) + '</strong> will open on the members\' dashboards again.',
+      confirmText: 'YES, AVAILABLE', danger: false,
+    });
+    if (!ok) return;
+    state.busy = true;
+    const r = await api('/staff/coach-day-holds/release', { coach_id: +coachId, date });
+    state.busy = false;
+    toast(r.success ? (r.message || 'Coach is available again.') : (r.error || 'Could not re-open this coach.'), r.success ? 'success' : 'error');
+    await loadAll();
+  }
+
   function renderRequests() {
     const list = state.bookings.filter((b) => b.status === 'pending' && b.can_cancel)
       .sort((a, b) => a.start.localeCompare(b.start));
-    $('#csa-view-requests').innerHTML =
+    $('#csa-view-requests').innerHTML = holdsPanel() +
       '<div class="csa-panel"><div class="csa-toolbar"><div class="csa-panel-title">Scheduled Coach Requests ' +
       '<span class="csa-count"' + (list.length ? '' : ' hidden') + '>' + list.length + '</span></div>' +
       '<button type="button" class="csa-btn" data-refresh>↻ Refresh</button></div>' +
@@ -275,74 +335,55 @@
   }
 
   /* ── rendering: availability editor ──────────────────── */
-  const slotCmp = (a, b) => a.weekday - b.weekday || (toMin(a.start) ?? 0) - (toMin(b.start) ?? 0);
+  // One entry per working day: { weekday, start: 'HH:MM', duration_min }. A day with no entry is a day off.
+  const slotCmp = (a, b) => a.weekday - b.weekday;
   function sortDraft() { state.av.draft.sort(slotCmp); }
   const norm = (d) => JSON.stringify([...d].sort(slotCmp));       // order-independent snapshot
   const isDirty = () => norm(state.av.draft) !== state.av.snapshot;
+  const entryFor = (wd) => state.av.draft.find((x) => x.weekday === wd);
+  const endOf = (e) => toHHMM(Math.min(toMin(e.start) + e.duration_min, 24 * 60 - 1));
+  const lenText = (min) => { if (min <= 0) return '—'; const h = Math.floor(min / 60), m = min % 60; return (h ? h + ' hr' + (h > 1 ? 's' : '') : '') + (h && m ? ' ' : '') + (m ? m + ' min' : ''); };
 
-  /** Returns Set of draft indexes that clash (same start, empty time, or overlap on the same day). */
+  /** Returns Set of draft indexes with a problem (no start time, or the end isn't at least 15 minutes after the start). */
   function problemIdx() {
-    const bad = new Set(); const d = state.av.draft;
-    d.forEach((s, i) => {
-      const a = toMin(s.start); if (a == null) { bad.add(i); return; }
-      for (let j = i + 1; j < d.length; j++) {
-        if (d[j].weekday !== s.weekday) continue;
-        const b = toMin(d[j].start); if (b == null) continue;
-        if (a < b + d[j].duration_min && b < a + s.duration_min) { bad.add(i); bad.add(j); }
-      }
-    });
+    const bad = new Set();
+    state.av.draft.forEach((e, i) => { if (toMin(e.start) == null || !(e.duration_min >= 15)) bad.add(i); });
     return bad;
   }
 
-  /** Update problem highlights, the unsaved marker and the Save button WITHOUT rebuilding the
-   *  rows — so keyboard focus stays where the user is while they edit a slot's time/length. */
+  /** Update row highlights, the hours summary, the unsaved marker and the Save button WITHOUT
+   *  rebuilding the rows — so keyboard focus stays where the user is while they edit a time. */
   function refreshFlags() {
     const bad = problemIdx();
-    root.querySelectorAll('.csa-slot').forEach((el) => {
-      const inp = el.querySelector('[data-slot]'); if (!inp) return;
-      const isBad = bad.has(+inp.getAttribute('data-slot'));
-      el.classList.toggle('dup', isBad);
-      el.title = isBad ? 'This slot is empty or overlaps another slot' : '';
+    root.querySelectorAll('.csa-wk-row').forEach((row) => {
+      const wd = +row.getAttribute('data-wd'); const e = entryFor(wd);
+      const i = e ? state.av.draft.indexOf(e) : -1;
+      row.classList.toggle('bad', i >= 0 && bad.has(i));
+      const len = row.querySelector('[data-len]');
+      if (len && e) len.textContent = e.duration_min >= 15 ? lenText(e.duration_min) + ' open' : 'End must be after start';
     });
     const dirty = $('#csa-dirty'); if (dirty) dirty.classList.toggle('show', isDirty());
-    const save = $('#csa-save'); if (save) save.disabled = state.busy || !isDirty();
+    const save = $('#csa-save'); if (save) save.disabled = state.busy || !isDirty() || bad.size > 0;
   }
 
   function renderWeek() {
-    const bad = problemIdx();
     const rows = DAYS.map((name, wd) => {
-      const slots = state.av.draft.map((s, i) => ({ s, i })).filter((x) => x.s.weekday === wd);
-      const chips = slots.length ? slots.map(({ s, i }) => {
-        const durs = DURATIONS.includes(s.duration_min) ? DURATIONS : DURATIONS.concat([s.duration_min]).sort((a, b) => a - b);
-        return '<span class="csa-slot' + (bad.has(i) ? ' dup' : '') + '" title="' + (bad.has(i) ? 'This slot is empty or overlaps another slot' : '') + '">' +
-          '<input type="time" value="' + esc(s.start) + '" data-slot="' + i + '" data-field="start" aria-label="' + name + ' start time">' +
-          '<select data-slot="' + i + '" data-field="duration_min" aria-label="' + name + ' duration">' +
-          durs.map((m) => '<option value="' + m + '"' + (m === s.duration_min ? ' selected' : '') + '>' + m + ' min</option>').join('') + '</select>' +
-          '<button type="button" class="csa-slot-x" data-del="' + i + '" aria-label="Remove slot" title="Remove slot">×</button></span>';
-      }).join('') : '<span class="csa-none">Not available</span>';
-      // Per-day hours: prefilled from what is saved for this day so staff edit it in place.
-      const mins = slots.map((x) => toMin(x.s.start)).filter((m) => m != null);
-      const ends = slots.filter((x) => toMin(x.s.start) != null).map((x) => toMin(x.s.start) + x.s.duration_min);
-      const hFrom = mins.length ? toHHMM(Math.min(...mins)) : '09:00';
-      const hTo = ends.length ? toHHMM(Math.min(Math.max(...ends), 24 * 60 - 1)) : '17:00';
-      const hLen = slots.length ? slots[0].s.duration_min : 60;
-      const lens = DURATIONS.includes(hLen) ? DURATIONS : DURATIONS.concat([hLen]).sort((a, b) => a - b);
-      const hours = '<div class="csa-hours"><span class="csa-hours-label">Hours</span>' +
-        '<input type="time" class="csa-input" data-hfrom="' + wd + '" value="' + hFrom + '" aria-label="' + name + ' available from">' +
-        '<span class="csa-sub">to</span>' +
-        '<input type="time" class="csa-input" data-hto="' + wd + '" value="' + hTo + '" aria-label="' + name + ' available until">' +
-        '<select class="csa-select" data-hlen="' + wd + '" aria-label="' + name + ' slot length">' +
-        lens.map((m) => '<option value="' + m + '"' + (m === hLen ? ' selected' : '') + '>' + m + ' min each</option>').join('') + '</select>' +
-        '<button type="button" class="csa-btn ok" data-apply-hours="' + wd + '">Set ' + DAYS_SHORT[wd] + ' hours</button>' +
-        '<button type="button" class="csa-btn" data-apply-hours-all="' + wd + '" title="Use these hours on every day of the week">All days</button>' +
-        (slots.length ? '<button type="button" class="csa-btn danger" data-day-off="' + wd + '">Day off</button>' : '') + '</div>';
-      return '<div class="csa-day"><div class="csa-day-name">' + name + '<small>' + slots.length + ' slot' + (slots.length === 1 ? '' : 's') + '</small></div>' +
-        '<div class="csa-day-main"><div class="csa-slots">' + chips + '</div>' + hours + '</div>' +
-        '<button type="button" class="csa-btn" data-add="' + wd + '">+ Add slot</button></div>';
+      const e = entryFor(wd);
+      const on = !!e;
+      return '<div class="csa-wk-row' + (on ? '' : ' off') + '" data-wd="' + wd + '">' +
+        '<div class="csa-wk-day">' + name + '</div>' +
+        '<div class="csa-wk-state"><button type="button" class="csa-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" data-toggle="' + wd + '" aria-label="' + name + ' working"><span></span></button>' +
+        '<span class="csa-wk-state-text">' + (on ? 'Working' : 'Day off') + '</span></div>' +
+        (on
+          ? '<div class="csa-wk-times"><input type="time" class="csa-input" step="900" data-wk="from" data-wd="' + wd + '" value="' + esc(e.start) + '" aria-label="' + name + ' opens">' +
+            '<span class="csa-sub">to</span>' +
+            '<input type="time" class="csa-input" step="900" data-wk="to" data-wd="' + wd + '" value="' + esc(endOf(e)) + '" aria-label="' + name + ' closes"></div>' +
+            '<div class="csa-wk-len" data-len>' + esc(lenText(e.duration_min)) + ' open</div>'
+          : '<div class="csa-wk-times csa-wk-none">Members can’t book this day</div><div class="csa-wk-len"></div>') +
+        '</div>';
     }).join('');
     const w = $('#csa-week'); if (w) w.innerHTML = rows;
-    const dirty = $('#csa-dirty'); if (dirty) dirty.classList.toggle('show', isDirty());
-    const save = $('#csa-save'); if (save) save.disabled = state.busy || !isDirty();
+    refreshFlags();
   }
 
   function renderAvailability() {
@@ -352,27 +393,20 @@
       return;
     }
     const coachOpts = state.coaches.map((c) => '<option value="' + esc(c.id) + '"' + (c.id === a.coachId ? ' selected' : '') + '>' +
-      esc(c.name) + (c.is_active ? '' : ' (inactive)') + ' — ' + c.slot_count + ' slot' + (c.slot_count === 1 ? '' : 's') + '</option>').join('');
-    const dayChips = DAYS_SHORT.map((d, i) => '<label class="csa-daychip"><input type="checkbox" data-qday="' + i + '"><span>' + d + '</span></label>').join('');
+      esc(c.name) + (c.is_active ? '' : ' (inactive)') + ' — ' + c.working_days + ' day' + (c.working_days === 1 ? '' : 's') + '/week</option>').join('');
     $('#csa-view-availability').innerHTML =
       '<div class="csa-panel">' +
       '<div class="csa-av-top"><div class="csa-av-coach"><div class="csa-panel-title">Weekly availability</div>' +
       '<select class="csa-select" id="csa-av-coach" aria-label="Choose coach">' + coachOpts + '</select>' +
       '<span class="csa-dirty" id="csa-dirty">● Unsaved changes</span></div>' +
-      '<button type="button" class="csa-btn danger" data-clear-all' + (a.loading ? ' disabled' : '') + '>Clear all slots</button></div>' +
+      (CAN_ACT ? '<div class="csa-av-tools"><span class="csa-sub">Quick set:</span>' +
+        '<button type="button" class="csa-btn" data-copy="all">Same hours every day</button>' +
+        '<button type="button" class="csa-btn" data-copy="weekdays">Mon–Fri only</button>' +
+        '<button type="button" class="csa-btn danger" data-clear-all' + (a.loading ? ' disabled' : '') + '>All days off</button></div>' : '') + '</div>' +
       (a.error ? '<div class="csa-error">' + esc(a.error) + '</div>' : '') +
-      '<div class="csa-quick"><div class="csa-quick-label">Quick add</div><div class="csa-quick-row">' +
-      '<div class="csa-daychips">' + dayChips +
-      '<button type="button" class="csa-btn" data-qpreset="all">All days</button>' +
-      '<button type="button" class="csa-btn" data-qpreset="weekdays">Mon–Fri</button>' +
-      '<button type="button" class="csa-btn" data-qpreset="none">Clear</button></div>' +
-      '<input type="time" class="csa-input" id="csa-q-from" value="09:00" aria-label="First slot starts">' +
-      '<span class="csa-sub">to</span>' +
-      '<input type="time" class="csa-input" id="csa-q-to" value="12:00" aria-label="Last slot ends by">' +
-      '<select class="csa-select" id="csa-q-min" aria-label="Slot length">' + DURATIONS.map((m) => '<option value="' + m + '"' + (m === 60 ? ' selected' : '') + '>' + m + ' min each</option>').join('') + '</select>' +
-      '<button type="button" class="csa-btn" data-quick-add>Add slots</button></div></div>' +
-      (a.loading ? '<div class="csa-loading">Loading schedule…</div>' : '<div class="csa-week" id="csa-week"></div>') +
-      '<div class="csa-av-foot"><div class="csa-hint">Set the hours this coach can be booked on each day — members can only book the slots listed here, and a day with no slots shows as Not available. Times are gym-local. Changing availability never cancels existing bookings — any that fall outside the new schedule will be flagged so you can review them in All Schedules.</div>' +
+      '<div class="csa-sub csa-av-note">Set the days and hours this coach works. Members choose their own start time and how long their session lasts inside these hours.</div>' +
+      (a.loading ? '<div class="csa-loading">Loading schedule…</div>' : '<div class="csa-wk" id="csa-week"></div>') +
+      '<div class="csa-av-foot"><div class="csa-hint">Turn a day off and members can’t book that day. Times are gym-local. Changing hours never cancels existing bookings — review them in All Schedules.</div>' +
       '<div style="display:flex;gap:10px;"><button type="button" class="csa-btn" data-reset>Reset</button>' +
       '<button type="button" class="csa-btn primary" id="csa-save" data-save disabled>Save availability</button></div></div></div>';
     if (!a.loading) renderWeek();
@@ -435,50 +469,37 @@
     await loadAll();   // always re-sync — another staff member may have changed it too
   }
 
-  function addSlot(wd) {
-    const mine = state.av.draft.filter((s) => s.weekday === wd).sort((a, b) => toMin(a.start) - toMin(b.start));
-    let start = 9 * 60;
-    if (mine.length) { const last = mine[mine.length - 1]; start = (toMin(last.start) ?? 540) + last.duration_min; }
-    if (start + 60 > 24 * 60) start = 8 * 60;
-    state.av.draft.push({ weekday: wd, start: toHHMM(start), duration_min: 60 });
+  const DEFAULT_OPEN = { start: '08:00', duration_min: 12 * 60 };      // 8:00 AM – 8:00 PM
+
+  function toggleDay(wd) {
+    const e = entryFor(wd);
+    if (e) state.av.draft.splice(state.av.draft.indexOf(e), 1);
+    else state.av.draft.push({ weekday: wd, start: DEFAULT_OPEN.start, duration_min: DEFAULT_OPEN.duration_min });
     sortDraft(); renderWeek();
   }
 
-  /** Replace a day's slots with back-to-back slots filling From → To (staff edit each day's hours). */
-  function applyHours(wd, allDays) {
-    const from = toMin(root.querySelector('[data-hfrom="' + wd + '"]').value);
-    const to = toMin(root.querySelector('[data-hto="' + wd + '"]').value);
-    const dur = +root.querySelector('[data-hlen="' + wd + '"]').value;
-    if (from == null || to == null || to <= from) return toast('Choose a start time that is earlier than the end time.', 'error');
-    if (from + dur > to) return toast('That time range is shorter than one slot.', 'error');
-    const days = allDays ? [0, 1, 2, 3, 4, 5, 6] : [wd];
-    state.av.draft = state.av.draft.filter((s) => !days.includes(s.weekday));
-    let n = 0;
-    days.forEach((d) => { for (let t = from; t + dur <= to; t += dur) { state.av.draft.push({ weekday: d, start: toHHMM(t), duration_min: dur }); n++; } });
-    sortDraft(); renderWeek();
-    toast((allDays ? 'All days' : DAYS[wd]) + ': ' + label12(toHHMM(from)) + ' – ' + label12(toHHMM(to)) + ' (' + n + ' slot' + (n === 1 ? '' : 's') + '). Remember to save.', 'success');
+  /** Staff edited the From / To time of one day. */
+  function editHours(wd) {
+    const e = entryFor(wd); if (!e) return;
+    const from = toMin(root.querySelector('[data-wk="from"][data-wd="' + wd + '"]').value);
+    const to = toMin(root.querySelector('[data-wk="to"][data-wd="' + wd + '"]').value);
+    if (from == null || to == null) { e.start = ''; e.duration_min = 0; }
+    else { e.start = toHHMM(from); e.duration_min = to - from; }
+    refreshFlags();
   }
 
-  function quickAdd() {
-    const days = [...root.querySelectorAll('[data-qday]:checked')].map((c) => +c.getAttribute('data-qday'));
-    const from = toMin($('#csa-q-from').value), to = toMin($('#csa-q-to').value), dur = +$('#csa-q-min').value;
-    if (!days.length) return toast('Pick at least one day first.', 'error');
-    if (from == null || to == null || to <= from) return toast('Choose a start time that is earlier than the end time.', 'error');
-    if (from + dur > to) return toast('That time range is shorter than one slot.', 'error');
-    let added = 0;
-    days.forEach((wd) => {
-      for (let t = from; t + dur <= to; t += dur) {
-        const start = toHHMM(t);
-        if (!state.av.draft.some((s) => s.weekday === wd && s.start === start)) { state.av.draft.push({ weekday: wd, start, duration_min: dur }); added++; }
-      }
-    });
-    sortDraft(); renderWeek();
-    toast(added ? 'Added ' + added + ' slot(s) — remember to save.' : 'Those slots already exist.', added ? 'success' : 'info');
+  /** Copy the first working day's hours (or 8 AM – 8 PM) to every day / Mon–Fri. */
+  function copyHours(mode) {
+    const src = state.av.draft.find((x) => toMin(x.start) != null && x.duration_min >= 15) || DEFAULT_OPEN;
+    const days = mode === 'weekdays' ? [0, 1, 2, 3, 4] : [0, 1, 2, 3, 4, 5, 6];
+    state.av.draft = days.map((wd) => ({ weekday: wd, start: src.start, duration_min: src.duration_min }));
+    renderWeek();
+    toast((mode === 'weekdays' ? 'Mon–Fri' : 'Every day') + ': ' + label12(src.start) + ' – ' + label12(toHHMM(toMin(src.start) + src.duration_min)) + '. Remember to save.', 'success');
   }
 
   async function saveAvailability() {
     if (state.busy || !isDirty()) return;
-    if (problemIdx().size) return toast('Fix the highlighted slots first — they are empty or overlap another slot.', 'error');
+    if (problemIdx().size) return toast('Fix the highlighted days first — the closing time must be after the opening time.', 'error');
     sortDraft();
     state.busy = true; renderWeek();
     const r = await api('/staff/coach/' + state.av.coachId + '/availability', { slots: state.av.draft });
@@ -505,29 +526,16 @@
     const t = e.target;
     const tab = t.closest('[data-tab]'); if (tab) return setTab(tab.getAttribute('data-tab'));
     if (t.closest('[data-refresh]')) return loadAll();
+    const rel = t.closest('[data-release]'); if (rel) return releaseCoach(rel.getAttribute('data-release'), rel.getAttribute('data-date'));
     const act = t.closest('[data-act]'); if (act) return changeStatus(act.getAttribute('data-id'), act.getAttribute('data-act'));
     if (t.closest('[data-clear-filters]')) { state.filters = { status: '', coach: '', date: '' }; return renderAll(); }
-    const ah = t.closest('[data-apply-hours]'); if (ah) return applyHours(+ah.getAttribute('data-apply-hours'), false);
-    const aha = t.closest('[data-apply-hours-all]'); if (aha) return applyHours(+aha.getAttribute('data-apply-hours-all'), true);
-    const off = t.closest('[data-day-off]');
-    if (off) { const wd = +off.getAttribute('data-day-off'); state.av.draft = state.av.draft.filter((s) => s.weekday !== wd); return renderWeek(); }
-    const add = t.closest('[data-add]'); if (add) return addSlot(+add.getAttribute('data-add'));
-    const del = t.closest('[data-del]'); if (del) { state.av.draft.splice(+del.getAttribute('data-del'), 1); return renderWeek(); }
-    const preset = t.closest('[data-qpreset]');
-    if (preset) {
-      const mode = preset.getAttribute('data-qpreset');
-      root.querySelectorAll('[data-qday]').forEach((c) => {
-        const i = +c.getAttribute('data-qday');
-        c.checked = mode === 'all' ? true : mode === 'weekdays' ? i <= 4 : false;
-      });
-      return;
-    }
-    if (t.closest('[data-quick-add]')) return quickAdd();
+    const tg = t.closest('[data-toggle]'); if (tg) return toggleDay(+tg.getAttribute('data-toggle'));
+    const cp = t.closest('[data-copy]'); if (cp) return copyHours(cp.getAttribute('data-copy'));
     if (t.closest('[data-save]')) return saveAvailability();
     if (t.closest('[data-reset]')) { state.av.draft = JSON.parse(state.av.snapshot); return renderWeek(); }
     if (t.closest('[data-clear-all]')) {
       if (!state.av.draft.length) return;
-      const ok = await confirmDialog({ title: 'CLEAR ALL SLOTS', message: 'Remove every weekly slot for this coach? Members won\'t be able to book them until you add slots again and save.', confirmText: 'YES, CLEAR', danger: true });
+      const ok = await confirmDialog({ title: 'ALL DAYS OFF', message: 'Set every day off for this coach? Members won\'t be able to book this coach until you turn days back on and save.', confirmText: 'YES, ALL OFF', danger: true });
       if (ok) { state.av.draft = []; renderWeek(); }
     }
   });
@@ -537,13 +545,10 @@
     if (t.matches('[data-assign-filter]')) { state.assignCoach = t.value; return renderAssignments(); }
     if (t.matches('[data-filter]')) { state.filters[t.getAttribute('data-filter')] = t.value; return renderAll(); }
     if (t.id === 'csa-av-coach') return switchCoach(+t.value);
-    if (t.matches('[data-slot]')) {
-      const s = state.av.draft[+t.getAttribute('data-slot')]; if (!s) return;
-      const f = t.getAttribute('data-field');
-      s[f] = f === 'duration_min' ? +t.value : t.value;
-      refreshFlags();          // no re-render: keeps focus; rows re-sort on the next add/remove/save
-    }
+    if (t.matches('[data-wk]')) editHours(+t.getAttribute('data-wd'));
   });
+
+  root.addEventListener('input', (e) => { if (e.target.matches && e.target.matches('[data-wk]')) editHours(+e.target.getAttribute('data-wd')); });
 
   // Warn before closing the tab with unsaved availability edits.
   window.addEventListener('beforeunload', (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
@@ -555,4 +560,7 @@
   });
   render();
   loadAll();
+  // Keep staff informed without a page refresh: new member bookings raise an alert + the sidebar badge,
+  // and coaches waiting to be re-opened show up here. Paused while the browser tab is hidden.
+  setInterval(() => { if (!document.hidden && !state.busy && !state.loading) loadAll(true); }, 20000);
 })();
