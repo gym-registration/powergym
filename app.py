@@ -1575,7 +1575,13 @@ class CoachBooking(db.Model):
     NULLs in a UNIQUE index), so a freed slot can be booked again."""
     __tablename__ = 'coach_bookings'
     id           = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    member_id    = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    # NULL for a walk-in guest's coach session (guests have no user account) — those rows
+    # carry walkin_id + guest_name instead and never touch any member's session credits.
+    member_id    = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=True, index=True)
+    walkin_id    = db.Column(db.Integer, db.ForeignKey('walk_ins.id', ondelete='SET NULL'), nullable=True, index=True)
+    guest_name   = db.Column(db.String(120), nullable=True)
+    # Walk-in sessions only: what the guest paid for ('Boxing', 'Daily + Coach', ...).
+    plan_label   = db.Column(db.String(100), nullable=True)
     # SET NULL (not CASCADE): staff can delete a coach, and completed bookings must survive
     # that — they are what has already used up the member's sessions. coach_name is a snapshot.
     coach_id     = db.Column(db.Integer, db.ForeignKey('coaches.id', ondelete='SET NULL'), nullable=True, index=True)
@@ -7604,11 +7610,39 @@ def staff_walkin():
         recorded_by_id=session.get('user_id'),
     )
     db.session.add(walkin)
-    db.session.commit()
+
+    # A walk-in who avails a coach takes that coach's time: the system reads the
+    # coach's working hours for today and puts the session on the Coach Schedule
+    # (visible on the Admin AND Staff dashboards) in the same transaction as the
+    # walk-in itself, so the schedule and the cash record can never disagree.
+    coach_session = None
+    if wants_coach:
+        try:
+            db.session.flush()                      # need walkin.id for the booking
+            _cs_hooks = app.extensions.get('coach_scheduling') or {}
+            if 'create_walkin_session' not in _cs_hooks:
+                db.session.rollback()
+                return jsonify(success=False, error='Coach scheduling is out of date on the server: '
+                               'replace coach_scheduling.py with the new version and restart the app.'), 500
+            _booking, coach_session, session_err = _cs_hooks['create_walkin_session'](walkin, coach)
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify(success=False,
+                           error=f'{coach_name} was just booked for that time. Please try again or pick another coach.'), 409
+        if session_err:
+            db.session.rollback()
+            return jsonify(success=False, error=session_err), 409
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(success=False,
+                       error=f'{coach_name} was just booked for that time. Please try again or pick another coach.'), 409
 
     return jsonify(
         success=True,
         message='Walk-in recorded.',
+        coach_session=coach_session,
         walkin={
             'id': walkin.id,
             'name': walkin.full_name,
@@ -12006,6 +12040,41 @@ def seed_default_fitness_catalog():
         print(f"Migration: seeded media_url for {media_url_updated} exercise row(s)")
 
 
+def _ensure_coach_booking_walkin_support():
+    """Walk-in guests who avail a coach get a row on the Coach Schedule, but a guest
+    has no user account. This (idempotent) migration lets coach_bookings.member_id be
+    NULL and adds walkin_id + guest_name for those rows."""
+    with db.engine.connect() as conn:
+        if conn.execute(text("SHOW COLUMNS FROM coach_bookings LIKE 'walkin_id'")).fetchone() is None:
+            conn.execute(text(
+                "ALTER TABLE coach_bookings ADD COLUMN walkin_id INT NULL, "
+                "ADD INDEX ix_coach_bookings_walkin_id (walkin_id), "
+                "ADD CONSTRAINT fk_coach_bookings_walkin FOREIGN KEY (walkin_id) "
+                "REFERENCES walk_ins(id) ON DELETE SET NULL"))
+            conn.commit()
+            print("Migration: added coach_bookings.walkin_id")
+        if conn.execute(text("SHOW COLUMNS FROM coach_bookings LIKE 'guest_name'")).fetchone() is None:
+            conn.execute(text("ALTER TABLE coach_bookings ADD COLUMN guest_name VARCHAR(120) NULL"))
+            conn.commit()
+            print("Migration: added coach_bookings.guest_name")
+        if conn.execute(text("SHOW COLUMNS FROM coach_bookings LIKE 'plan_label'")).fetchone() is None:
+            conn.execute(text("ALTER TABLE coach_bookings ADD COLUMN plan_label VARCHAR(100) NULL"))
+            conn.commit()
+            print("Migration: added coach_bookings.plan_label")
+        # Label walk-in sessions created before plan_label existed (idempotent).
+        conn.execute(text(
+            "UPDATE coach_bookings cb JOIN walk_ins w ON cb.walkin_id = w.id "
+            "SET cb.plan_label = CASE WHEN w.plan_type = 'Boxing' THEN 'Boxing' "
+            "ELSE CONCAT(w.plan_type, ' + Coach') END "
+            "WHERE cb.plan_label IS NULL AND cb.walkin_id IS NOT NULL"))
+        conn.commit()
+        col = conn.execute(text("SHOW COLUMNS FROM coach_bookings LIKE 'member_id'")).fetchone()
+        if col is not None and str(col[2]).upper() == 'NO':      # Null column
+            conn.execute(text("ALTER TABLE coach_bookings MODIFY member_id INT NULL"))
+            conn.commit()
+            print("Migration: coach_bookings.member_id is now nullable")
+
+
 def _run_startup_migrations():
     """db.create_all() only creates brand-new tables — it won't add columns
     to a table that already exists from a previous run. This adds any
@@ -12410,6 +12479,13 @@ def _run_startup_migrations():
 
 # ── Coach Scheduling (member booking of coach sessions) ──
 import coach_scheduling
+import inspect as _inspect
+_cs_extra = {}
+if 'promo_titles' in _inspect.signature(coach_scheduling.register).parameters:
+    _cs_extra['promo_titles'] = _promo_titles_for_members
+else:
+    print('[coach-scheduling] WARNING: coach_scheduling.py is an old version - copy the new '
+          'coach_scheduling.py next to app.py to get walk-in coach sessions and plan/promo labels.')
 coach_scheduling.register(
     app, db,
     User=User, Membership=Membership, Coach=Coach,
@@ -12418,7 +12494,7 @@ coach_scheduling.register(
     CoachBookingNotice=CoachBookingNotice,
     now_manila=_now_manila, today_manila=_today_manila,
     sessions_info=_membership_sessions_info, sync_session_expiry=_sync_session_expiry,
-    Payment=Payment,
+    Payment=Payment, **_cs_extra,
 )
 
 
@@ -12430,6 +12506,7 @@ def _run_startup_sequence():
     responding, etc.) doesn't crash the whole app on startup."""
     db.create_all()
     _run_startup_migrations()
+    _ensure_coach_booking_walkin_support()
     seed_default_plans()
     _dedupe_walkin_builtin_plans()
     seed_default_promos()

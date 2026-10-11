@@ -53,10 +53,12 @@ _WEEKDAYS = {'mon': 0, 'tue': 1, 'wed': 2, 'thu': 3, 'fri': 4, 'sat': 5, 'sun': 
 DEFAULT_SLOT_START = time(8, 0)
 DEFAULT_SLOT_END = time(20, 0)      # last slot must END by this time
 DEFAULT_SLOT_MINUTES = 60
+WALKIN_SESSION_MINUTES = 60       # a walk-in's coach session is scheduled for this long by default
 
 
 def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBooking, CoachDayRelease,
-             CoachBookingNotice, now_manila, today_manila, sessions_info, sync_session_expiry, Payment):
+             CoachBookingNotice, now_manila, today_manila, sessions_info, sync_session_expiry, Payment,
+             promo_titles=None):
 
     # ── helpers ────────────────────────────────────────────────────────
     def _now():
@@ -293,6 +295,70 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
             return coach, end, (f'{coach.name} is already booked {_fmt_time(clash.slot_start)} – '
                                 f'{_fmt_time(clash.slot_end)}. Please choose a time that doesn\'t overlap.')
         return coach, end, None
+
+    def _create_walkin_session(walkin, coach):
+        """Put a walk-in guest's coach session on the Coach Schedule.
+
+        Called from /staff/walkin inside the walk-in's own transaction (the caller flushes the
+        walk-in first and commits afterwards). The coach's working hours for today are read
+        from the same source members book against, so the walk-in lands INSIDE them:
+          * arrived before the coach's first slot  -> starts when the coach's day starts;
+          * arrived during the coach's hours       -> starts right now;
+          * overlaps one of the coach's bookings   -> moved to the next free time (or trimmed to
+            fit the gap), so the coach is never double-booked;
+          * coach isn't scheduled today / already finished their hours -> the walk-in is still
+            recorded (cash was taken on the spot) starting now, flagged outside_hours.
+        Returns (booking, info, error). On error nothing was added.
+        """
+        now = _now().replace(second=0)
+        day = now.date()
+        coach = Coach.query.filter_by(id=coach.id).with_for_update().first()     # serialize per coach
+        if coach is None or not coach.is_active:
+            return None, None, 'Selected coach is not available. Please choose another.'
+        window = _coach_window(coach, day)
+        outside = window is None or now >= window[1]
+        midnight = datetime.combine(day, time(23, 59))
+        dur = timedelta(minutes=WALKIN_SESSION_MINUTES)
+        cap = midnight if outside else window[1]
+
+        start = now if (outside or now >= window[0]) else window[0]
+        end = min(start + dur, cap)
+        shifted = start != now and not outside
+        for _ in range(50):
+            clash = (CoachBooking.query
+                     .filter(CoachBooking.coach_id == coach.id, CoachBooking.status.in_(ACTIVE),
+                             CoachBooking.slot_start < end, CoachBooking.slot_end > start)
+                     .order_by(CoachBooking.slot_start).first())
+            if clash is None:
+                break
+            shifted = True
+            if clash.slot_start <= start:
+                start = clash.slot_end                      # busy right now -> next free time
+                end = min(start + dur, cap)
+            else:
+                end = clash.slot_start                      # free only until the next booking
+        else:
+            return None, None, f'{coach.name} has no free time left today. Please choose another coach.'
+        if start >= cap or (end - start) < timedelta(minutes=MIN_SESSION_MINUTES):
+            return None, None, (f'{coach.name} is fully booked for the rest of today. '
+                                'Please choose another coach.')
+
+        booking = CoachBooking(
+            member_id=None, walkin_id=walkin.id, guest_name=walkin.full_name,
+            plan_label=('Boxing' if walkin.plan_type == 'Boxing' else f'{walkin.plan_type} + Coach'),
+            coach_id=coach.id, coach_name=coach.name, slot_start=start, slot_end=end,
+            status='confirmed',                              # paid + confirmed at the desk
+            coach_key=f'c{coach.id}:{start.strftime("%Y%m%d%H%M")}', member_key=None)
+        db.session.add(booking)
+        db.session.flush()                                   # unique coach_key trips here on a race
+        return booking, {
+            'booking_id': booking.id, 'coach': coach.name,
+            'date': start.strftime('%Y-%m-%d'),
+            'start_label': _fmt_time(start), 'end_label': _fmt_time(end),
+            'shifted': bool(shifted), 'outside_hours': bool(outside),
+        }, None
+
+    app.extensions['coach_scheduling'] = {'create_walkin_session': _create_walkin_session}
 
     def _reminder_for(member_id, now=None):
         """The member's next pending/confirmed session if it starts within REMINDER_MINUTES, else None."""
@@ -592,10 +658,34 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
             q = q.filter(CoachBooking.coach_id == coach_filter)
         now = _now()
         out = []
+        acct = {}          # member_id -> (plan label, session counts), worked out once per account
+
+        def _account_plan(member_id):
+            """Which plan/promo this ACCOUNT is on and how many coach sessions it has used —
+            counted from the member's own membership + completed bookings, never typed in."""
+            if member_id in acct:
+                return acct[member_id]
+            m, cr = _credits(member_id)
+            if cr['enabled']:
+                title = (promo_titles([member_id]).get(member_id) if promo_titles else None) or 'Session promo'
+                res = (title, {'total': cr['total'], 'used': cr['used'], 'left': cr['left'],
+                               'reserved': cr['reserved']})
+            else:
+                res = ((m.plan.name if m is not None and m.plan is not None else 'No active plan'), None)
+            acct[member_id] = res
+            return res
+
         for b in q.order_by(CoachBooking.slot_start.desc()).limit(300).all():
             j = _booking_json(b, now)
+            if b.member_id is None:
+                j['plan_label'] = b.plan_label or 'Walk-in + Coach'
+                j['sessions'] = {'total': 1, 'used': 1 if b.status == 'completed' else 0,
+                                 'left': 0 if b.status == 'completed' else 1, 'reserved': 0}
+            else:
+                j['plan_label'], j['sessions'] = _account_plan(b.member_id)
             j['member_id'] = b.member_id
-            j['member_name'] = b.member.full_name if b.member else ''
+            j['is_walkin'] = b.member_id is None
+            j['member_name'] = b.member.full_name if b.member else (b.guest_name or 'Walk-in guest')
             j['member_photo'] = (url_for('static', filename=b.member.profile_picture)
                                  if b.member and getattr(b.member, 'profile_picture', None) else '')
             j['created_label'] = b.created_at.strftime('%b %d, %Y') if b.created_at else ''
@@ -646,7 +736,12 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
 
         was_confirmed = (b.status == 'confirmed')
         credits_left = None
-        if new_status == 'completed':
+        if new_status == 'completed' and b.member_id is None:
+            # Walk-in guest: paid in cash at the desk, no membership / session credits involved.
+            b.status = 'completed'
+            b.completed_at = _utcnow()
+            b.coach_key = b.member_key = None
+        elif new_status == 'completed':
             membership, credits = _credits(b.member_id, lock=True)
             if credits['enabled'] and credits['left'] <= 0:
                 db.session.rollback()
@@ -676,8 +771,9 @@ def register(app, db, *, User, Membership, Coach, CoachAvailability, CoachBookin
                         title = 'Coach session declined'
                         msg = (f'Your session request with {who} on {when} was declined by the gym staff. '
                                'No session was deducted. You can book another time from Coach Scheduling.')
-                    db.session.add(CoachBookingNotice(member_id=b.member_id, booking_id=b.id,
-                                                      title=title, message=msg))
+                    if b.member_id is not None:      # a walk-in guest has no dashboard to notify
+                        db.session.add(CoachBookingNotice(member_id=b.member_id, booking_id=b.id,
+                                                          title=title, message=msg))
         db.session.commit()
         return jsonify(success=True, message=f'Booking marked {STATUS_LABELS[new_status].lower()}.',
                        booking=_booking_json(b), credits_left=credits_left)

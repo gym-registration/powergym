@@ -424,12 +424,24 @@
                 {% for c in coaches %}
                 {% if c.is_active %}
                 <option value="{{ c.name }}" data-days="{{ c.available_days|join(',') }}"
+                        data-photo="{{ url_for('static', filename=c.photo_path) if c.photo_path else '' }}"
+                        data-spec="{{ c.specialization or '' }}"
                         {% if c.is_full %}disabled{% endif %}>
                   {{ c.name }}{% if c.name == recommended_coach_name and not c.is_full %} — Recommended{% endif %}{% if c.is_full %} — Unavailable (Fully Booked){% endif %}
                 </option>
                 {% endif %}
                 {% endfor %}
               </select>
+              <div id="walkin-coach-preview" style="display:none;align-items:center;gap:14px;margin-top:12px;padding:12px 14px;max-width:320px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:10px;">
+                <a id="walkin-coach-photo-link" href="#" onclick="openWalkInCoachPhoto(event)" title="Click to enlarge" style="display:none;flex-shrink:0;cursor:zoom-in;">
+                  <img id="walkin-coach-photo" alt="" style="width:72px;height:72px;border-radius:50%;object-fit:cover;border:2px solid var(--red);display:block;">
+                </a>
+                <div id="walkin-coach-initials" style="display:none;width:72px;height:72px;border-radius:50%;flex-shrink:0;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:var(--white);background:rgba(255,255,255,.08);border:2px solid var(--red);"></div>
+                <div>
+                  <div id="walkin-coach-preview-name" style="font-weight:700;color:var(--white);font-size:16px;"></div>
+                  <div id="walkin-coach-preview-spec" style="font-size:13px;color:var(--muted);margin-top:2px;"></div>
+                </div>
+              </div>
               <div id="walkin-coach-availability-note" style="font-size:13px;margin-top:6px;line-height:1.5;"></div>
               <div style="font-size:12px;color:var(--muted);margin-top:4px;">
                 Not sure who to assign? The coach marked "Recommended" currently has the most open slots.
@@ -1622,7 +1634,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
 <script src="{{ url_for('static', filename='js/tr-common.js') }}"></script>
 <script src="{{ url_for('static', filename='js/tr-report-print.js') }}"></script>
-<script src="{{ url_for('static', filename='js/tr-staff.js') }}"></script>
-<script src="{{ url_for('static', filename='js/tr-coach-schedule-admin.js') }}?v=2"></script>
+<script src="{{ url_for('static', filename='js/tr-staff.js') }}?v=3"></script>
+<script src="{{ url_for('static', filename='js/tr-coach-schedule-admin.js') }}?v=4"></script>
 </body>
 </html>

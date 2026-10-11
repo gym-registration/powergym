@@ -209,7 +209,9 @@
   function personCell(b) {
     const photo = b.member_photo ? ' style="background-image:url(\'' + esc(b.member_photo) + '\')"' : '';
     return '<div class="csa-person"><span class="csa-avatar"' + photo + '>' + (b.member_photo ? '' : esc(initials(b.member_name))) + '</span>' +
-      '<div><div class="csa-name">' + esc(b.member_name || 'Unknown member') + '</div><div class="csa-sub">Member #' + esc(b.member_id) + '</div></div></div>';
+      '<div><div class="csa-name">' + esc(b.member_name || 'Unknown member') + '</div>' +
+      (b.is_walkin ? '<div class="csa-sub"><span class="badge badge-gold" style="font-size:11px;">WALK-IN</span> Guest · paid cash</div>'
+                   : '<div class="csa-sub">Member #' + esc(b.member_id) + '</div>') + '</div></div>';
   }
   function coachCell(b) {
     const photo = b.coach_photo ? ' style="background-image:url(\'' + esc(b.coach_photo) + '\')"' : '';
@@ -219,6 +221,15 @@
   function whenCell(b) {
     return '<div class="csa-when"><div class="csa-name">' + esc(fmtDate(b.date)) + '</div>' +
       '<div class="csa-sub">' + esc(dowOf(b.date)) + ' · ' + esc(b.start_label) + ' – ' + esc(b.end_label) + '</div></div>';
+  }
+  /** Which plan/promo the session belongs to + how many sessions that account has used. */
+  function planCell(b) {
+    const s = b.sessions;
+    let sub = '';
+    if (b.is_walkin) sub = 'Single paid session';
+    else if (s) sub = s.used + ' of ' + s.total + ' used · <b>' + s.left + ' left</b>';
+    else sub = 'Time-based plan';
+    return '<div class="csa-name">' + esc(b.plan_label || '—') + '</div><div class="csa-sub">' + sub + '</div>';
   }
   function statusBadge(b) { return '<span class="badge ' + (STATUS_BADGE[b.status] || 'badge-muted') + '">' + esc(b.status_label) + '</span>'; }
 
@@ -236,9 +247,9 @@
   }
 
   function bookingRows(list, withStatus, emptyText) {
-    if (!list.length) return '<tr><td colspan="5" class="csa-empty">' + esc(emptyText) + '</td></tr>';
+    if (!list.length) return '<tr><td colspan="6" class="csa-empty">' + esc(emptyText) + '</td></tr>';
     return list.map((b) =>
-      '<tr><td>' + personCell(b) + '</td><td>' + coachCell(b) + '</td><td>' + whenCell(b) + '</td>' +
+      '<tr><td>' + personCell(b) + '</td><td>' + coachCell(b) + '</td><td>' + planCell(b) + '</td><td>' + whenCell(b) + '</td>' +
       '<td>' + (withStatus ? statusBadge(b) : '<span class="csa-sub" style="font-size:14px;">' + esc(b.created_label || '—') + '</span>') + '</td>' +
       '<td><div class="csa-actions">' + actionButtons(b) + '</div></td></tr>').join('');
   }
@@ -285,7 +296,7 @@
       '<div class="csa-panel"><div class="csa-toolbar"><div class="csa-panel-title">Scheduled Coach Requests ' +
       '<span class="csa-count"' + (list.length ? '' : ' hidden') + '>' + list.length + '</span></div>' +
       '<button type="button" class="csa-btn" data-refresh>↻ Refresh</button></div>' +
-      '<div class="csa-table-wrap"><table class="csa-table"><thead><tr><th>Member</th><th>Coach</th><th>Date &amp; Time</th><th>Requested</th><th>Actions</th></tr></thead><tbody>' +
+      '<div class="csa-table-wrap"><table class="csa-table"><thead><tr><th>Member</th><th>Coach</th><th>Plan / Promo</th><th>Date &amp; Time</th><th>Requested</th><th>Actions</th></tr></thead><tbody>' +
       bookingRows(list, false, 'No pending requests — new member bookings will show up here.') +
       '</tbody></table></div></div>';
   }
@@ -311,7 +322,7 @@
       '<input type="date" class="csa-input" data-filter="date" value="' + esc(f.date) + '" aria-label="Filter by date">' +
       (f.status || f.coach || f.date ? '<button type="button" class="csa-btn" data-clear-filters>Clear</button>' : '') +
       '</div></div>' +
-      '<div class="csa-table-wrap"><table class="csa-table"><thead><tr><th>Member</th><th>Coach</th><th>Date &amp; Time</th><th>Status</th><th>Actions</th></tr></thead><tbody>' +
+      '<div class="csa-table-wrap"><table class="csa-table"><thead><tr><th>Member</th><th>Coach</th><th>Plan / Promo</th><th>Date &amp; Time</th><th>Status</th><th>Actions</th></tr></thead><tbody>' +
       bookingRows(list, true, 'No bookings match these filters.') +
       '</tbody></table></div></div>';
   }
@@ -442,7 +453,7 @@
     }),
     completed: (b) => ({
       title: 'MARK COMPLETED',
-      message: 'Mark <strong>' + esc(b.member_name) + '</strong>\'s session with <strong>' + esc(b.coach_name) + '</strong> as completed?<br><span style="color:var(--gold);font-size:14px;">This deducts 1 coach session from the member\'s remaining sessions and can\'t be undone.</span>',
+      message: 'Mark <strong>' + esc(b.member_name) + '</strong>\'s session with <strong>' + esc(b.coach_name) + '</strong> as completed?<br><span style="color:var(--gold);font-size:14px;">' + (b.is_walkin ? 'This walk-in was paid in cash, so no session credit is used.' : 'This deducts 1 coach session from the member\'s remaining sessions and can\'t be undone.') + '</span>',
       confirmText: 'YES, COMPLETED', danger: false,
     }),
     no_show: (b) => ({
@@ -564,6 +575,8 @@
   });
   render();
   loadAll();
+  // Lets the Walk In tab refresh this schedule the moment a walk-in books a coach.
+  window.csaReload = function () { return loadAll(true); };
   // Keep staff informed without a page refresh: new member bookings raise an alert + the sidebar badge,
   // and coaches waiting to be re-opened show up here. Paused while the browser tab is hidden.
   setInterval(() => { if (!document.hidden && !state.busy && !state.loading) loadAll(true); }, 20000);

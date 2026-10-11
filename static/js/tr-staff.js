@@ -1208,6 +1208,64 @@ const StaffModule = (() => {
 
   const _WALKIN_WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+  /** Click on the coach's photo -> enlarged pop-up (stays on this page; closes
+   *  with the X, a click outside the card, or the Esc key). */
+  function openWalkInCoachPhoto(ev) {
+    if (ev) ev.preventDefault();
+    const img = document.getElementById('walkin-coach-photo');
+    if (!img || !img.src) return;
+    const name = document.getElementById('walkin-coach-preview-name')?.textContent || '';
+    const spec = document.getElementById('walkin-coach-preview-spec')?.textContent || '';
+    let ov = document.getElementById('walkin-coach-photo-popup');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'walkin-coach-photo-popup';
+      ov.style.cssText = 'position:fixed;inset:0;z-index:10000;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.78);padding:20px;';
+      ov.innerHTML =
+        '<div style="position:relative;max-width:min(92vw,460px);background:#14161c;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:18px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.6);">' +
+        '<button type="button" id="walkin-coach-photo-close" aria-label="Close" style="position:absolute;top:8px;right:12px;background:none;border:none;color:#fff;font-size:28px;line-height:1;cursor:pointer;">&times;</button>' +
+        '<img id="walkin-coach-photo-big" alt="" style="max-width:100%;max-height:70vh;border-radius:10px;display:block;margin:6px auto 12px;">' +
+        '<div id="walkin-coach-photo-big-name" style="font-weight:700;color:#fff;font-size:18px;"></div>' +
+        '<div id="walkin-coach-photo-big-spec" style="font-size:13px;color:#9aa0ab;margin-top:2px;"></div></div>';
+      document.body.appendChild(ov);
+      const close = () => { ov.style.display = 'none'; };
+      ov.addEventListener('click', e => { if (e.target === ov || e.target.id === 'walkin-coach-photo-close') close(); });
+      document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+    }
+    ov.querySelector('#walkin-coach-photo-big').src = img.src;
+    ov.querySelector('#walkin-coach-photo-big-name').textContent = name;
+    ov.querySelector('#walkin-coach-photo-big-spec').textContent = spec;
+    ov.style.display = 'flex';
+  }
+  window.openWalkInCoachPhoto = openWalkInCoachPhoto;
+
+  /** Shows the picked coach's profile picture (+ specialization) under the
+   *  Select Coach dropdown, so staff can see who they're assigning. Falls back
+   *  to the coach's initials when no photo has been uploaded. */
+  function _updateWalkInCoachPreview(coachSelect) {
+    const box = document.getElementById('walkin-coach-preview');
+    if (!box) return;
+    const row = document.getElementById('walkin-coach-select-row');
+    const name = coachSelect.value;
+    if (!name || (row && row.style.display === 'none')) { box.style.display = 'none'; return; }
+
+    const opt = coachSelect.options[coachSelect.selectedIndex];
+    const photo = opt?.dataset.photo || '';
+    const img = document.getElementById('walkin-coach-photo');
+    const link = document.getElementById('walkin-coach-photo-link');
+    const ini = document.getElementById('walkin-coach-initials');
+    if (photo) {
+      img.src = photo; img.alt = name;
+      link.style.display = 'block'; ini.style.display = 'none';
+    } else {
+      ini.textContent = name.trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+      ini.style.display = 'flex'; link.style.display = 'none';
+    }
+    document.getElementById('walkin-coach-preview-name').textContent = name;
+    document.getElementById('walkin-coach-preview-spec').textContent = opt?.dataset.spec || 'Coach';
+    box.style.display = 'flex';
+  }
+
   /** Checks the currently-selected coach's available days against today
    *  (walk-ins are always same-day, so there's no separate start date to
    *  compare against) and shows a friendly heads-up if the coach isn't
@@ -1220,6 +1278,7 @@ const StaffModule = (() => {
     if (!note || !coachSelect) return;
 
     const coachName = coachSelect.value;
+    _updateWalkInCoachPreview(coachSelect);
     if (!coachName) {
       note.textContent = '';
       return;
@@ -1349,7 +1408,16 @@ const StaffModule = (() => {
         }
         _prependWalkInRow(data.walkin);
         _clearWalkInForm();
-        showToast(`${data.walkin.name} recorded — ₱${data.walkin.amount} collected`, 'success');
+        // The walk-in's coach session was just added to the Coach Schedule — refresh it now.
+        if (typeof window.csaReload === 'function') window.csaReload();
+        const cs = data.coach_session;
+        let msg = `${data.walkin.name} recorded — ₱${data.walkin.amount} collected`;
+        if (cs) {
+          msg += ` · ${cs.coach} scheduled ${cs.start_label} – ${cs.end_label}`;
+          if (cs.outside_hours) msg += ' (outside the coach\'s set hours)';
+          else if (cs.shifted) msg += ' (next free time)';
+        }
+        showToast(msg, 'success');
       })
       .catch(() => {
         if (btn) { btn.disabled = false; btn.textContent = originalLabel; }
