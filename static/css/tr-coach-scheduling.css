@@ -235,9 +235,202 @@
 .cs-chip { background: transparent; color: var(--white); border: 1px solid var(--border); border-radius: 999px; padding: 7px 14px; font: 600 14px 'Barlow', sans-serif; cursor: pointer; }
 .cs-chip:not(:disabled):hover { background: rgba(0,230,118,.10); border-color: var(--green); }
 .cs-chip:disabled { color: #7d8498; cursor: not-allowed; }
-.cs-time-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
-.cs-time-row label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
-.cs-time-row input[type="time"] { background: rgba(255,255,255,.04); color: var(--white); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font: 600 16px 'Barlow', sans-serif; color-scheme: dark; }
+/* ── Start / End time fields (premium dark inputs) ─────────────────────────── */
+.cs-time-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 16px; }
+.cs-time-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; cursor: pointer; }
+.cs-time-label {
+  display: flex; align-items: center; gap: 8px;
+  font: 600 14px 'Barlow', sans-serif; letter-spacing: .4px; color: #dfe3ee;
+}
+.cs-time-label svg { color: var(--red); flex: 0 0 auto; width: 16px; height: 16px; }
+.cs-time-control {
+  position: relative; display: flex; align-items: center; min-height: 56px;
+  background: linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.02)), var(--cs-bg);
+  border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+  transition: border-color .2s ease, box-shadow .2s ease, background-color .2s ease;
+}
+.cs-time-control:hover { border-color: rgba(230,30,37,.55); }
+.cs-time-control:focus-within {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px var(--red-glow), inset 0 1px 0 rgba(255,255,255,.04);
+}
+.cs-time-control input[type="time"] {
+  flex: 1; min-width: 0; width: 100%; height: 56px; padding: 0 48px 0 16px;
+  background: transparent; border: 0; outline: 0; border-radius: 12px;
+  color: var(--white); font: 600 19px 'Barlow', sans-serif; letter-spacing: .3px;
+  color-scheme: dark; accent-color: var(--red); cursor: pointer;
+}
+/* Our own clock icon sits on the right; the native indicator is stretched invisibly over the whole field
+   so a click anywhere opens the picker. */
+.cs-time-control > svg {
+  position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+  color: var(--muted); pointer-events: none; transition: color .2s ease;
+}
+.cs-time-control:hover > svg, .cs-time-control:focus-within > svg { color: var(--red); }
+.cs-time-control input[type="time"]::-webkit-calendar-picker-indicator {
+  position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; opacity: 0; cursor: pointer;
+}
+.cs-time-control input[type="time"]::-webkit-datetime-edit-fields-wrapper { padding: 0; }
+.cs-time-control input[type="time"]::-webkit-datetime-edit-hour-field:focus,
+.cs-time-control input[type="time"]::-webkit-datetime-edit-minute-field:focus,
+.cs-time-control input[type="time"]::-webkit-datetime-edit-ampm-field:focus {
+  background-color: var(--red) !important; color: #fff !important; border-radius: 4px; outline: 0;
+}
+.cs-time-control:has(input:disabled) { opacity: .5; cursor: not-allowed; }
+.cs-time-control:has(input:disabled):hover { border-color: var(--border); }
+.cs-time-control input:disabled { cursor: not-allowed; }
+
+/* ── Quick-length chips (match the inputs; selected = Power Gym red) ─────── */
+.cs-chips:has(.cs-dur) { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.cs-chip.cs-dur {
+  min-height: 42px; padding: 8px 10px; border-radius: 10px; text-align: center; white-space: nowrap;
+  background: rgba(255,255,255,.03); color: #dfe3ee; border: 1px solid var(--border);
+  transition: border-color .2s ease, background-color .2s ease, color .2s ease, box-shadow .2s ease;
+}
+.cs-chip.cs-dur:not(:disabled):hover { background: rgba(230,30,37,.08); border-color: rgba(230,30,37,.6); color: #fff; }
+.cs-chip.cs-dur:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.cs-chip.cs-dur.is-active, .cs-chip.cs-dur.is-active:not(:disabled):hover {
+  background: rgba(230,30,37,.18); border-color: var(--red); color: #fff;
+  box-shadow: 0 0 0 1px var(--red) inset, 0 0 14px var(--red-glow);
+}
+.cs-chip.cs-dur:disabled { opacity: .45; }
+.cs-time-field:focus-within .cs-time-label { color: #fff; }
+
+@media (max-width: 480px) {
+  .cs-time-row { grid-template-columns: minmax(0, 1fr); }
+  .cs-chips:has(.cs-dur) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cs-time-control, .cs-time-control > svg, .cs-chip.cs-dur { transition: none; }
+}
+
+/* ── Enhancement pass: connector, focus accent, finer type, richer selected chip ── */
+.cs-time-row { position: relative; }
+.cs-time-row::after {            /* small arrow badge linking Start → End (desktop only) */
+  content: ''; position: absolute; left: 50%; bottom: 14px; width: 28px; height: 28px; margin-left: -14px;
+  border-radius: 50%; background: var(--card) no-repeat center / 14px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b92a8' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12h14M13 6l6 6-6 6'/%3E%3C/svg%3E");
+  border: 1px solid var(--border); pointer-events: none; z-index: 1;
+}
+.cs-time-control { overflow: hidden; }
+.cs-time-control::after {        /* red accent line that slides in on focus */
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--red), transparent);
+  transform: scaleX(0); opacity: 0; transition: transform .3s ease, opacity .3s ease; pointer-events: none;
+}
+.cs-time-control:focus-within::after { transform: scaleX(1); opacity: 1; }
+.cs-time-control input[type="time"] { font-variant-numeric: tabular-nums; }
+.cs-time-control input[type="time"]::-webkit-datetime-edit-ampm-field { color: var(--muted); font-size: 14px; font-weight: 700; letter-spacing: .6px; }
+.cs-time-control input[type="time"]::-webkit-datetime-edit-text { color: var(--muted); padding: 0 1px; }
+
+.cs-chip.cs-dur { font-variant-numeric: tabular-nums; }
+.cs-chip.cs-dur:not(:disabled):active { transform: scale(.97); }
+.cs-chip.cs-dur.is-active, .cs-chip.cs-dur.is-active:not(:disabled):hover {
+  background: linear-gradient(180deg, rgba(230,30,37,.30), rgba(230,30,37,.12)); font-weight: 700;
+}
+.cs-chip.cs-dur.is-active::before {
+  content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 8px; border-radius: 50%;
+  background: var(--red); box-shadow: 0 0 8px var(--red); vertical-align: middle;
+}
+@media (max-width: 480px) { .cs-time-row::after { display: none; } }
+@media (prefers-reduced-motion: reduce) { .cs-time-control::after, .cs-chip.cs-dur:active { transition: none; transform: none; } }
+
+/* ── Enhancement pass 2: richer input box + quick-length tiles ───────────── */
+.cs-time-control {
+  min-height: 60px;
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(230,30,37,.07), transparent 55%),
+    linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.015)), var(--cs-bg);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 4px 14px rgba(0,0,0,.28);
+  transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+}
+.cs-time-control:not(:has(input:disabled)):hover { transform: translateY(-1px); }
+.cs-time-control:focus-within {
+  box-shadow: 0 0 0 3px var(--red-glow), 0 8px 22px rgba(230,30,37,.18), inset 0 1px 0 rgba(255,255,255,.05);
+}
+.cs-time-control input[type="time"] { height: 60px; padding: 0 60px 0 18px; font-size: 21px; }
+/* clock icon becomes a small rounded tile */
+.cs-time-control > svg {
+  right: 10px; width: 38px; height: 38px; padding: 9px; border-radius: 10px;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08);
+  transition: color .2s ease, background-color .2s ease, border-color .2s ease;
+}
+.cs-time-control:hover > svg, .cs-time-control:focus-within > svg {
+  background: rgba(230,30,37,.14); border-color: rgba(230,30,37,.5);
+}
+
+/* quick-length tiles: big number, small unit, proportional meter */
+.cs-chips:has(.cs-dur) { gap: 12px; }
+.cs-chip.cs-dur {
+  position: relative; overflow: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  min-height: 66px; padding: 10px 8px 14px; border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.015)), var(--cs-bg);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+}
+.cs-chip.cs-dur b { font: 700 24px/1 'Barlow Condensed', 'Barlow', sans-serif; letter-spacing: .3px; color: #fff; }
+.cs-chip.cs-dur small { font: 600 11px/1 'Barlow', sans-serif; letter-spacing: .8px; text-transform: lowercase; color: var(--muted); transition: color .2s ease; }
+.cs-chip.cs-dur:not(:disabled):hover { transform: translateY(-1px); }
+.cs-chip.cs-dur:not(:disabled):hover small, .cs-chip.cs-dur.is-active small { color: #ffb3b6; }
+.cs-chip.cs-dur .cs-dur-bar {            /* meter: how long this is relative to 2 hrs */
+  position: absolute; left: 12px; bottom: 7px; height: 3px; width: calc(100% - 24px); border-radius: 99px; background: rgba(255,255,255,.08);
+}
+.cs-chip.cs-dur .cs-dur-bar::after {
+  content: ''; position: absolute; inset: 0 auto 0 0; width: var(--p, 25%); border-radius: inherit; background: #4a5266; transition: background-color .2s ease;
+}
+.cs-chip.cs-dur[data-dur="30"] { --p: 25%; } .cs-chip.cs-dur[data-dur="60"] { --p: 50%; }
+.cs-chip.cs-dur[data-dur="90"] { --p: 75%; } .cs-chip.cs-dur[data-dur="120"] { --p: 100%; }
+.cs-chip.cs-dur:not(:disabled):hover .cs-dur-bar::after { background: rgba(230,30,37,.7); }
+.cs-chip.cs-dur.is-active .cs-dur-bar::after { background: var(--red); box-shadow: 0 0 8px var(--red); }
+.cs-chip.cs-dur.is-active::before { display: none; }
+@media (max-width: 480px) { .cs-chip.cs-dur { min-height: 62px; } }
+@media (prefers-reduced-motion: reduce) { .cs-time-control, .cs-chip.cs-dur { transform: none !important; } }
+
+/* ── Enhancement pass 3: custom dark time picker ─────────────────────────── */
+.cs-time-control input[type="time"]::-webkit-calendar-picker-indicator { display: none; }   /* our picker replaces the native popup */
+.cs-time-control.is-open { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-glow), 0 8px 22px rgba(230,30,37,.18), inset 0 1px 0 rgba(255,255,255,.05); }
+.cs-time-control.is-open::after { transform: scaleX(1); opacity: 1; }
+.cs-time-control.is-open > svg { color: var(--red); background: rgba(230,30,37,.14); border-color: rgba(230,30,37,.5); }
+
+.cs-tp {
+  position: fixed; z-index: 1200; box-sizing: border-box; padding: 16px;
+  background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.01)), var(--card);
+  border: 1px solid var(--border); border-radius: 16px;
+  box-shadow: 0 18px 48px rgba(0,0,0,.65), 0 0 0 1px rgba(230,30,37,.12);
+  font-family: 'Barlow', sans-serif; color: var(--white);
+  animation: csTpIn .16s ease;
+}
+@keyframes csTpIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.cs-tp-title { display: flex; align-items: center; gap: 8px; padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--cs-line); font-size: 14px; font-weight: 600; color: #dfe3ee; }
+.cs-tp-title svg { color: var(--red); width: 16px; height: 16px; }
+.cs-tp-title b { margin-left: auto; font: 700 22px 'Barlow Condensed', 'Barlow', sans-serif; letter-spacing: .5px; color: #fff; }
+.cs-tp-sec { font-size: 12px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); margin: 10px 0 8px; }
+.cs-tp-grid { display: grid; gap: 8px; }
+.cs-tp-grid.h { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.cs-tp-grid.m { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.cs-tp-cell {
+  min-height: 38px; border-radius: 10px; cursor: pointer;
+  background: rgba(255,255,255,.04); color: #dfe3ee; border: 1px solid var(--border);
+  font: 600 16px 'Barlow', sans-serif; font-variant-numeric: tabular-nums;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
+}
+.cs-tp-cell:hover { background: rgba(230,30,37,.10); border-color: rgba(230,30,37,.6); color: #fff; }
+.cs-tp-cell:focus-visible, .cs-tp-done:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.cs-tp-cell.is-on, .cs-tp-cell.is-on:hover {
+  background: linear-gradient(180deg, rgba(230,30,37,.34), rgba(230,30,37,.16)); border-color: var(--red); color: #fff;
+  box-shadow: 0 0 0 1px var(--red) inset, 0 0 12px var(--red-glow);
+}
+.cs-tp-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--cs-line); }
+.cs-tp-ap { display: flex; gap: 8px; }
+.cs-tp-ap .cs-tp-cell { min-width: 62px; }
+.cs-tp-done {
+  min-height: 38px; padding: 0 22px; border-radius: 10px; cursor: pointer; border: 1px solid var(--red); background: var(--red); color: #fff;
+  font: 700 13px 'Barlow', sans-serif; letter-spacing: .6px; text-transform: uppercase; transition: background-color .15s ease;
+}
+.cs-tp-done:hover { background: var(--red-dark); border-color: var(--red-dark); }
+@media (max-width: 380px) { .cs-tp-grid.h { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (prefers-reduced-motion: reduce) { .cs-tp { animation: none; } .cs-tp-cell { transition: none; } }
+
 .cs-pick-summary { margin-top: 14px; padding: 10px 14px; border-radius: 6px; background: rgba(255,255,255,.04); font-size: 15px; line-height: 1.5; color: var(--white); }
 .cs-busy { margin-top: 10px; font-size: 13px; color: var(--muted); }
 

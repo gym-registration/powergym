@@ -77,6 +77,7 @@
 
   /* ── icons ────────────────────────────────────────────── */
   const ICON_CAL = '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>';
+  const ICON_CLOCK = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>';
   const ICON_USER = '<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7z"/></svg>';
   const ICON_DUMBBELL = '<svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9v6M6.5 6.5v11M17.5 6.5v11M21 9v6M6.5 12h11"/></svg>';
 
@@ -227,6 +228,10 @@
   const label12 = (hhmm) => { const m = toMin(hhmm); if (m == null) return ''; const h = Math.floor(m / 60); return ((h % 12) || 12) + ':' + pad(m % 60) + ' ' + (h < 12 ? 'AM' : 'PM'); };
   const lenText = (min) => { const h = Math.floor(min / 60), m = min % 60; return (h ? h + ' hr' + (h > 1 ? 's' : '') : '') + (h && m ? ' ' : '') + (m ? m + ' min' : ''); };
   const QUICK = [30, 60, 90, 120];
+  /** Display only: splits a length into a big number and a small unit, e.g. 90 -> ['1:30','hours']. */
+  const durParts = (m) => m < 60 ? [String(m), 'minutes'] : (m % 60 === 0 ? [String(m / 60), m === 60 ? 'hour' : 'hours'] : [Math.floor(m / 60) + ':' + pad(m % 60), 'hours']);
+  /** Cosmetic only: true when the chosen start/end span exactly `m` minutes (drives the red 'selected' chip). */
+  const durActive = (m) => { const a = toMin(state.pick.from), b = toMin(state.pick.to); return a != null && b != null && b - a === m; };
 
   /** '' when the chosen times are fine, otherwise the reason (mirrors the server's checks).
    *  Order matters: the coach's WORKING HOURS are checked first, so a time outside them says so
@@ -271,12 +276,12 @@
       body = '<div class="cs-noslots">Your coach is fully booked for the rest of this day.</div>';
     } else {
       const chips = free.map((f) => '<button type="button" class="cs-chip" data-fillrange="' + esc(f.start) + '|' + esc(f.end) + '"' + (blocked ? ' disabled' : '') + '>' + esc(f.start_label) + ' – ' + esc(f.end_label) + '</button>').join('');
-      const quick = QUICK.map((m) => '<button type="button" class="cs-chip" data-dur="' + m + '"' + (blocked ? ' disabled' : '') + '>' + esc(lenText(m)) + '</button>').join('');
+      const quick = QUICK.map((m) => '<button type="button" class="cs-chip cs-dur' + (durActive(m) ? ' is-active' : '') + '" data-dur="' + m + '" aria-pressed="' + durActive(m) + '" aria-label="' + esc(lenText(m)) + '"' + (blocked ? ' disabled' : '') + '><b>' + esc(durParts(m)[0]) + '</b><small>' + esc(durParts(m)[1]) + '</small><i class="cs-dur-bar" aria-hidden="true"></i></button>').join('');
       body = '<div class="cs-pick-label">Open times (tap one to use all of it, or set your own below)</div>' +
         '<div class="cs-chips">' + chips + '</div>' +
         '<div class="cs-time-row">' +
-        '<label>Start<input type="time" step="900" data-pick="from" value="' + esc(state.pick.from) + '"' + (blocked ? ' disabled' : '') + '></label>' +
-        '<label>End<input type="time" step="900" data-pick="to" value="' + esc(state.pick.to) + '"' + (blocked ? ' disabled' : '') + '></label></div>' +
+        '<label class="cs-time-field"><span class="cs-time-label">' + ICON_CLOCK + 'Start Time</span><span class="cs-time-control"><input type="time" step="900" data-pick="from" value="' + esc(state.pick.from) + '"' + (blocked ? ' disabled' : '') + '>' + ICON_CLOCK + '</span></label>' +
+        '<label class="cs-time-field"><span class="cs-time-label">' + ICON_CLOCK + 'End Time</span><span class="cs-time-control"><input type="time" step="900" data-pick="to" value="' + esc(state.pick.to) + '"' + (blocked ? ' disabled' : '') + '>' + ICON_CLOCK + '</span></label></div>' +
         '<div class="cs-pick-label">Quick length</div><div class="cs-chips">' + quick + '</div>' +
         '<div class="cs-pick-summary" data-pick-summary="' + c.id + '">' + pickSummaryHtml(c) + '</div>';
     }
@@ -551,7 +556,99 @@
     const coach = state.slots && state.slots.coaches[0];
     const box = coach && root.querySelector('[data-pick-summary="' + coach.id + '"]');
     if (box) box.innerHTML = pickSummaryHtml(coach);
+    root.querySelectorAll('[data-dur]').forEach((b) => {
+      const on = durActive(Number(b.getAttribute('data-dur')));
+      b.classList.toggle('is-active', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
   });
+
+  /* ── Power Gym time picker (UI only) ───────────────────────────────────────────
+     Replaces the browser's unstyleable time popup on mouse devices. It never holds its own state: every choice is
+     written to the same <input type="time"> and fires the same 'input' event, so the existing summary, validation,
+     quick-length highlight and booking code run exactly as before. Touch devices keep their native picker. */
+  const tp = { el: null, input: null };
+  const coarse = () => window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+
+  function tpParts(v) {
+    const m = toMin(v);
+    if (m == null) return { h: null, min: null, ap: null };
+    const h24 = Math.floor(m / 60);
+    return { h: (h24 % 12) || 12, min: m % 60, ap: h24 < 12 ? 'AM' : 'PM' };
+  }
+  function tpCommit(h, min, ap) {
+    const h24 = (h % 12) + (ap === 'PM' ? 12 : 0);
+    tp.input.value = toHHMM(h24 * 60 + min);
+    tp.input.dispatchEvent(new Event('input', { bubbles: true }));
+    tpFill();
+  }
+  function tpFill() {
+    if (!tp.el || !tp.input || !tp.input.isConnected) return tpClose();
+    const c = tpParts(tp.input.value);
+    const on = (cond) => (cond ? ' is-on' : '');
+    let hours = '', mins = '';
+    for (let h = 1; h <= 12; h++) hours += '<button type="button" class="cs-tp-cell' + on(c.h === h) + '" data-tp-h="' + h + '">' + h + '</button>';
+    [0, 15, 30, 45].forEach((m) => { mins += '<button type="button" class="cs-tp-cell' + on(c.min === m) + '" data-tp-m="' + m + '">' + pad(m) + '</button>'; });
+    tp.el.innerHTML =
+      '<div class="cs-tp-title">' + ICON_CLOCK + '<span>' + esc(tp.input.closest('.cs-time-field').querySelector('.cs-time-label').textContent) + '</span>' +
+      '<b>' + (c.h == null ? '--:--' : c.h + ':' + pad(c.min) + ' ' + c.ap) + '</b></div>' +
+      '<div class="cs-tp-sec">Hour</div><div class="cs-tp-grid h">' + hours + '</div>' +
+      '<div class="cs-tp-sec">Minute</div><div class="cs-tp-grid m">' + mins + '</div>' +
+      '<div class="cs-tp-foot"><div class="cs-tp-ap">' +
+      '<button type="button" class="cs-tp-cell' + on(c.ap === 'AM') + '" data-tp-ap="AM">AM</button>' +
+      '<button type="button" class="cs-tp-cell' + on(c.ap === 'PM') + '" data-tp-ap="PM">PM</button></div>' +
+      '<button type="button" class="cs-tp-done" data-tp-done>Done</button></div>';
+  }
+  function tpPlace() {
+    if (!tp.el || !tp.input || !tp.input.isConnected) return tpClose();
+    const r = tp.input.closest('.cs-time-control').getBoundingClientRect();
+    const w = Math.min(Math.max(r.width, 300), window.innerWidth - 16);
+    const h = tp.el.offsetHeight;
+    const below = window.innerHeight - r.bottom >= h + 12 || r.top < h + 12;
+    tp.el.style.width = w + 'px';
+    tp.el.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + 'px';
+    tp.el.style.top = (below ? r.bottom + 8 : r.top - h - 8) + 'px';
+  }
+  function tpClose() {
+    if (tp.input) { const c = tp.input.closest('.cs-time-control'); if (c) c.classList.remove('is-open'); }
+    if (tp.el) tp.el.remove();
+    tp.el = null; tp.input = null;
+  }
+  function tpOpen(inp) {
+    if (tp.input === inp) return;
+    tpClose();
+    tp.input = inp;
+    tp.el = document.createElement('div');
+    tp.el.className = 'cs-tp'; tp.el.setAttribute('role', 'dialog'); tp.el.setAttribute('aria-label', 'Choose a time');
+    tp.el.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b || !tp.input) return;
+      const c = tpParts(tp.input.value);
+      const h = c.h == null ? 9 : c.h, m = c.min == null ? 0 : c.min, ap = c.ap || 'AM';   // sensible defaults for an empty field
+      if (b.hasAttribute('data-tp-h')) tpCommit(Number(b.getAttribute('data-tp-h')), m, ap);
+      else if (b.hasAttribute('data-tp-m')) tpCommit(h, Number(b.getAttribute('data-tp-m')), ap);
+      else if (b.hasAttribute('data-tp-ap')) tpCommit(h, m, b.getAttribute('data-tp-ap'));
+      else if (b.hasAttribute('data-tp-done')) tpClose();
+    });
+    document.body.appendChild(tp.el);
+    inp.closest('.cs-time-control').classList.add('is-open');
+    tpFill(); tpPlace();
+  }
+
+  root.addEventListener('click', (e) => {
+    const ctl = e.target && e.target.closest && e.target.closest('.cs-time-control');
+    const inp = ctl && ctl.querySelector('input[type="time"]');
+    if (!inp || inp.disabled || coarse()) return;
+    tpOpen(inp);
+  });
+  // Typing in the field keeps the picker's highlights in step.
+  root.addEventListener('input', (e) => { if (tp.input && e.target === tp.input) tpFill(); });
+  document.addEventListener('pointerdown', (e) => {
+    if (tp.el && !tp.el.contains(e.target) && !(e.target.closest && e.target.closest('.cs-time-control'))) tpClose();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && tp.el) { const i = tp.input; tpClose(); if (i && i.isConnected) i.focus(); } });
+  document.addEventListener('scroll', tpPlace, true);
+  window.addEventListener('resize', tpPlace);
 
   /* ── hooks: load fresh data whenever the tab is opened ── */
   function isActive() { const p = document.getElementById('member-coach-scheduling'); return !!(p && p.classList.contains('active')); }
