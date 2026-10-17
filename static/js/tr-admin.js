@@ -186,8 +186,7 @@ const AdminModule = (() => {
             <td>${m.expiry}</td>
             <td><span class="badge badge-green">Active</span></td>
             <td>
-              <button class="btn btn-sm btn-outline" onclick="openEditMemberModal(this)">Edit</button>
-              <button class="btn btn-sm" style="background:rgba(230,30,37,0.1);color:var(--red);border:1px solid rgba(230,30,37,0.2);" onclick="deleteMemberRow(this)">Del</button>
+              <button class="btn btn-sm btn-outline" onclick="AdminModule.promptArchiveMember(this)">Archive</button>
             </td>`;
           tbody.prepend(row);
         }
@@ -323,25 +322,159 @@ const AdminModule = (() => {
       });
   }
 
-  /** Delete a member row from the server, then remove it from the table */
-  function deleteMemberRow(btn) {
-    const row  = btn.closest('tr');
-    if (!row) return;
-    const id   = row.dataset.id;
-    const name = row.querySelectorAll('td')[1]?.textContent.trim() || 'this member';
-    if (!confirm(`Delete ${name}? This cannot be undone.`)) return;
+  /* ── Archive / restore / permanent delete (members) ───────────────── */
+  let pendingArchiveRow = null;
+  let pendingDeleteArchivedRow = null;
 
-    fetch(`/admin/delete-member/${id}`, { method: 'POST' })
+  function _cell(text, cls) {
+    const td = document.createElement('td');
+    if (cls) td.className = cls;
+    td.textContent = text;
+    return td;
+  }
+
+  function _actionBtn(label, onclick, danger) {
+    const b = document.createElement('button');
+    b.className = 'btn btn-sm' + (danger ? '' : ' btn-outline');
+    if (danger) b.style.cssText = 'background:rgba(230,30,37,0.1);color:var(--red);border:1px solid rgba(230,30,37,0.2);';
+    b.textContent = label;
+    b.addEventListener('click', function () { onclick(this); });
+    return b;
+  }
+
+  /** "Archive" on a Members row — asks for confirmation first. */
+  function promptArchiveMember(btn) {
+    const row = btn.closest('tr');
+    if (!row) return;
+    pendingArchiveRow = row;
+    const name  = row.querySelectorAll('td')[1]?.textContent.trim() || 'this member';
+    const email = row.querySelectorAll('td')[2]?.textContent.trim() || '';
+    const msg = document.getElementById('archive-member-message');
+    if (msg) msg.textContent = `Archive ${name}${email ? ' (' + email + ')' : ''}?`;
+    openModal('archive-member-modal');
+  }
+
+  function _addArchivedRow(m) {
+    const tbody = document.querySelector('#archived-members-table tbody');
+    if (!tbody) return;
+    tbody.querySelector('.archived-empty-row')?.remove();
+    const tr = document.createElement('tr');
+    tr.dataset.id = m.id; tr.dataset.name = m.name; tr.dataset.email = m.email;
+    tr.append(_cell('#' + m.id), _cell(m.name), _cell(m.email), _cell(m.archived_on));
+    const actions = document.createElement('td');
+    actions.append(
+      _actionBtn('Restore', restoreArchivedMember, false),
+      document.createTextNode(' '),
+      _actionBtn('Delete Permanently', promptDeleteArchivedMember, true)
+    );
+    tr.append(actions);
+    tbody.prepend(tr);
+  }
+
+  function _ensureArchivedEmptyRow() {
+    const tbody = document.querySelector('#archived-members-table tbody');
+    if (tbody && !tbody.querySelector('tr')) {
+      tbody.innerHTML = '<tr class="archived-empty-row"><td colspan="5" style="text-align:center;color:var(--muted);">No archived members.</td></tr>';
+    }
+  }
+
+  function confirmArchiveMember() {
+    const row = pendingArchiveRow;
+    if (!row) return;
+    fetch(`/admin/archive-member/${row.dataset.id}`, { method: 'POST' })
       .then(res => res.json().then(data => ({ ok: res.ok, data })))
       .then(({ ok, data }) => {
+        closeModal('archive-member-modal');
+        pendingArchiveRow = null;
+        if (!ok || !data.success) {
+          showToast(data.error || 'Failed to archive member.', 'error');
+          return;
+        }
+        row.remove();
+        _addArchivedRow(data.member);
+        _applyAdminMembersFilter();
+        showToast('Member archived. Find them in Settings → Archived Members.', 'success');
+      })
+      .catch(() => {
+        closeModal('archive-member-modal');
+        pendingArchiveRow = null;
+        showToast('Could not reach the server. Please try again.', 'error');
+      });
+  }
+
+  /** "Restore" on an archived row — puts the member back in the Members tab. */
+  function restoreArchivedMember(btn) {
+    const row = btn.closest('tr');
+    if (!row) return;
+    fetch(`/admin/restore-member/${row.dataset.id}`, { method: 'POST' })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok || !data.success) {
+          showToast(data.error || 'Failed to restore member.', 'error');
+          return;
+        }
+        row.remove();
+        _ensureArchivedEmptyRow();
+
+        const m = data.member;
+        const tbody = document.querySelector('#members-table tbody');
+        if (m && tbody) {
+          tbody.querySelector('tr:not([data-id])')?.remove();   // "No members yet." placeholder
+          const tr = document.createElement('tr');
+          tr.dataset.id = m.id;
+          tr.dataset.plan = m.plan;
+          tr.dataset.phone = m.phone || '';
+          tr.dataset.name = (m.name || '').toLowerCase();
+          tr.dataset.status = { 'Active': 'active', 'Pending': 'pending', 'Expired': 'expired', 'Declined': 'declined' }[m.status] || 'no-plan';
+          const badge = { 'Active': 'badge-green', 'Pending': 'badge-blue', 'Expired': 'badge-red', 'Declined': 'badge-red' }[m.status] || 'badge-muted';
+          const statusTd = document.createElement('td');
+          const span = document.createElement('span');
+          span.className = 'badge ' + badge;
+          span.textContent = m.status;
+          statusTd.append(span);
+          const actions = document.createElement('td');
+          actions.append(_actionBtn('Archive', promptArchiveMember, false));
+          tr.append(_cell('#' + m.id, 'col-member-id'), _cell(m.name), _cell(m.email),
+                    _cell(m.plan_label), _cell(m.expiry), statusTd, actions);
+          tbody.prepend(tr);
+          _applyAdminMembersFilter();
+        }
+        showToast('Member restored.', 'success');
+      })
+      .catch(() => showToast('Could not reach the server. Please try again.', 'error'));
+  }
+
+  /** "Delete Permanently" on an archived row — asks for confirmation first. */
+  function promptDeleteArchivedMember(btn) {
+    const row = btn.closest('tr');
+    if (!row) return;
+    pendingDeleteArchivedRow = row;
+    const msg = document.getElementById('delete-archived-member-message');
+    if (msg) msg.textContent = `Permanently delete ${row.dataset.name || 'this member'} (${row.dataset.email || ''})?`;
+    openModal('delete-archived-member-modal');
+  }
+
+  function confirmDeleteArchivedMember() {
+    const row = pendingDeleteArchivedRow;
+    if (!row) return;
+    fetch(`/admin/delete-member/${row.dataset.id}`, { method: 'POST' })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        closeModal('delete-archived-member-modal');
+        pendingDeleteArchivedRow = null;
         if (!ok || !data.success) {
           showToast(data.error || 'Failed to delete member.', 'error');
           return;
         }
         row.remove();
-        showToast('Member deleted', 'success');
+        _ensureArchivedEmptyRow();
+        showToast('Member permanently deleted.', 'success');
       })
-      .catch(() => showToast('Could not reach the server. Please try again.', 'error'));
+      .catch(() => {
+        closeModal('delete-archived-member-modal');
+        pendingDeleteArchivedRow = null;
+        showToast('Could not reach the server. Please try again.', 'error');
+      });
   }
 
   /** Analytics report generator — pulls live data from the server. Every
@@ -1790,7 +1923,7 @@ const AdminModule = (() => {
         // If that was the last row, restore the "no accounts yet" placeholder.
         const tbody = document.querySelector('#staff-accounts-table tbody');
         if (tbody && !tbody.querySelector('tr')) {
-          tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted);text-align:center;">No staff accounts yet — click "+ ADD STAFF" to create one.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted);text-align:center;">No staff accounts yet.</td></tr>';
         }
 
         showToast(data.message || 'Account deleted.', 'success');
@@ -1803,7 +1936,9 @@ const AdminModule = (() => {
   }
 
   return {
-    init, tab, addMember, openEditMemberModal, saveEditMember, deleteMemberRow, toggleMemberEcRelOther,
+    init, tab, addMember, openEditMemberModal, saveEditMember, toggleMemberEcRelOther,
+    promptArchiveMember, confirmArchiveMember, restoreArchivedMember,
+    promptDeleteArchivedMember, confirmDeleteArchivedMember,
     addStaff, openEditStaffModal, saveEditStaff, promptDeleteStaff, confirmDeleteStaff,
     generateAnalyticsReport, refreshCurrentReport, exportReportPDF, clearReportDateRange,
     viewPaymentProof, viewPaymentProofs, viewStudentIdProof, filterMembersByStatus, filterMembersTable, toggleMemberIdColumn,
@@ -1833,7 +1968,6 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addMember               = AdminModule.addMember;
   window.openEditMemberModal     = AdminModule.openEditMemberModal;
   window.saveEditMember          = AdminModule.saveEditMember;
-  window.deleteMemberRow         = AdminModule.deleteMemberRow;
   window.toggleMemberEcRelOther  = AdminModule.toggleMemberEcRelOther;
   window.generateAnalyticsReport = AdminModule.generateAnalyticsReport;
   window.refreshCurrentReport    = AdminModule.refreshCurrentReport;

@@ -1319,6 +1319,10 @@ class User(db.Model):
     # stays usable. Only self-registration (/register) sets it to False, and
     # login is refused for such members until /api/register/verify-otp succeeds.
     email_verified = db.Column(db.Boolean, nullable=False, default=True, server_default=text('1'))
+    # Set when an admin archives a member (Members tab -> Archive). Archived
+    # accounts are hidden from every member list, can't log in, and can be
+    # restored or permanently deleted from Settings -> Archived Members.
+    archived_at = db.Column(db.DateTime, nullable=True)
     # Web-relative path under /static — e.g. 'uploads/profile_pictures/xxxx.jpg'.
     # Required at self-registration for members (see /register); nullable here
     # since existing/seeded accounts predate this field.
@@ -3318,6 +3322,10 @@ def login():
         if user is None or not check_password_hash(user.password, password):
             return _fail('Invalid credentials.')
 
+        # Archived by an admin: right password, but the account is switched off.
+        if user.archived_at is not None:
+            return _fail('This account has been archived. Please contact the gym administrator.')
+
         # Email-OTP gate: right password, but the address was never verified.
         # Checked only AFTER the password so this never reveals anything to
         # someone who doesn't know it. The front-end reacts to
@@ -3960,6 +3968,8 @@ def forgot_password():
     if request.method == 'POST':
         email = (request.form.get('email') or '').strip().lower()
         user  = User.query.filter_by(email=email).first() if email else None
+        if user is not None and user.archived_at is not None:
+            user = None   # archived accounts can't reset their way back in
         now   = _now()
 
         if user:
@@ -5695,6 +5705,11 @@ def admin_delete_member(member_id):
     if user is None:
         return jsonify(success=False, error='Member not found.'), 404
 
+    # Permanent deletion only happens from Settings -> Archived Members, so a
+    # member must be archived first.
+    if user.archived_at is None:
+        return jsonify(success=False, error='Archive this member first, then delete them from Settings → Archived Members.'), 400
+
     # Keep every payment on record — approved/verified or still in progress —
     # as a permanent part of Analytics/Revenue history even after the member
     # account itself is deleted. Snapshot the name now (the only moment it's
@@ -5720,6 +5735,70 @@ def admin_delete_member(member_id):
     db.session.commit()
 
     return jsonify(success=True, message='Member deleted successfully.')
+
+
+def _archived_member_dict(user):
+    archived = _to_manila(user.archived_at)
+    return {
+        'id': user.id,
+        'name': user.full_name,
+        'email': user.email,
+        'archived_on': archived.strftime('%b %d, %Y') if archived else '—',
+    }
+
+
+def _get_archived_members():
+    rows = (User.query
+            .filter(User.role == 'member', User.archived_at.isnot(None))
+            .order_by(User.archived_at.desc())
+            .all())
+    return [_archived_member_dict(u) for u in rows]
+
+
+@app.route('/admin/archive-member/<int:member_id>', methods=['POST'])
+def admin_archive_member(member_id):
+    if session.get('role') != 'admin':
+        return jsonify(success=False, error='Unauthorized.'), 403
+
+    user = User.query.filter_by(id=member_id, role='member').first()
+    if user is None:
+        return jsonify(success=False, error='Member not found.'), 404
+    if user.archived_at is not None:
+        return jsonify(success=False, error='This member is already archived.'), 409
+
+    # An open plan request would keep showing up in Payments for an account
+    # nobody can see any more, so it has to be settled first.
+    open_request = Payment.query.filter(Payment.member_id == user.id,
+                                        Payment.status.in_(['pending', 'approved'])).first()
+    if open_request is not None:
+        return jsonify(success=False,
+                       error='This member has an open plan request or unpaid payment. '
+                             'Settle or reject it in Payments before archiving.'), 409
+
+    user.archived_at = datetime.now(timezone.utc)
+    db.session.commit()
+    return jsonify(success=True, message='Member archived.', member=_archived_member_dict(user))
+
+
+@app.route('/admin/restore-member/<int:member_id>', methods=['POST'])
+def admin_restore_member(member_id):
+    if session.get('role') != 'admin':
+        return jsonify(success=False, error='Unauthorized.'), 403
+
+    user = User.query.filter_by(id=member_id, role='member').first()
+    if user is None:
+        return jsonify(success=False, error='Member not found.'), 404
+    if user.archived_at is None:
+        return jsonify(success=False, error='This member is not archived.'), 409
+
+    user.archived_at = None
+    db.session.commit()
+
+    row = next((m for m in _get_members_with_plans() if m['id'] == user.id), None)
+    member = None
+    if row is not None:
+        member = {k: row[k] for k in ('id', 'name', 'email', 'plan', 'plan_label', 'expiry', 'status', 'phone')}
+    return jsonify(success=True, message='Member restored.', member=member)
 
 
 @app.route('/admin/add-staff', methods=['POST'])
@@ -6055,18 +6134,19 @@ def _find_member(identifier):
     # #1001 or plain numeric id
     numeric = identifier.lstrip('#')
     if numeric.isdigit():
-        user = User.query.filter_by(id=int(numeric), role='member').first()
+        user = User.query.filter_by(id=int(numeric), role='member', archived_at=None).first()
         return (user, None) if user else (None, 'No member found with that ID.')
 
     # email
     if '@' in identifier:
-        user = User.query.filter_by(email=identifier.lower(), role='member').first()
+        user = User.query.filter_by(email=identifier.lower(), role='member', archived_at=None).first()
         return (user, None) if user else (None, 'No member found with that email.')
 
     # full name match (case-insensitive)
     matches = User.query.filter(
         db.func.lower(db.func.concat(User.first_name, ' ', User.last_name)) == identifier.lower(),
-        User.role == 'member'
+        User.role == 'member',
+        User.archived_at.is_(None)
     ).all()
     if len(matches) == 1:
         return matches[0], None
@@ -10594,7 +10674,7 @@ def _membership_report():
 
     today = _today_manila()
     month_start = datetime.combine(date(today.year, today.month, 1), datetime.min.time())
-    new_this_month = User.query.filter(User.role == 'member', User.email_verified.is_(True), User.created_at >= month_start).count()
+    new_this_month = User.query.filter(User.role == 'member', User.email_verified.is_(True), User.archived_at.is_(None), User.created_at >= month_start).count()
 
     return {
         'total_members': len(members),
@@ -10990,7 +11070,8 @@ def _get_members_with_plans():
         db.session.query(User, Membership, MembershipPlan)
         .outerjoin(Membership, Membership.member_id == User.id)
         .outerjoin(MembershipPlan, MembershipPlan.id == Membership.plan_id)
-        .filter(User.role == 'member', User.email_verified.is_(True))
+        .filter(User.role == 'member', User.email_verified.is_(True),
+                User.archived_at.is_(None))
         .order_by(User.id.desc())
         .all()
     )
@@ -11215,6 +11296,7 @@ def admin():
     return render_template(
         'admin-dashboard.html',
         members=members,
+        archived_members=_get_archived_members(),
         stats=stats,
         feedback_list=feedback_list,
         feedback_stats=feedback_stats,
@@ -12100,6 +12182,7 @@ def _run_startup_migrations():
         ('gym_equipment',  'icon',     "ALTER TABLE gym_equipment ADD COLUMN icon VARCHAR(8) NULL"),
         ('gym_equipment',  'is_facility', "ALTER TABLE gym_equipment ADD COLUMN is_facility TINYINT(1) NOT NULL DEFAULT 0"),
         ('users', 'last_seen_announcements_at', "ALTER TABLE users ADD COLUMN last_seen_announcements_at DATETIME NULL"),
+        ('users', 'archived_at', "ALTER TABLE users ADD COLUMN archived_at DATETIME NULL"),
         ('coaches', 'fee', "ALTER TABLE coaches ADD COLUMN fee DECIMAL(10,2) NOT NULL DEFAULT 0"),
         # ── Coach Profile (photo, specialization, bio) ──
         ('coaches', 'photo_path',     "ALTER TABLE coaches ADD COLUMN photo_path VARCHAR(255) NULL"),
@@ -12701,6 +12784,18 @@ def _unverified_cleanup_on_request():
     if time.time() - _unverified_cleanup_last >= _UNVERIFIED_CLEANUP_LOOP_SECONDS:
         _unverified_cleanup_last = time.time()
         _threading.Thread(target=_run_unverified_cleanup_once, daemon=True).start()
+
+
+@app.before_request
+def _end_session_if_archived():
+    """If an admin archives a member while they're logged in, drop their session
+    on the next request instead of letting them carry on."""
+    if request.path.startswith('/static/'):
+        return
+    if session.get('role') == 'member' and session.get('user_id'):
+        archived = db.session.query(User.archived_at).filter(User.id == session['user_id']).scalar()
+        if archived is not None:
+            session.clear()
 
 
 @app.before_request
