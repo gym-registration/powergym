@@ -26,8 +26,8 @@
 
     <div style="font-size:15px;color:var(--muted);text-align:center;margin-bottom:20px;line-height:1.6;">
       We sent a 6-digit verification code to <strong style="color:var(--white);">{{ email }}</strong>.
-      Enter it below to continue — the code expires in 3 minutes and
-      may be entered up to 3 times.
+      Enter it below to continue — the code expires in {{ otp_minutes }} minutes and
+      may be entered up to {{ otp_attempts }} times.
     </div>
 
     {% with messages = get_flashed_messages(with_categories=true) %}

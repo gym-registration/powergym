@@ -4080,9 +4080,9 @@ def verify_otp():
         db.session.commit()
         remaining_attempts = OTP_MAX_ATTEMPTS - user.reset_otp_attempts
         flash(f'Incorrect code. {remaining_attempts} attempt(s) remaining.', 'error')
-        return render_template('verify-otp.html', email=email)
+        return render_template('verify-otp.html', email=email, otp_minutes=OTP_VALID_MINUTES, otp_attempts=OTP_MAX_ATTEMPTS)
 
-    return render_template('verify-otp.html', email=email)
+    return render_template('verify-otp.html', email=email, otp_minutes=OTP_VALID_MINUTES, otp_attempts=OTP_MAX_ATTEMPTS)
 
 
 @app.route('/reset-password/<token>', methods=['GET', 'POST'])
