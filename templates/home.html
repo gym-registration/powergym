@@ -2,13 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>POWER GYM — Train Smarter, Get Stronger</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@300;400;500;600;700&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tr-styles.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/tr-home.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tr-responsive.css') }}?v=1">
 </head>
 <body class="home-page">
 
@@ -780,5 +781,6 @@ document.addEventListener('DOMContentLoaded', () => showAuthScreen('{{ open_scre
   }, true);
 })();
 </script>
+<script src="{{ url_for('static', filename='js/tr-responsive.js') }}?v=1"></script>
 </body>
 </html>
